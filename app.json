@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "splash": {
       "image": "./assets/images/splash-screen.png",
-      "resizeMode": "native",
+      "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
     "scheme": "blyp",
@@ -24,19 +24,14 @@
       },
       "backgroundColor": "#ffffff",
       "edgeToEdgeEnabled": true,
-      "package": "com.haroldndougou.blyp"
+      "package": "com.haroldndougou.blyp",
+      "splash": {
+        "image": "./assets/images/splash-screen.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
+      }
     },
-    "plugins": [
-      "expo-router",
-      [
-        "expo-splash-screen",
-        {
-          "image": "./assets/images/splash-screen.png",
-          "backgroundColor": "#ffffff",
-          "resizeMode": "native"
-        }
-      ]
-    ],
+    "plugins": ["expo-router", "expo-splash-screen"],
     "experiments": {
       "typedRoutes": true
     },
