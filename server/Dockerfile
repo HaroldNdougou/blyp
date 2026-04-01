@@ -1,16 +1,14 @@
-# Build depuis le dossier server/ (voir render.yaml)
+# Contexte : dossier server/ (Railway : root directory = server ; Render : dockerContext ./server)
 FROM node:20-alpine
 
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
+# Avant npm ci : le postinstall lance prisma generate, il faut déjà schema.prisma
+COPY prisma ./prisma
 RUN npm ci
 
-COPY prisma ./prisma
 COPY src ./src
-
-# Client Prisma (postinstall peut ne pas suffire si lock copié sans node_modules complet)
-RUN npx prisma generate
 
 ENV NODE_ENV=production
 EXPOSE 3001
