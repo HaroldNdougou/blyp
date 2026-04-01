@@ -32,13 +32,13 @@
       ]
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     },
     "extra": {
       "eas": {
         "projectId": "5a25b2ac-490a-4328-bc6a-5daf01f1bcf0"
       }
-    }
+    },
+    "owner": "haroldndougou"
   }
 }
