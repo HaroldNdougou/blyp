@@ -1,0 +1,31 @@
+# Blueprint Render : https://dashboard.render.com → New → Blueprint
+# Connecte ce repo ; après déploiement, copie l’URL HTTPS du service web dans EAS (EXPO_PUBLIC_API_URL).
+
+databases:
+  - name: blyp-db
+    databaseName: blyp
+    user: blyp
+    plan: free
+
+services:
+  - type: web
+    name: blyp-api
+    runtime: docker
+    region: frankfurt
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3001"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: blyp-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: OTP_PEPPER
+        generateValue: true

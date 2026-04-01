@@ -1,0 +1,15 @@
+# Dev local du serveur avec Postgres (optionnel si tu utilises le mode démo dans l’app).
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: blyp
+      POSTGRES_PASSWORD: blyp
+      POSTGRES_DB: blyp
+    ports:
+      - "5432:5432"
+    volumes:
+      - blyp_pgdata:/var/lib/postgresql/data
+
+volumes:
+  blyp_pgdata:

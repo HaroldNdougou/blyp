@@ -1,33 +1,74 @@
-import { Tabs } from 'expo-router';
-import React from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { Tabs } from "expo-router";
+import { View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+function NineDotKeypadIcon({ color }: { color: string }) {
+  const row = [0, 1, 2];
+  return (
+    <View style={{ width: 24, height: 24, justifyContent: "space-between" }}>
+      {row.map((r) => (
+        <View
+          key={r}
+          style={{
+            flexDirection: "row",
+            justifyContent: "space-between",
+            width: 24,
+          }}
+        >
+          {row.map((c) => (
+            <View
+              key={c}
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 2.5,
+                backgroundColor: color,
+              }}
+            />
+          ))}
+        </View>
+      ))}
+    </View>
+  );
+}
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
+        tabBarShowLabel: false,
+        tabBarActiveTintColor: "#5dc705",
+        tabBarInactiveTintColor: "#8E8E93",
+        tabBarStyle: {
+          backgroundColor: "#ffffff",
+          borderTopWidth: 0.5,
+          borderTopColor: "#F0F0F0",
+          height: 52 + (insets.bottom > 0 ? insets.bottom : 8),
+          paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
+          paddingTop: 8,
+        },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: ({ color }) => <NineDotKeypadIcon color={color} />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="history"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          tabBarIcon: ({ color, focused }) => (
+            <Ionicons
+              name={focused ? "swap-vertical" : "swap-vertical-outline"}
+              size={24}
+              color={color}
+            />
+          ),
         }}
       />
     </Tabs>

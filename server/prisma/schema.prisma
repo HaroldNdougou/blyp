@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String        @id @default(cuid())
+  phone        String        @unique
+  balanceFcfa  Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  transactions Transaction[]
+}
+
+model OtpChallenge {
+  id        String   @id @default(cuid())
+  phone     String
+  codeHash  String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([phone])
+}
+
+enum TxType {
+  DEPOSIT
+  PAYMENT
+}
+
+model Transaction {
+  id                String   @id @default(cuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              TxType
+  amountFcfa        Int
+  counterpartyName  String?
+  counterpartyPhone String?
+  createdAt         DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
