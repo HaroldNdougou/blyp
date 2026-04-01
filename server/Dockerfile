@@ -13,5 +13,5 @@ COPY src ./src
 ENV NODE_ENV=production
 EXPOSE 3001
 
-# Applique le schéma au 1er démarrage (MVP). Ensuite : migrations Prisma dédiées.
-CMD ["sh", "-c", "npx prisma db push && node src/index.js"]
+# Schéma : voir index.js (db push en arrière-plan après listen) pour ne pas bloquer le healthcheck Railway.
+CMD ["node", "src/index.js"]

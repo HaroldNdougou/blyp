@@ -16,6 +16,8 @@
 
 Le fichier `railway.json` fixe le build Docker et le healthcheck sur `/health`.
 
+**Dépannage** : si l’API répond sur `/health` mais les routes échouent, ouvre **Deploy Logs** : sans **`DATABASE_URL`** (référence vers la Postgres du projet), `prisma db push` échoue — l’étape 4 est obligatoire.
+
 ## App mobile (EAS)
 
 1. [expo.dev](https://expo.dev) → ton projet → **Environment variables** (profil production).

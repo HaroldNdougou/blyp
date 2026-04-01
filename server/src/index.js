@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { spawn } from "node:child_process";
 import crypto from "crypto";
 import cors from "cors";
 import express from "express";
@@ -198,6 +199,30 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Erreur serveur" });
 });
 
+function runDbPushInBackground() {
+  const child = spawn("npx", ["prisma", "db", "push"], {
+    stdio: "inherit",
+    env: process.env,
+    cwd: process.cwd(),
+  });
+  child.on("exit", (code) => {
+    if (code !== 0) {
+      console.error(`[blyp] prisma db push a échoué (code ${code}) — vérifie DATABASE_URL sur Railway`);
+    } else {
+      console.log("[blyp] schéma base synchronisé");
+    }
+  });
+}
+
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Blyp API http://localhost:${PORT} (écoute 0.0.0.0 pour appareil réseau)`);
+  console.log(`Blyp API http://0.0.0.0:${PORT}`);
+  if (process.env.NODE_ENV === "production") {
+    if (!process.env.DATABASE_URL) {
+      console.error(
+        "[blyp] DATABASE_URL manquant — ajoute la référence Postgres dans Variables Railway",
+      );
+    } else {
+      runDbPushInBackground();
+    }
+  }
 });
