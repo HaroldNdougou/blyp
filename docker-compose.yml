@@ -1,7 +1,9 @@
-# Dev local : Postgres + API Blyp.
-# 1) cp .env.example .env  à la racine, remplis OBIT_SMS_KEY_API, OBIT_SMS_SENDER, JWT_SECRET, OTP_PEPPER
-# 2) docker compose up --build
-# 3) EXPO_PUBLIC_API_URL=http://localhost:3001 dans .env pour l’app
+# Piste B (API sur le PC, Node hors Docker) : lance seulement Postgres
+#   npm run db:up
+# Puis : cd server && npx prisma db push && npm run dev
+# Téléphone USB : adb reverse tcp:3001 tcp:3001 + EXPO_PUBLIC_API_URL=http://127.0.0.1:3001 + npx expo run:android
+#
+# Option : service api = tout en Docker (docker compose up --build)
 services:
   db:
     image: postgres:16-alpine

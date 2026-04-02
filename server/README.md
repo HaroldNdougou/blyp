@@ -44,14 +44,16 @@ Blueprint : `render.yaml` à la racine du repo (PostgreSQL + service Docker `ser
 2. `docker compose up --build` — l’API écoute sur le port **3001** (service `api` + Postgres `db`).
 3. Au démarrage, les logs indiquent si le SMS Obit est actif ; `GET http://localhost:3001/health` renvoie `sms.sending`, `sms.provider`, etc.
 
-**Option B — Postgres dans Docker, API sur la machine** :
+**Option B — Postgres dans Docker, API sur la machine** (piste « USB + 127.0.0.1 ») :
 
 ```bash
-docker compose up -d db
+npm run db:up            # racine du repo : démarre Postgres (Docker)
 cd server
-cp .env.example .env   # DATABASE_URL=postgresql://blyp:blyp@localhost:5432/blyp
+cp .env.example .env     # si besoin : DATABASE_URL=postgresql://blyp:blyp@localhost:5432/blyp
 npx prisma db push
 npm run dev
 ```
+
+Téléphone en USB : `adb reverse tcp:3001 tcp:3001`, `.env` racine avec `EXPO_PUBLIC_API_URL=http://127.0.0.1:3001`, puis `npx expo run:android` ou `npm run android:usb`.
 
 Les variables communes peuvent aussi être dans un **`.env` à la racine du repo** : le serveur charge d’abord la racine, puis `server/.env` (qui écrase en cas de doublon). Voir la racine `.env.example`.
