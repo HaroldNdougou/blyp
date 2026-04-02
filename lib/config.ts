@@ -1,12 +1,12 @@
 import Constants from "expo-constants";
 
 function readConfiguredApiUrl(): string {
-  const env = process.env.EXPO_PUBLIC_API_URL?.trim();
-  if (env) return env;
   const extra = Constants.expoConfig?.extra as
     | { EXPO_PUBLIC_API_URL?: string }
     | undefined;
-  return extra?.EXPO_PUBLIC_API_URL?.trim() ?? "";
+  const fromExtra = extra?.EXPO_PUBLIC_API_URL?.trim() ?? "";
+  const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim() ?? "";
+  return (fromExtra || fromEnv).trim();
 }
 
 const configured = readConfiguredApiUrl();

@@ -1,14 +1,17 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError, pay as apiPay } from "@/lib/api/client";
 import { USE_MOCK_API } from "@/lib/config";
-import { formatFcfa } from "@/lib/format";
+import {
+  formatCameroonPhoneDisplay,
+  formatFcfa,
+  normalizeCameroonPhoneDigits,
+} from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   Image,
   Keyboard,
   KeyboardAvoidingView,
@@ -23,10 +26,14 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
+import { SafeAreaView as SafeModalArea, useSafeAreaInsets } from "react-native-safe-area-context";
 
 /** Vert identité Blyp */
 const BLYP_GREEN = "#5dc705";
 const ACCENT = BLYP_GREEN;
+
+/** Même principe que `app/deposit.tsx` : feuille sous la barre de statut. */
+const REG_SHEET_EXTRA_TOP = 36;
 
 export default function Index() {
   const {
@@ -44,11 +51,13 @@ export default function Index() {
   const [welcomePhone, setWelcomePhone] = useState("");
   const [welcomeOtp, setWelcomeOtp] = useState("");
   const [welcomeStep, setWelcomeStep] = useState<"phone" | "otp">("phone");
-  const [overlaySlideW, setOverlaySlideW] = useState(0);
-  const slideProgress = useRef(new Animated.Value(0)).current;
   const [authOtpSending, setAuthOtpSending] = useState(false);
   const [authVerifySending, setAuthVerifySending] = useState(false);
   const inviteBootstrapped = useRef(false);
+  const regPhoneInputRef = useRef<TextInput>(null);
+  const regOtpInputRef = useRef<TextInput>(null);
+  const regInsets = useSafeAreaInsets();
+  const regSheetTop = regInsets.top + REG_SHEET_EXTRA_TOP;
 
   const showRegisterOverlay = !user && registerInviteVisible;
 
@@ -68,29 +77,26 @@ export default function Index() {
     if (registerInviteVisible) {
       setWelcomeStep("phone");
       setWelcomeOtp("");
-      slideProgress.setValue(0);
     } else {
       setWelcomeStep("phone");
       setWelcomeOtp("");
       setWelcomePhone("");
-      slideProgress.setValue(0);
     }
-  }, [registerInviteVisible, slideProgress]);
+  }, [registerInviteVisible]);
 
+  /** Focus + clavier après ouverture du modal / changement d’étape (délai Android = fin animation). */
   useEffect(() => {
-    if (overlaySlideW <= 0) return;
-    Animated.spring(slideProgress, {
-      toValue: welcomeStep === "otp" ? 1 : 0,
-      useNativeDriver: true,
-      friction: 9,
-      tension: 68,
-    }).start();
-  }, [welcomeStep, overlaySlideW, slideProgress]);
-
-  const overlaySlideTx = slideProgress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -overlaySlideW],
-  });
+    if (!showRegisterOverlay) return;
+    const delay = Platform.OS === "android" ? 450 : 120;
+    const t = setTimeout(() => {
+      if (welcomeStep === "phone") {
+        regPhoneInputRef.current?.focus();
+      } else {
+        regOtpInputRef.current?.focus();
+      }
+    }, delay);
+    return () => clearTimeout(t);
+  }, [showRegisterOverlay, welcomeStep]);
 
   const OTP_LEN = 6;
 
@@ -281,84 +287,94 @@ export default function Index() {
           <Modal
             visible={showRegisterOverlay}
             transparent
-            animationType="fade"
+            animationType="slide"
             statusBarTranslucent
             onRequestClose={() => setRegisterInviteVisible(false)}
           >
-            <KeyboardAvoidingView
-              style={styles.overlayKeyboardRoot}
-              behavior={Platform.OS === "ios" ? "padding" : "height"}
-            >
-              <View style={styles.overlayRoot}>
-                <Pressable
-                  style={styles.overlayBackdrop}
-                  onPress={() => {
-                    Keyboard.dismiss();
-                    setRegisterInviteVisible(false);
-                  }}
-                  accessibilityLabel="Fermer"
-                  accessibilityHint="Ferme la fenêtre d'inscription"
-                />
-                <View style={styles.overlayCenter} pointerEvents="box-none">
-                  <View style={styles.overlayCard} accessibilityRole="none">
-                    <Text style={styles.overlayEyebrow}>Bienvenue</Text>
-                    <Text style={styles.overlayTitle}>
-                      Créez votre compte en quelques secondes pour sécuriser vos paiements.
-                    </Text>
-
-                    <View
-                      style={styles.overlaySlideViewport}
-                      onLayout={(e) => setOverlaySlideW(e.nativeEvent.layout.width)}
-                    >
-                      <Animated.View
-                        style={[
-                          styles.overlaySlideRow,
-                          {
-                            width: overlaySlideW > 0 ? overlaySlideW * 2 : undefined,
-                            transform: [{ translateX: overlaySlideTx }],
-                          },
+            <View style={styles.regModalRoot}>
+              <Pressable
+                style={styles.regModalBackdrop}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setRegisterInviteVisible(false);
+                }}
+                accessibilityLabel="Fermer"
+                accessibilityRole="button"
+              />
+              <View style={[styles.regModalSheet, { marginTop: regSheetTop }]}>
+                <KeyboardAvoidingView
+                  style={styles.regModalKeyboard}
+                  behavior={Platform.OS === "ios" ? "padding" : "height"}
+                >
+                  <SafeModalArea
+                    style={styles.regModalSafe}
+                    edges={["bottom", "left", "right"]}
+                  >
+                    <View style={styles.regModalHeader}>
+                      <Pressable
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setRegisterInviteVisible(false);
+                        }}
+                        style={({ pressed }) => [
+                          styles.regModalCloseBtn,
+                          pressed && styles.regModalCloseBtnPressed,
                         ]}
+                        hitSlop={12}
                       >
-                        <View
-                          style={[styles.overlaySlidePage, overlaySlideW > 0 && { width: overlaySlideW }]}
-                        >
-                          <Text style={styles.overlaySub}>
-                            {USE_MOCK_API
-                              ? "Sans serveur : après Continuer, vous pourrez entrer n’importe quel code à 6 chiffres (démo locale)."
-                              : "Nous vous enverrons un code par SMS — sans mot de passe à retenir."}
+                        <Ionicons name="close" size={28} color="#333" />
+                      </Pressable>
+                      <Text style={styles.regModalHeaderTitle}>
+                        {welcomeStep === "phone" ? "Inscription" : "Code SMS"}
+                      </Text>
+                      <View style={styles.regModalHeaderSpacer} />
+                    </View>
+
+                    <ScrollView
+                      contentContainerStyle={styles.regModalScroll}
+                      keyboardShouldPersistTaps="handled"
+                      showsVerticalScrollIndicator={false}
+                    >
+                      {welcomeStep === "phone" ? (
+                        <>
+                          <Text style={styles.regModalLead}>
+                            Créez votre compte en quelques secondes. Nous vous enverrons un code
+                            par SMS pour vérifier votre numéro.
                           </Text>
-                          <Text style={styles.overlayFieldLabel}>Numéro de téléphone</Text>
-                          <View style={styles.overlayPhoneWrap}>
-                            <Text style={styles.overlayPrefix}>+237</Text>
+                          <Text style={styles.regModalLabel}>Numéro de téléphone</Text>
+                          <View style={styles.regModalPhoneWrap}>
+                            <Text style={styles.regModalPrefix}>+237</Text>
                             <TextInput
-                              style={styles.overlayPhoneInput}
-                              placeholder="6 XX XX XX XX"
+                              ref={regPhoneInputRef}
+                              style={styles.regModalPhoneInput}
+                              placeholder="612345678"
                               placeholderTextColor="#CCC"
-                              keyboardType="phone-pad"
+                              keyboardType="number-pad"
+                              maxLength={9}
                               value={welcomePhone}
-                              onChangeText={setWelcomePhone}
-                              maxLength={12}
+                              onChangeText={(t) =>
+                                setWelcomePhone(normalizeCameroonPhoneDigits(t))
+                              }
+                              showSoftInputOnFocus
                             />
                           </View>
                           <Pressable
                             style={({ pressed }) => [
-                              styles.overlayPrimaryBtn,
+                              styles.regModalPrimaryBtn,
                               pressed &&
-                                welcomePhone.trim() &&
+                                welcomePhone.length === 9 &&
                                 !authOtpSending &&
-                                styles.overlayPrimaryBtnPressed,
-                              (!welcomePhone.trim() || authOtpSending) &&
-                                styles.overlayPrimaryBtnDisabled,
+                                styles.regModalPrimaryBtnPressed,
+                              (welcomePhone.length !== 9 || authOtpSending) &&
+                                styles.regModalPrimaryBtnDisabled,
                             ]}
-                            disabled={
-                              !welcomePhone.trim() || authOtpSending
-                            }
+                            disabled={welcomePhone.length !== 9 || authOtpSending}
                             onPress={async () => {
-                              if (!welcomePhone.trim()) return;
+                              if (welcomePhone.length !== 9) return;
                               Keyboard.dismiss();
                               setAuthOtpSending(true);
                               try {
-                                await requestOtp(welcomePhone.trim());
+                                await requestOtp(welcomePhone);
                                 setWelcomeStep("otp");
                               } catch (e) {
                                 Alert.alert(
@@ -375,45 +391,48 @@ export default function Index() {
                             {authOtpSending ? (
                               <ActivityIndicator color="#fff" size="small" />
                             ) : (
-                              <Text style={styles.overlayPrimaryBtnText}>
-                                Continuer
-                              </Text>
+                              <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
                             )}
                           </Pressable>
-                        </View>
-
-                        <View
-                          style={[styles.overlaySlidePage, overlaySlideW > 0 && { width: overlaySlideW }]}
-                        >
-                          <Text style={styles.overlaySub}>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.regModalLead}>
                             {USE_MOCK_API
                               ? `Démo : saisissez ${OTP_LEN} chiffres au choix, puis Valider.`
                               : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS.`}
                           </Text>
-                          <Text style={styles.overlayOtpHint}>
-                            +237 {welcomePhone.trim() || "…"}
+                          <Text style={styles.regModalOtpHint}>
+                            +237{" "}
+                            {welcomePhone
+                              ? formatCameroonPhoneDisplay(welcomePhone)
+                              : "…"}
                           </Text>
-                          <Text style={styles.overlayFieldLabel}>Code de vérification</Text>
+                          <Text style={styles.regModalLabel}>Code de vérification</Text>
                           <TextInput
-                            style={styles.overlayOtpInput}
+                            ref={regOtpInputRef}
+                            style={styles.regModalOtpInput}
                             placeholder="• • • • • •"
                             placeholderTextColor="#DDD"
                             keyboardType="number-pad"
                             value={welcomeOtp}
-                            onChangeText={(t) => setWelcomeOtp(t.replace(/\D/g, "").slice(0, OTP_LEN))}
+                            onChangeText={(t) =>
+                              setWelcomeOtp(t.replace(/\D/g, "").slice(0, OTP_LEN))
+                            }
                             maxLength={OTP_LEN}
                             textContentType="oneTimeCode"
                             autoComplete="sms-otp"
+                            showSoftInputOnFocus
                           />
                           <Pressable
                             style={({ pressed }) => [
-                              styles.overlayPrimaryBtn,
+                              styles.regModalPrimaryBtn,
                               pressed &&
                                 welcomeOtp.length === OTP_LEN &&
                                 !authVerifySending &&
-                                styles.overlayPrimaryBtnPressed,
+                                styles.regModalPrimaryBtnPressed,
                               (welcomeOtp.length !== OTP_LEN || authVerifySending) &&
-                                styles.overlayPrimaryBtnDisabled,
+                                styles.regModalPrimaryBtnDisabled,
                             ]}
                             disabled={
                               welcomeOtp.length !== OTP_LEN || authVerifySending
@@ -423,10 +442,7 @@ export default function Index() {
                               Keyboard.dismiss();
                               setAuthVerifySending(true);
                               try {
-                                await verifyAndSignIn(
-                                  welcomePhone.trim(),
-                                  welcomeOtp,
-                                );
+                                await verifyAndSignIn(welcomePhone, welcomeOtp);
                                 setRegisterInviteVisible(false);
                               } catch (e) {
                                 Alert.alert(
@@ -443,14 +459,12 @@ export default function Index() {
                             {authVerifySending ? (
                               <ActivityIndicator color="#fff" size="small" />
                             ) : (
-                              <Text style={styles.overlayPrimaryBtnText}>
-                                Valider
-                              </Text>
+                              <Text style={styles.regModalPrimaryBtnText}>Valider</Text>
                             )}
                           </Pressable>
                           <Pressable
                             style={({ pressed }) => [
-                              styles.overlayBackLink,
+                              styles.regModalBackLink,
                               pressed && { opacity: 0.6 },
                             ]}
                             onPress={() => {
@@ -458,15 +472,17 @@ export default function Index() {
                               setWelcomeStep("phone");
                             }}
                           >
-                            <Text style={styles.overlayBackLinkText}>Modifier le numéro</Text>
+                            <Text style={styles.regModalBackLinkText}>
+                              Modifier le numéro
+                            </Text>
                           </Pressable>
-                        </View>
-                      </Animated.View>
-                    </View>
-                  </View>
-                </View>
+                        </>
+                      )}
+                    </ScrollView>
+                  </SafeModalArea>
+                </KeyboardAvoidingView>
               </View>
-            </KeyboardAvoidingView>
+            </View>
           </Modal>
         </View>
       </TouchableWithoutFeedback>
@@ -565,151 +581,141 @@ const styles = StyleSheet.create({
     color: "#999",
     lineHeight: 14,
   },
-  overlayKeyboardRoot: {
+  /** Modal inscription — aligné sur `app/deposit.tsx` (feuille + header). */
+  regModalRoot: {
     flex: 1,
+    backgroundColor: "transparent",
   },
-  overlayRoot: {
+  regModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.45)",
+  },
+  regModalSheet: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  overlayBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.9)",
-  },
-  overlayCenter: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 22,
-  },
-  overlayCard: {
-    width: "100%",
-    maxWidth: 312,
     backgroundColor: "#fff",
-    borderRadius: 16,
-    paddingVertical: 22,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1,
-    shadowRadius: 18,
-    elevation: 6,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    overflow: "hidden",
   },
-  overlayEyebrow: {
-    fontSize: 10,
+  regModalKeyboard: {
+    flex: 1,
+  },
+  regModalSafe: {
+    flex: 1,
+  },
+  regModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0F0F0",
+  },
+  regModalCloseBtn: {
+    width: 44,
+    height: 44,
+    justifyContent: "center",
+    alignItems: "flex-start",
+  },
+  regModalCloseBtnPressed: { opacity: 0.6 },
+  regModalHeaderTitle: {
+    fontSize: 17,
     fontWeight: "700",
-    color: ACCENT,
-    letterSpacing: 1,
-    textAlign: "center",
-    marginBottom: 6,
+    color: "#333",
   },
-  overlayTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#222",
-    textAlign: "center",
-    lineHeight: 22,
-    marginBottom: 8,
+  regModalHeaderSpacer: { width: 44 },
+  regModalScroll: {
+    paddingHorizontal: 25,
+    paddingTop: 10,
+    paddingBottom: 28,
   },
-  overlaySub: {
+  regModalLead: {
     fontSize: 13,
-    color: "#777",
-    textAlign: "center",
-    lineHeight: 18,
-    marginBottom: 16,
+    color: "#666",
+    lineHeight: 19,
+    marginBottom: 22,
   },
-  overlayFieldLabel: {
+  regModalLabel: {
     fontSize: 12,
     fontWeight: "600",
     color: "#888",
-    marginBottom: 8,
+    marginBottom: 10,
     letterSpacing: 0.8,
+    textAlign: "center",
   },
-  overlayPhoneWrap: {
+  regModalPhoneWrap: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#F8F8F8",
-    borderRadius: 14,
+    borderRadius: 20,
+    paddingHorizontal: 20,
     borderWidth: 1,
     borderColor: "#EEE",
-    paddingHorizontal: 14,
-    marginBottom: 18,
+    marginBottom: 20,
+    minHeight: 56,
   },
-  overlayPrefix: {
-    fontSize: 16,
+  regModalPrefix: {
+    fontSize: 17,
     fontWeight: "700",
     color: "#333",
-    marginRight: 8,
+    marginRight: 10,
   },
-  overlayPhoneInput: {
+  regModalPhoneInput: {
     flex: 1,
-    height: 48,
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "600",
     color: "#222",
+    paddingVertical: 14,
   },
-  overlayPrimaryBtn: {
+  regModalPrimaryBtn: {
+    backgroundColor: ACCENT,
+    height: 56,
+    borderRadius: 28,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: ACCENT,
-    height: 46,
-    borderRadius: 23,
-    paddingHorizontal: 16,
   },
-  overlayPrimaryBtnPressed: {
-    backgroundColor: "#4bb004",
-    transform: [{ scale: 0.98 }],
+  regModalPrimaryBtnPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
   },
-  overlayPrimaryBtnDisabled: {
+  regModalPrimaryBtnDisabled: {
     backgroundColor: "#CCC",
   },
-  overlayPrimaryBtnText: {
+  regModalPrimaryBtnText: {
     color: "#fff",
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: "700",
   },
-  overlaySlideViewport: {
-    width: "100%",
-    overflow: "hidden",
-  },
-  overlaySlideRow: {
-    flexDirection: "row",
-  },
-  overlaySlidePage: {
-    flexShrink: 0,
-  },
-  overlayOtpHint: {
-    fontSize: 13,
+  regModalOtpHint: {
+    fontSize: 14,
     fontWeight: "600",
     color: "#555",
     textAlign: "center",
-    marginBottom: 12,
+    marginBottom: 16,
   },
-  overlayOtpInput: {
+  regModalOtpInput: {
     width: "100%",
-    height: 48,
+    height: 56,
     fontSize: 22,
     fontWeight: "700",
     letterSpacing: 8,
     textAlign: "center",
     color: "#222",
     backgroundColor: "#F8F8F8",
-    borderRadius: 14,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: "#EEE",
-    marginBottom: 18,
+    marginBottom: 20,
     paddingHorizontal: 12,
   },
-  overlayBackLink: {
+  regModalBackLink: {
     alignSelf: "center",
-    marginTop: 4,
+    marginTop: 8,
     paddingVertical: 8,
     paddingHorizontal: 12,
   },
-  overlayBackLinkText: {
+  regModalBackLinkText: {
     fontSize: 14,
     fontWeight: "600",
     color: ACCENT,

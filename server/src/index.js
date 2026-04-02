@@ -1,10 +1,11 @@
-import "dotenv/config";
+import "./loadEnv.js";
 import { spawn } from "node:child_process";
 import crypto from "crypto";
 import cors from "cors";
 import express from "express";
 import jwt from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
+import { deliverOtpSms, describeSmsSetup } from "./sms.js";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -60,9 +61,22 @@ app.post("/auth/request-otp", async (req, res) => {
     await prisma.otpChallenge.create({
       data: { phone, codeHash, expiresAt },
     });
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[OTP dev] ${phone} → ${code}`);
+
+    const sent = await deliverOtpSms(phone, code);
+    if (!sent.ok) {
+      await prisma.otpChallenge.deleteMany({ where: { phone } });
+      if (sent.reason === "sms_not_configured") {
+        return res.status(503).json({
+          error:
+            "Envoi SMS non configuré côté serveur. Voir server/.env.example (Obit SMS, Africa’s Talking, webhook, etc.).",
+        });
+      }
+      return res.status(502).json({
+        error:
+          "Impossible d’envoyer le SMS pour le moment. Réessaie dans un instant.",
+      });
     }
+
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -192,7 +206,18 @@ app.get("/transactions", authMiddleware, async (req, res) => {
   });
 });
 
-app.get("/health", (_, res) => res.json({ ok: true }));
+app.get("/health", (_, res) => {
+  const sms = describeSmsSetup();
+  res.json({
+    ok: true,
+    sms: {
+      sending: sms.sendingSms,
+      provider: sms.provider,
+      devOtpInLogs: Boolean(sms.devOtpInLogs),
+      misconfigured: Boolean(sms.misconfigured),
+    },
+  });
+});
 
 app.use((err, _req, res, _next) => {
   console.error(err);
@@ -216,6 +241,27 @@ function runDbPushInBackground() {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Blyp API http://0.0.0.0:${PORT}`);
+  const sms = describeSmsSetup();
+  if (sms.sendingSms) {
+    const sender =
+      process.env.OBIT_SMS_SENDER?.trim() ||
+      process.env.AFRICASTALKING_SENDER_ID?.trim();
+    console.log(
+      `[blyp] SMS actif (${sms.provider})${sender ? ` — expéditeur ${sender}` : ""}`,
+    );
+  } else if (sms.misconfigured) {
+    console.error(
+      `[blyp] SMS : fournisseur ${sms.provider} demandé (SMS_PROVIDER) mais variables incomplètes — voir server/.env.example`,
+    );
+  } else if (sms.devOtpInLogs) {
+    console.log(
+      "[blyp] SMS : mode dev — OTP uniquement dans les logs (configure OBIT_SMS_* dans server/.env)",
+    );
+  } else {
+    console.error(
+      "[blyp] SMS non configuré — en production les OTP par SMS échoueront (OBIT_SMS_KEY_API + OBIT_SMS_SENDER, etc.)",
+    );
+  }
   if (process.env.NODE_ENV === "production") {
     if (!process.env.DATABASE_URL) {
       console.error(

@@ -1,3 +1,4 @@
+import { normalizeCameroonPhoneDigits } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack, useLocalSearchParams } from "expo-router";
 import React, { useState } from "react";
@@ -22,7 +23,9 @@ export default function RegisterScreen() {
       : Array.isArray(params.phone)
         ? params.phone[0] ?? ""
         : "";
-  const [phone, setPhone] = useState(fromWelcome);
+  const [phone, setPhone] = useState(() =>
+    normalizeCameroonPhoneDigits(fromWelcome),
+  );
 
   return (
     <KeyboardAvoidingView
@@ -53,22 +56,24 @@ export default function RegisterScreen() {
             <Text style={styles.prefix}>+237</Text>
             <TextInput
               style={styles.input}
-              placeholder="6 XX XX XX XX"
+              placeholder="612345678"
               placeholderTextColor="#CCC"
-              keyboardType="phone-pad"
+              keyboardType="number-pad"
+              maxLength={9}
               value={phone}
-              onChangeText={setPhone}
-              maxLength={12}
+              onChangeText={(t) => setPhone(normalizeCameroonPhoneDigits(t))}
+              autoFocus
+              showSoftInputOnFocus
             />
           </View>
 
           <Pressable
             style={({ pressed }) => [
               styles.primaryBtn,
-              pressed && phone.trim() && styles.primaryBtnPressed,
-              !phone.trim() && styles.primaryBtnDisabled,
+              pressed && phone.length === 9 && styles.primaryBtnPressed,
+              phone.length !== 9 && styles.primaryBtnDisabled,
             ]}
-            disabled={!phone.trim()}
+            disabled={phone.length !== 9}
             onPress={() => {
               /* TODO: envoi OTP */
               router.back();

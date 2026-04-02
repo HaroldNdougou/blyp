@@ -1,4 +1,7 @@
-# Dev local du serveur avec Postgres (optionnel si tu utilises le mode démo dans l’app).
+# Dev local : Postgres + API Blyp.
+# 1) cp .env.example .env  à la racine, remplis OBIT_SMS_KEY_API, OBIT_SMS_SENDER, JWT_SECRET, OTP_PEPPER
+# 2) docker compose up --build
+# 3) EXPO_PUBLIC_API_URL=http://localhost:3001 dans .env pour l’app
 services:
   db:
     image: postgres:16-alpine
@@ -10,6 +13,23 @@ services:
       - "5432:5432"
     volumes:
       - blyp_pgdata:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://blyp:blyp@db:5432/blyp
+      JWT_SECRET: ${JWT_SECRET:-dev-jwt-change-me}
+      OTP_PEPPER: ${OTP_PEPPER:-dev-pepper-change-me}
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      OBIT_SMS_KEY_API: ${OBIT_SMS_KEY_API:-}
+      OBIT_SMS_SENDER: ${OBIT_SMS_SENDER:-}
+      OBIT_SMS_BASE_URL: ${OBIT_SMS_BASE_URL:-}
+    depends_on:
+      - db
 
 volumes:
   blyp_pgdata:

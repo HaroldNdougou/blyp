@@ -1,3 +1,23 @@
+/** Chiffres uniquement, max 9 (mobile CM après +237). */
+export function normalizeCameroonPhoneDigits(raw: string): string {
+  return String(raw ?? "")
+    .replace(/\D/g, "")
+    .slice(0, 9);
+}
+
+/** Affichage type « 6 12 34 56 78 » à partir des 9 chiffres max. */
+export function formatCameroonPhoneDisplay(digits: string): string {
+  const d = normalizeCameroonPhoneDigits(digits);
+  if (d.length === 0) return "";
+  const head = d[0];
+  const rest = d.slice(1);
+  const parts: string[] = [head];
+  for (let i = 0; i < rest.length; i += 2) {
+    parts.push(rest.slice(i, i + 2));
+  }
+  return parts.join(" ");
+}
+
 /** Affichage montant FCFA type "12 500" */
 export function formatFcfa(amount: number): string {
   return Math.max(0, Math.floor(amount)).toLocaleString("fr-FR");

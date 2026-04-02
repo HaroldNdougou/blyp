@@ -29,3 +29,4 @@ services:
         generateValue: true
       - key: OTP_PEPPER
         generateValue: true
+      # Ajoute dans le dashboard Render (secrets) : SMS_PROVIDER, OBIT_SMS_KEY_API, OBIT_SMS_SENDER
