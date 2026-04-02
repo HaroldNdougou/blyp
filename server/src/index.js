@@ -79,8 +79,16 @@ app.post("/auth/request-otp", async (req, res) => {
 
     res.json({ ok: true });
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Impossible d’envoyer le code" });
+    console.error("[auth/request-otp]", e);
+    const detail =
+      e instanceof Error ? e.message : typeof e === "string" ? e : undefined;
+    if (process.env.NODE_ENV === "production") {
+      return res.status(500).json({ error: "Impossible d’envoyer le code" });
+    }
+    return res.status(500).json({
+      error: "Impossible d’envoyer le code",
+      ...(detail ? { detail } : {}),
+    });
   }
 });
 
