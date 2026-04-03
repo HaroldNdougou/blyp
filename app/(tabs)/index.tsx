@@ -1,6 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError, pay as apiPay, sayHello } from "@/lib/api/client";
-import { USE_MOCK_API } from "@/lib/config";
+import { API_BASE_URL, USE_MOCK_API } from "@/lib/config";
 import {
     formatCameroonPhoneDisplay,
     formatFcfa,
@@ -35,6 +35,11 @@ const ACCENT = BLYP_GREEN;
 /** Même principe que `app/deposit.tsx` : feuille sous la barre de statut. */
 const REG_SHEET_EXTRA_TOP = 36;
 
+/** Aligné sur le cooldown serveur (`/auth/request-otp`). */
+const OTP_RESEND_COOLDOWN_SEC = 60;
+/** Limite d’envois par ouverture du modal d’inscription. */
+const MAX_OTP_SENDS_PER_SESSION = 8;
+
 export default function Index() {
   const {
     user,
@@ -52,7 +57,10 @@ export default function Index() {
   const [welcomeOtp, setWelcomeOtp] = useState("");
   const [welcomeStep, setWelcomeStep] = useState<"phone" | "otp">("phone");
   const [authOtpSending, setAuthOtpSending] = useState(false);
+  const [authResendSending, setAuthResendSending] = useState(false);
   const [authVerifySending, setAuthVerifySending] = useState(false);
+  const [otpResendCooldown, setOtpResendCooldown] = useState(0);
+  const [otpSendCount, setOtpSendCount] = useState(0);
   const [helloSending, setHelloSending] = useState(false);
   const inviteBootstrapped = useRef(false);
   const regPhoneInputRef = useRef<TextInput>(null);
@@ -78,12 +86,54 @@ export default function Index() {
     if (registerInviteVisible) {
       setWelcomeStep("phone");
       setWelcomeOtp("");
+      setOtpResendCooldown(0);
+      setOtpSendCount(0);
     } else {
       setWelcomeStep("phone");
       setWelcomeOtp("");
       setWelcomePhone("");
+      setOtpResendCooldown(0);
+      setOtpSendCount(0);
     }
   }, [registerInviteVisible]);
+
+  useEffect(() => {
+    if (welcomeStep !== "otp" || otpResendCooldown <= 0) return;
+    const id = setInterval(() => {
+      setOtpResendCooldown((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [welcomeStep, otpResendCooldown > 0]);
+
+  const requestOtpForRegistration = async (mode: "initial" | "resend") => {
+    if (welcomePhone.length !== 9) return;
+    if (otpSendCount >= MAX_OTP_SENDS_PER_SESSION) {
+      Alert.alert(
+        "Limite d’envois",
+        "Nombre maximum d’envois de code atteint pour cette session. Réessayez plus tard ou contactez le support.",
+      );
+      return;
+    }
+    if (mode === "resend" && otpResendCooldown > 0) return;
+    const setBusy = mode === "initial" ? setAuthOtpSending : setAuthResendSending;
+    setBusy(true);
+    try {
+      await requestOtp(welcomePhone);
+      if (mode === "initial") setWelcomeStep("otp");
+      setWelcomeOtp("");
+      setOtpSendCount((c) => c + 1);
+      setOtpResendCooldown(OTP_RESEND_COOLDOWN_SEC);
+    } catch (e) {
+      const msg =
+        e instanceof ApiError ? e.message : "Impossible d’envoyer le code.";
+      if (e instanceof ApiError && e.retryAfterSeconds != null) {
+        setOtpResendCooldown(e.retryAfterSeconds);
+      }
+      Alert.alert("Code SMS", msg);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   /** Focus + clavier après ouverture du modal / changement d’étape (délai Android = fin animation). */
   useEffect(() => {
@@ -241,13 +291,20 @@ export default function Index() {
                   setHelloSending(true);
                   try {
                     const r = await sayHello();
+                    if (USE_MOCK_API || r.id.startsWith("mock-hello")) {
+                      Alert.alert(
+                        "Say Hello — mode démo",
+                        "Rien n’est écrit dans PostgreSQL / Railway : l’app tourne sans EXPO_PUBLIC_API_URL dans le binaire.\n\nAjoute l’URL HTTPS de ton API dans .env à la racine du projet, puis reconstruis avec npx expo run:android (ou ios).",
+                      );
+                      return;
+                    }
                     const d = new Date(r.createdAt);
                     Alert.alert(
                       "Say Hello",
-                      `Enregistré côté serveur :\n${d.toLocaleString("fr-FR", {
+                      `API utilisée :\n${API_BASE_URL}\n\nHorodatage serveur :\n${d.toLocaleString("fr-FR", {
                         dateStyle: "medium",
                         timeStyle: "medium",
-                      })}\n\nUTC : ${r.createdAt}`,
+                      })}\n\nUTC : ${r.createdAt}\nid : ${r.id}`,
                     );
                   } catch (e) {
                     Alert.alert(
@@ -404,28 +461,22 @@ export default function Index() {
                               pressed &&
                                 welcomePhone.length === 9 &&
                                 !authOtpSending &&
+                                otpSendCount < MAX_OTP_SENDS_PER_SESSION &&
                                 styles.regModalPrimaryBtnPressed,
-                              (welcomePhone.length !== 9 || authOtpSending) &&
+                              (welcomePhone.length !== 9 ||
+                                authOtpSending ||
+                                otpSendCount >= MAX_OTP_SENDS_PER_SESSION) &&
                                 styles.regModalPrimaryBtnDisabled,
                             ]}
-                            disabled={welcomePhone.length !== 9 || authOtpSending}
+                            disabled={
+                              welcomePhone.length !== 9 ||
+                              authOtpSending ||
+                              otpSendCount >= MAX_OTP_SENDS_PER_SESSION
+                            }
                             onPress={async () => {
                               if (welcomePhone.length !== 9) return;
                               Keyboard.dismiss();
-                              setAuthOtpSending(true);
-                              try {
-                                await requestOtp(welcomePhone);
-                                setWelcomeStep("otp");
-                              } catch (e) {
-                                Alert.alert(
-                                  "Code SMS",
-                                  e instanceof ApiError
-                                    ? e.message
-                                    : "Impossible d’envoyer le code.",
-                                );
-                              } finally {
-                                setAuthOtpSending(false);
-                              }
+                              await requestOtpForRegistration("initial");
                             }}
                           >
                             {authOtpSending ? (
@@ -502,6 +553,44 @@ export default function Index() {
                               <Text style={styles.regModalPrimaryBtnText}>Valider</Text>
                             )}
                           </Pressable>
+                          {otpSendCount >= MAX_OTP_SENDS_PER_SESSION ? (
+                            <Text style={styles.regModalResendLimit}>
+                              Limite d’envois atteinte. Fermez l’inscription et réessayez plus
+                              tard, ou modifiez le numéro ci-dessous.
+                            </Text>
+                          ) : otpResendCooldown > 0 ? (
+                            <Text style={styles.regModalResendHint}>
+                              Renvoyer le code dans{" "}
+                              <Text style={styles.regModalResendHintEm}>
+                                {otpResendCooldown}s
+                              </Text>
+                            </Text>
+                          ) : (
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalResendBtn,
+                                (authResendSending || authVerifySending) &&
+                                  styles.regModalResendBtnDisabled,
+                                pressed &&
+                                  !authResendSending &&
+                                  !authVerifySending &&
+                                  styles.regModalResendBtnPressed,
+                              ]}
+                              disabled={authResendSending || authVerifySending}
+                              onPress={async () => {
+                                Keyboard.dismiss();
+                                await requestOtpForRegistration("resend");
+                              }}
+                            >
+                              {authResendSending ? (
+                                <ActivityIndicator color={ACCENT} size="small" />
+                              ) : (
+                                <Text style={styles.regModalResendBtnText}>
+                                  Renvoyer le code
+                                </Text>
+                              )}
+                            </Pressable>
+                          )}
                           <Pressable
                             style={({ pressed }) => [
                               styles.regModalBackLink,
@@ -510,6 +599,7 @@ export default function Index() {
                             onPress={() => {
                               Keyboard.dismiss();
                               setWelcomeStep("phone");
+                              setOtpResendCooldown(0);
                             }}
                           >
                             <Text style={styles.regModalBackLinkText}>
@@ -774,6 +864,48 @@ const styles = StyleSheet.create({
     borderColor: "#EEE",
     marginBottom: 20,
     paddingHorizontal: 12,
+  },
+  regModalResendHint: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#666",
+    textAlign: "center",
+    marginTop: 4,
+    marginBottom: 4,
+  },
+  regModalResendHintEm: {
+    color: "#333",
+    fontVariant: ["tabular-nums"],
+  },
+  regModalResendBtn: {
+    alignSelf: "center",
+    marginTop: 4,
+    marginBottom: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minHeight: 44,
+    justifyContent: "center",
+  },
+  regModalResendBtnPressed: {
+    opacity: 0.65,
+  },
+  regModalResendBtnDisabled: {
+    opacity: 0.45,
+  },
+  regModalResendBtnText: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: ACCENT,
+    textDecorationLine: "underline",
+  },
+  regModalResendLimit: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#888",
+    textAlign: "center",
+    marginTop: 6,
+    marginBottom: 4,
+    lineHeight: 18,
   },
   regModalBackLink: {
     alignSelf: "center",

@@ -26,6 +26,15 @@ model OtpChallenge {
   @@index([phone])
 }
 
+/// Chaque envoi SMS OTP réussi (inscription + renvoi) — audit en base.
+model OtpSendLog {
+  id        String   @id @default(cuid())
+  phone     String
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
 /// Clics « Say Hello » — horodatage serveur (UTC) pour chaque enregistrement.
 model HelloLog {
   id        String   @id @default(cuid())

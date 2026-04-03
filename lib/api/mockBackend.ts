@@ -15,6 +15,8 @@ let sessionPhone: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
 let mockHelloSeq = 0;
+const lastMockOtpAtByPhone = new Map<string, number>();
+const MOCK_OTP_RESEND_MS = 60_000;
 
 function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
@@ -27,6 +29,19 @@ export function mockRequestOtp(phoneDigits: string): { ok: boolean } {
   if (!phone) {
     throw new ApiError("Numéro invalide (9 chiffres commençant par 6)", 400);
   }
+  const now = Date.now();
+  const prev = lastMockOtpAtByPhone.get(phone);
+  if (prev != null && now - prev < MOCK_OTP_RESEND_MS) {
+    const retryAfterSeconds = Math.ceil(
+      (MOCK_OTP_RESEND_MS - (now - prev)) / 1000,
+    );
+    throw new ApiError(
+      "Un nouveau code ne peut être envoyé que toutes les 60 secondes. Réessayez dans un instant.",
+      429,
+      { retryAfterSeconds },
+    );
+  }
+  lastMockOtpAtByPhone.set(phone, now);
   pendingOtpPhone = phone;
   return { ok: true };
 }

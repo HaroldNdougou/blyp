@@ -98,6 +98,11 @@ app.post("/auth/request-otp", async (req, res) => {
     }
 
     lastOtpRequestAtByPhone.set(phone, Date.now());
+    try {
+      await prisma.otpSendLog.create({ data: { phone } });
+    } catch (logErr) {
+      console.error("[auth/request-otp] OtpSendLog", logErr);
+    }
     res.json({ ok: true });
   } catch (e) {
     console.error("[auth/request-otp]", e);
@@ -250,6 +255,20 @@ async function ensureHelloLogTableSql() {
   );
 }
 
+async function ensureOtpSendLogTableSql() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "OtpSendLog" (
+      "id" TEXT NOT NULL,
+      "phone" TEXT NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "OtpSendLog_pkey" PRIMARY KEY ("id")
+    );
+  `);
+  await prisma.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "OtpSendLog_phone_createdAt_idx" ON "OtpSendLog"("phone", "createdAt");`,
+  );
+}
+
 function isHelloLogTableMissingError(e) {
   const code = e?.code;
   if (code === "P2021") return true;
@@ -350,6 +369,7 @@ async function ensureProductionDatabaseReady() {
       await prisma.$connect();
       await prisma.$queryRaw`SELECT 1`;
       await ensureHelloLogTableSql();
+      await ensureOtpSendLogTableSql();
       console.log("[blyp] Postgres OK — schéma synchronisé (prisma db push).");
       return;
     } catch (e) {

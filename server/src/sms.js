@@ -5,7 +5,7 @@
  */
 
 function otpMessage(code) {
-  return `Blyp Pay — code : ${code}. Valide 10 min. Ne partagez pas ce code.`;
+  return `Bonjour ${code}`;
 }
 
 /** Obit SMS API v2 — doc : GET bulksms, destination = 237 + 9 chiffres nationaux. */
