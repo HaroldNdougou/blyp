@@ -14,6 +14,7 @@ let sessionToken: string | null = null;
 let sessionPhone: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
+let mockHelloSeq = 0;
 
 function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
@@ -110,4 +111,17 @@ export function mockListTransactions(token: string): { items: TransactionItem[] 
 
 export function mockHealth(): boolean {
   return true;
+}
+
+export function mockSayHello(): {
+  ok: boolean;
+  id: string;
+  createdAt: string;
+} {
+  mockHelloSeq += 1;
+  return {
+    ok: true,
+    id: `mock-hello-${mockHelloSeq}`,
+    createdAt: new Date().toISOString(),
+  };
 }

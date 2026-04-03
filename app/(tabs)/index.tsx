@@ -1,30 +1,30 @@
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError, pay as apiPay } from "@/lib/api/client";
+import { ApiError, pay as apiPay, sayHello } from "@/lib/api/client";
 import { USE_MOCK_API } from "@/lib/config";
 import {
-  formatCameroonPhoneDisplay,
-  formatFcfa,
-  normalizeCameroonPhoneDigits,
+    formatCameroonPhoneDisplay,
+    formatFcfa,
+    normalizeCameroonPhoneDigits,
 } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  SafeAreaView,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableWithoutFeedback,
-  View,
+    ActivityIndicator,
+    Alert,
+    Image,
+    Keyboard,
+    KeyboardAvoidingView,
+    Modal,
+    Platform,
+    Pressable,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableWithoutFeedback,
+    View,
 } from "react-native";
 import { SafeAreaView as SafeModalArea, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -53,6 +53,7 @@ export default function Index() {
   const [welcomeStep, setWelcomeStep] = useState<"phone" | "otp">("phone");
   const [authOtpSending, setAuthOtpSending] = useState(false);
   const [authVerifySending, setAuthVerifySending] = useState(false);
+  const [helloSending, setHelloSending] = useState(false);
   const inviteBootstrapped = useRef(false);
   const regPhoneInputRef = useRef<TextInput>(null);
   const regOtpInputRef = useRef<TextInput>(null);
@@ -187,7 +188,7 @@ export default function Index() {
                       style={styles.balanceReassuranceIcon}
                     />
                     <Text style={styles.balanceReassurance}>
-                      Votre argent reste sur votre compte, protégé et utilisable uniquement par vous.
+                      Votre argent est protégé et utilisable uniquement par vous.
                     </Text>
                   </View>
                 </View>
@@ -227,6 +228,45 @@ export default function Index() {
                   <Text style={styles.createAccountBtnText}>Créer un compte</Text>
                 </Pressable>
               )}
+
+              <Pressable
+                style={({ pressed }) => [
+                  styles.sayHelloBtn,
+                  pressed && !helloSending && styles.sayHelloBtnPressed,
+                  helloSending && styles.sayHelloBtnDisabled,
+                ]}
+                disabled={helloSending}
+                onPress={async () => {
+                  Keyboard.dismiss();
+                  setHelloSending(true);
+                  try {
+                    const r = await sayHello();
+                    const d = new Date(r.createdAt);
+                    Alert.alert(
+                      "Say Hello",
+                      `Enregistré côté serveur :\n${d.toLocaleString("fr-FR", {
+                        dateStyle: "medium",
+                        timeStyle: "medium",
+                      })}\n\nUTC : ${r.createdAt}`,
+                    );
+                  } catch (e) {
+                    Alert.alert(
+                      "Say Hello",
+                      e instanceof ApiError ? e.message : "Impossible d’enregistrer.",
+                    );
+                  } finally {
+                    setHelloSending(false);
+                  }
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Say Hello"
+              >
+                {helloSending ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.sayHelloBtnText}>Say Hello</Text>
+                )}
+              </Pressable>
 
               {/* SECTION PROFIL */}
               <View style={styles.profileSection}>
@@ -533,6 +573,32 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: ACCENT,
   },
+  sayHelloBtn: {
+    alignSelf: "center",
+    marginTop: 12,
+    marginBottom: 4,
+    minWidth: 160,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 22,
+    backgroundColor: "#222",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  sayHelloBtnPressed: {
+    opacity: 0.88,
+    transform: [{ scale: 0.98 }],
+  },
+  sayHelloBtnDisabled: {
+    opacity: 0.5,
+  },
+  sayHelloBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
   balanceAmountRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -579,7 +645,7 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: "300",
     color: "#999",
-    lineHeight: 14,
+    lineHeight: 11,
   },
   /** Modal inscription — aligné sur `app/deposit.tsx` (feuille + header). */
   regModalRoot: {

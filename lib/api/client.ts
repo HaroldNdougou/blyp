@@ -1,7 +1,7 @@
 import { API_BASE_URL, USE_MOCK_API } from "../config";
-import type { ApiUser, TransactionItem } from "./types";
 import { ApiError } from "./errors";
 import * as mock from "./mockBackend";
+import type { ApiUser, TransactionItem } from "./types";
 
 export { ApiError } from "./errors";
 
@@ -70,6 +70,15 @@ export async function healthCheck(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function sayHello(): Promise<{
+  ok: boolean;
+  id: string;
+  createdAt: string;
+}> {
+  if (USE_MOCK_API) return mock.mockSayHello();
+  return request("/hello", { method: "POST", body: "{}" });
 }
 
 export async function requestOtp(phoneDigits: string): Promise<{ ok: boolean }> {

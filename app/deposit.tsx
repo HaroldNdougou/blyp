@@ -1,18 +1,18 @@
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError, deposit as apiDeposit } from "@/lib/api/client";
+import { deposit as apiDeposit, ApiError } from "@/lib/api/client";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, { useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 

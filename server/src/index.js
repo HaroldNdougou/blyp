@@ -1,10 +1,11 @@
-import "./loadEnv.js";
-import { spawn } from "node:child_process";
-import crypto from "crypto";
+import { PrismaClient } from "@prisma/client";
 import cors from "cors";
+import crypto from "crypto";
 import express from "express";
 import jwt from "jsonwebtoken";
-import { PrismaClient } from "@prisma/client";
+import { execSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
+import "./loadEnv.js";
 import { deliverOtpSms, describeSmsSetup } from "./sms.js";
 
 const prisma = new PrismaClient();
@@ -12,6 +13,10 @@ const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure";
 const OTP_PEPPER = process.env.OTP_PEPPER || "pepper";
+
+/** Délai minimum entre deux envois SMS pour un même numéro (évite abus / coûts). */
+const OTP_RESEND_COOLDOWN_MS = 60_000;
+const lastOtpRequestAtByPhone = new Map();
 
 app.use(cors({ origin: true }));
 app.use(express.json());
@@ -54,6 +59,20 @@ app.post("/auth/request-otp", async (req, res) => {
         .status(400)
         .json({ error: "Numéro invalide (9 chiffres commençant par 6)" });
     }
+
+    const now = Date.now();
+    const prev = lastOtpRequestAtByPhone.get(phone);
+    if (prev != null && now - prev < OTP_RESEND_COOLDOWN_MS) {
+      const retryAfterSeconds = Math.ceil(
+        (OTP_RESEND_COOLDOWN_MS - (now - prev)) / 1000,
+      );
+      return res.status(429).json({
+        error:
+          "Un nouveau code ne peut être envoyé que toutes les 60 secondes. Réessayez dans un instant.",
+        retryAfterSeconds,
+      });
+    }
+
     const code = String(Math.floor(100000 + Math.random() * 900000));
     const codeHash = hashOtp(phone, code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -65,6 +84,7 @@ app.post("/auth/request-otp", async (req, res) => {
     const sent = await deliverOtpSms(phone, code);
     if (!sent.ok) {
       await prisma.otpChallenge.deleteMany({ where: { phone } });
+      lastOtpRequestAtByPhone.delete(phone);
       if (sent.reason === "sms_not_configured") {
         return res.status(503).json({
           error:
@@ -77,6 +97,7 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
 
+    lastOtpRequestAtByPhone.set(phone, Date.now());
     res.json({ ok: true });
   } catch (e) {
     console.error("[auth/request-otp]", e);
@@ -136,12 +157,12 @@ app.post("/wallet/deposit", authMiddleware, async (req, res) => {
     return res.status(400).json({ error: "Montant invalide" });
   }
   try {
-    const result = await prisma.$transaction(async (tx) => {
+    const { balanceFcfa, depositId } = await prisma.$transaction(async (tx) => {
       const user = await tx.user.update({
         where: { id: req.userId },
         data: { balanceFcfa: { increment: amount } },
       });
-      await tx.transaction.create({
+      const row = await tx.transaction.create({
         data: {
           userId: req.userId,
           type: "DEPOSIT",
@@ -150,9 +171,10 @@ app.post("/wallet/deposit", authMiddleware, async (req, res) => {
           counterpartyPhone: null,
         },
       });
-      return user;
+      return { balanceFcfa: user.balanceFcfa, depositId: row.id };
     });
-    res.json({ balanceFcfa: result.balanceFcfa });
+    console.log("[wallet/deposit] enregistré", { userId: req.userId, amount, depositId });
+    res.json({ balanceFcfa, transactionId: depositId });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Dépôt impossible" });
@@ -214,10 +236,38 @@ app.get("/transactions", authMiddleware, async (req, res) => {
   });
 });
 
-app.get("/health", (_, res) => {
+/** Enregistre un clic avec date/heure serveur (test app → API → Railway). */
+app.post("/hello", async (_req, res) => {
+  try {
+    const row = await prisma.helloLog.create({ data: {} });
+    res.json({
+      ok: true,
+      id: row.id,
+      createdAt: row.createdAt.toISOString(),
+    });
+  } catch (e) {
+    console.error("[hello]", e);
+    res.status(500).json({ error: "Impossible d’enregistrer" });
+  }
+});
+
+app.get("/health", async (_, res) => {
   const sms = describeSmsSetup();
+  let database = "skipped";
+  if (process.env.DATABASE_URL?.trim()) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      database = "ok";
+    } catch (e) {
+      console.error("[health] database:", e);
+      database = "error";
+    }
+  } else {
+    database = "missing_url";
+  }
   res.json({
     ok: true,
+    database,
     sms: {
       sending: sms.sendingSms,
       provider: sms.provider,
@@ -232,23 +282,47 @@ app.use((err, _req, res, _next) => {
   res.status(500).json({ error: "Erreur serveur" });
 });
 
-function runDbPushInBackground() {
-  const child = spawn("npx", ["prisma", "db", "push"], {
-    stdio: "inherit",
-    env: process.env,
-    cwd: process.cwd(),
-  });
-  child.on("exit", (code) => {
-    if (code !== 0) {
-      console.error(`[blyp] prisma db push a échoué (code ${code}) — vérifie DATABASE_URL sur Railway`);
-    } else {
-      console.log("[blyp] schéma base synchronisé");
+/**
+ * En prod : exige DATABASE_URL, applique le schéma Prisma avant tout trafic (évite User / OtpChallenge absents).
+ */
+async function ensureProductionDatabaseReady() {
+  if (process.env.NODE_ENV !== "production") return;
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    console.error(
+      "[blyp] FATAL: DATABASE_URL absent. Sur Railway : service API → Variables → référence DATABASE_URL depuis Postgres (blyp-db).",
+    );
+    process.exit(1);
+  }
+  const attempts = 8;
+  const delayMs = 4000;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      execSync("npx prisma db push --skip-generate", {
+        cwd: process.cwd(),
+        env: { ...process.env, CI: "true" },
+        stdio: "inherit",
+        timeout: 120_000,
+      });
+      await prisma.$connect();
+      await prisma.$queryRaw`SELECT 1`;
+      console.log("[blyp] Postgres OK — schéma synchronisé (prisma db push).");
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[blyp] Sync DB tentative ${i + 1}/${attempts} échouée: ${msg}`);
+      if (i === attempts - 1) {
+        console.error(
+          "[blyp] FATAL: impossible de joindre Postgres ou d’appliquer le schéma. Vérifie que le service API référence bien la variable DATABASE_URL du plugin Postgres.",
+        );
+        process.exit(1);
+      }
+      await delay(delayMs);
     }
-  });
+  }
 }
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Blyp API http://0.0.0.0:${PORT}`);
+function logSmsStartup() {
   const sms = describeSmsSetup();
   if (sms.sendingSms) {
     const sender =
@@ -270,13 +344,17 @@ app.listen(PORT, "0.0.0.0", () => {
       "[blyp] SMS non configuré — en production les OTP par SMS échoueront (OBIT_SMS_KEY_API + OBIT_SMS_SENDER, etc.)",
     );
   }
-  if (process.env.NODE_ENV === "production") {
-    if (!process.env.DATABASE_URL) {
-      console.error(
-        "[blyp] DATABASE_URL manquant — ajoute la référence Postgres dans Variables Railway",
-      );
-    } else {
-      runDbPushInBackground();
-    }
-  }
+}
+
+async function main() {
+  await ensureProductionDatabaseReady();
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`Blyp API http://0.0.0.0:${PORT}`);
+    logSmsStartup();
+  });
+}
+
+main().catch((e) => {
+  console.error(e);
+  process.exit(1);
 });
