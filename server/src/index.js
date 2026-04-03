@@ -236,18 +236,61 @@ app.get("/transactions", authMiddleware, async (req, res) => {
   });
 });
 
+/** Si `db push` n’a pas créé la table (image ancienne, etc.), on la crée au vol (aligné sur schema.prisma). */
+async function ensureHelloLogTableSql() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "HelloLog" (
+      "id" TEXT NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "HelloLog_pkey" PRIMARY KEY ("id")
+    );
+  `);
+  await prisma.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "HelloLog_createdAt_idx" ON "HelloLog"("createdAt");`,
+  );
+}
+
+function isHelloLogTableMissingError(e) {
+  const code = e?.code;
+  if (code === "P2021") return true;
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return /HelloLog|helloLog/i.test(msg) && /does not exist|n'existe pas|relation/i.test(msg);
+}
+
 /** Enregistre un clic avec date/heure serveur (test app → API → Railway). */
 app.post("/hello", async (_req, res) => {
+  const insertRow = () => prisma.helloLog.create({ data: {} });
   try {
-    const row = await prisma.helloLog.create({ data: {} });
+    const row = await insertRow();
     res.json({
       ok: true,
       id: row.id,
       createdAt: row.createdAt.toISOString(),
     });
   } catch (e) {
+    if (isHelloLogTableMissingError(e)) {
+      try {
+        await ensureHelloLogTableSql();
+        const row = await insertRow();
+        res.json({
+          ok: true,
+          id: row.id,
+          createdAt: row.createdAt.toISOString(),
+        });
+      } catch (e2) {
+        console.error("[hello] après ensureHelloLogTableSql", e2);
+        res.status(500).json({
+          error: "Impossible d’enregistrer",
+          detail: e2 instanceof Error ? e2.message : String(e2),
+        });
+      }
+      return;
+    }
     console.error("[hello]", e);
-    res.status(500).json({ error: "Impossible d’enregistrer" });
+    res.status(500).json({
+      error: "Impossible d’enregistrer",
+      detail: e instanceof Error ? e.message : String(e),
+    });
   }
 });
 
@@ -306,6 +349,7 @@ async function ensureProductionDatabaseReady() {
       });
       await prisma.$connect();
       await prisma.$queryRaw`SELECT 1`;
+      await ensureHelloLogTableSql();
       console.log("[blyp] Postgres OK — schéma synchronisé (prisma db push).");
       return;
     } catch (e) {
