@@ -17,13 +17,30 @@ const prisma = new PrismaClient();
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure";
-const OTP_PEPPER = process.env.OTP_PEPPER || "pepper";
+/** Trim : un espace en fin de ligne dans `.env` / Railway cassait tous les hash OTP. */
+const OTP_PEPPER =
+  String(process.env.OTP_PEPPER ?? "pepper").trim() || "pepper";
 const TRANSACTION_PIN_PEPPER =
   process.env.TRANSACTION_PIN_PEPPER?.trim() || OTP_PEPPER;
 
 /** Délai minimum entre deux envois SMS pour un même numéro (évite abus / coûts). */
 const OTP_RESEND_COOLDOWN_MS = 60_000;
 const lastOtpRequestAtByPhone = new Map();
+
+/**
+ * Si le 1er POST /auth/verify-otp réussit (challenge supprimé) mais la réponse réseau est perdue,
+ * le client retente : sans cache on renvoie « Code incorrect ». Fenêtre courte d’idempotence.
+ * (Une seule instance API ; plusieurs instances = Redis plus tard.)
+ */
+const OTP_VERIFY_IDEMPOTENCY_MS = 120_000;
+const otpVerifySuccessCache = new Map();
+
+function pruneOtpVerifySuccessCache() {
+  const now = Date.now();
+  for (const [k, v] of otpVerifySuccessCache) {
+    if (now - v.at > OTP_VERIFY_IDEMPOTENCY_MS) otpVerifySuccessCache.delete(k);
+  }
+}
 
 app.use(cors({ origin: true }));
 app.use(express.json());
@@ -35,9 +52,15 @@ function hashOtp(phone, code) {
     .digest("hex");
 }
 
+function otpVerifyCacheKey(phone, code) {
+  return `${phone}|${hashOtp(phone, code)}`;
+}
+
 /** Accepte le numéro saisi après +237 (ex. 6XXXXXXXX). */
 function normalizeCameroonPhone(raw) {
-  const d = String(raw ?? "").replace(/\D/g, "");
+  const d = String(raw ?? "")
+    .trim()
+    .replace(/\D/g, "");
   if (d.length < 9) return null;
   const last9 = d.slice(-9);
   if (!/^6\d{8}$/.test(last9)) return null;
@@ -154,11 +177,25 @@ app.post("/auth/verify-otp", async (req, res) => {
     if (!phone || code.length !== 6) {
       return res.status(400).json({ error: "Téléphone ou code invalide" });
     }
+
+    pruneOtpVerifySuccessCache();
+    const cacheKey = otpVerifyCacheKey(phone, code);
+    const cached = otpVerifySuccessCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < OTP_VERIFY_IDEMPOTENCY_MS) {
+      return res.json(cached.payload);
+    }
+
     const challenge = await prisma.otpChallenge.findFirst({
       where: { phone, expiresAt: { gt: new Date() } },
       orderBy: { createdAt: "desc" },
     });
-    if (!challenge || challenge.codeHash !== hashOtp(phone, code)) {
+    const expectedHash = hashOtp(phone, code);
+    if (!challenge) {
+      console.warn("[verify-otp] aucun challenge actif (expiré, déjà utilisé, ou mauvais numéro)");
+      return res.status(400).json({ error: "Code incorrect ou expiré" });
+    }
+    if (challenge.codeHash !== expectedHash) {
+      console.warn("[verify-otp] hash OTP incorrect (vérifier OTP_PEPPER identique partout)");
       return res.status(400).json({ error: "Code incorrect ou expiré" });
     }
     await prisma.otpChallenge.deleteMany({ where: { phone } });
@@ -170,11 +207,13 @@ app.post("/auth/verify-otp", async (req, res) => {
       });
     }
     const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "30d" });
-    res.json({
+    const payload = {
       token,
       user: userToApi(user),
       isNewAccount: !existingBefore,
-    });
+    };
+    otpVerifySuccessCache.set(cacheKey, { at: Date.now(), payload });
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Vérification impossible" });
