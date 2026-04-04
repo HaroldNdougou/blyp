@@ -6,7 +6,11 @@ import jwt from "jsonwebtoken";
 import { execSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import "./loadEnv.js";
-import { deliverOtpSms, describeSmsSetup } from "./sms.js";
+import {
+  androidOtpSmsHashHealthSnapshot,
+  deliverOtpSms,
+  describeSmsSetup,
+} from "./sms.js";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -335,6 +339,7 @@ app.get("/health", async (_, res) => {
       provider: sms.provider,
       devOtpInLogs: Boolean(sms.devOtpInLogs),
       misconfigured: Boolean(sms.misconfigured),
+      androidOtpHash: androidOtpSmsHashHealthSnapshot(),
     },
   });
 });

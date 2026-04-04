@@ -76,6 +76,68 @@ export async function healthCheck(): Promise<boolean> {
   }
 }
 
+export type AndroidOtpHashHealth = {
+  envPresent: boolean;
+  rawLength: number;
+  rawAsSeenByServer: string;
+  validSegmentCount: number;
+  valid11CharHashes: string[];
+};
+
+export type HealthResponse = {
+  ok: boolean;
+  database: string;
+  sms: {
+    sending: boolean;
+    provider: string | null;
+    devOtpInLogs: boolean;
+    misconfigured: boolean;
+    androidOtpHash: AndroidOtpHashHealth;
+  };
+};
+
+/** GET `/health` (détail JSON), ex. pour vérifier `ANDROID_SMS_OTP_APP_HASH` côté Railway. */
+export async function fetchHealth(): Promise<HealthResponse> {
+  if (USE_MOCK_API) {
+    return {
+      ok: true,
+      database: "mock",
+      sms: {
+        sending: false,
+        provider: null,
+        devOtpInLogs: true,
+        misconfigured: false,
+        androidOtpHash: {
+          envPresent: false,
+          rawLength: 0,
+          rawAsSeenByServer: "",
+          validSegmentCount: 0,
+          valid11CharHashes: [],
+        },
+      },
+    };
+  }
+  const url = `${API_BASE_URL}/health`;
+  let res: Response;
+  try {
+    res = await fetch(url);
+  } catch (cause) {
+    const technical =
+      cause instanceof Error && cause.message
+        ? `\n\nTechnique : ${cause.message}`
+        : "";
+    throw new ApiError(
+      `${API_UNREACHABLE_HINT}${technical}\n\nURL : ${API_BASE_URL}`,
+      0,
+    );
+  }
+  const data = await parseJson(res);
+  if (!res.ok) {
+    throw new ApiError(errorMessageFromResponse(res, data), res.status, data);
+  }
+  return data as HealthResponse;
+}
+
 export async function sayHello(): Promise<{
   ok: boolean;
   id: string;

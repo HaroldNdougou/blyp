@@ -53,6 +53,21 @@ function otpMessage(code) {
   return `${base}\n\n${hashes.join("\n")}`;
 }
 
+/**
+ * Valeur `ANDROID_SMS_OTP_APP_HASH` telle que lue par Node (ex. Railway), pour GET `/health`.
+ */
+export function androidOtpSmsHashHealthSnapshot() {
+  const raw = String(process.env.ANDROID_SMS_OTP_APP_HASH ?? "").trim();
+  const segments = parseSmsRetrieverHashes();
+  return {
+    envPresent: raw.length > 0,
+    rawLength: raw.length,
+    rawAsSeenByServer: raw,
+    validSegmentCount: segments.length,
+    valid11CharHashes: segments,
+  };
+}
+
 /** Obit SMS API v2 — doc : GET bulksms, destination = 237 + 9 chiffres nationaux. */
 function obitsmsConfigured() {
   return Boolean(

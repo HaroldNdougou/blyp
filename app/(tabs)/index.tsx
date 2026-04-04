@@ -1,6 +1,11 @@
 import { AndroidOtpSmsAutofill } from "../../components/AndroidOtpSmsAutofill";
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError, pay as apiPay, sayHello } from "@/lib/api/client";
+import {
+  ApiError,
+  fetchHealth,
+  pay as apiPay,
+  sayHello,
+} from "@/lib/api/client";
 import { API_BASE_URL, USE_MOCK_API } from "@/lib/config";
 import {
   formatCameroonPhoneDisplay,
@@ -72,6 +77,7 @@ export default function Index() {
   const regOtpInputRef = useRef<TextInput>(null);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
+  const railwayOtpHashAlertShownRef = useRef(false);
   const regSlideX = useRef(new Animated.Value(0)).current;
   const [regSlideWidth, setRegSlideWidth] = useState(0);
   const { width: windowWidth } = useWindowDimensions();
@@ -234,6 +240,38 @@ export default function Index() {
     }, delay);
     return () => clearTimeout(t);
   }, [showRegisterOverlay, welcomeStep]);
+
+  useEffect(() => {
+    if (welcomeStep === "phone") railwayOtpHashAlertShownRef.current = false;
+  }, [welcomeStep]);
+
+  useEffect(() => {
+    if (welcomeStep !== "otp" || railwayOtpHashAlertShownRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const h = await fetchHealth();
+        const snap = h.sms?.androidOtpHash;
+        if (cancelled || !snap) return;
+        railwayOtpHashAlertShownRef.current = true;
+        console.log(
+          "[Blyp] ANDROID_SMS_OTP_APP_HASH (lu par le serveur / Railway)",
+          JSON.stringify(snap, null, 2),
+        );
+        const lines = [
+          `Brut : ${snap.rawAsSeenByServer ? JSON.stringify(snap.rawAsSeenByServer) : "(vide)"}`,
+          `Longueur : ${snap.rawLength}`,
+          `Segments 11 car. (${snap.validSegmentCount}) : ${snap.valid11CharHashes.length ? snap.valid11CharHashes.join(", ") : "—"}`,
+        ];
+        Alert.alert("SMS Retriever — côté API", lines.join("\n\n"));
+      } catch (e) {
+        console.warn("[Blyp] GET /health impossible", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [welcomeStep]);
 
   const detectedDriver = {
     name: "Taxi Mohamadou",
