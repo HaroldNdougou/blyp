@@ -19,7 +19,7 @@ type AuthContextValue = {
   token: string | null;
   isLoading: boolean;
   requestOtp: (phoneDigits: string) => Promise<{ ok: boolean }>;
-  verifyAndSignIn: (phoneDigits: string, code: string) => Promise<void>;
+  verifyAndSignIn: (phoneDigits: string, code: string) => Promise<ApiUser>;
   refreshUser: () => Promise<void>;
   signOut: () => Promise<void>;
   updateBalance: (balanceFcfa: number) => void;
@@ -77,6 +77,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await setStoredToken(newToken);
     setToken(newToken);
     setUser(u);
+    return u;
   }, []);
 
   const signOut = useCallback(async () => {

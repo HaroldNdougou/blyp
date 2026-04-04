@@ -1,5 +1,5 @@
 import { ApiError } from "./errors";
-import type { ApiUser, TransactionItem } from "./types";
+import type { ApiUser, OnboardingStep, TransactionItem } from "./types";
 
 function normalizeCameroonPhone(raw: string): string | null {
   const d = String(raw ?? "").replace(/\D/g, "");
@@ -12,6 +12,10 @@ function normalizeCameroonPhone(raw: string): string | null {
 let pendingOtpPhone: string | null = null;
 let sessionToken: string | null = null;
 let sessionPhone: string | null = null;
+/** PIN mock (clair en mémoire — uniquement mode démo). */
+let mockTransactionPinPlain: string | null = null;
+let mockFirstName: string | null = null;
+let mockLastName: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
 let mockHelloSeq = 0;
@@ -22,6 +26,30 @@ function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
     throw new ApiError("Non autorisé", 401);
   }
+}
+
+function mockUserFromState(): ApiUser {
+  const phone = sessionPhone!;
+  const needsPin = mockTransactionPinPlain == null;
+  const needsNames =
+    !mockFirstName?.trim() ||
+    mockFirstName.trim().length < 2 ||
+    !mockLastName?.trim() ||
+    mockLastName.trim().length < 2;
+  const needsOnboarding = needsPin || needsNames;
+  const onboardingStep: OnboardingStep | null = needsPin
+    ? "pin"
+    : needsNames
+      ? "profile"
+      : null;
+  return {
+    phone,
+    balanceFcfa,
+    needsOnboarding,
+    onboardingStep,
+    firstName: mockFirstName,
+    lastName: mockLastName,
+  };
 }
 
 export function mockRequestOtp(phoneDigits: string): { ok: boolean } {
@@ -49,7 +77,7 @@ export function mockRequestOtp(phoneDigits: string): { ok: boolean } {
 export function mockVerifyOtp(
   phoneDigits: string,
   code: string,
-): { token: string; user: ApiUser } {
+): { token: string; user: ApiUser; isNewAccount: boolean } {
   const phone = normalizeCameroonPhone(phoneDigits);
   const clean = code.replace(/\D/g, "");
   if (!phone || clean.length !== 6) {
@@ -59,17 +87,57 @@ export function mockVerifyOtp(
     throw new ApiError("Demandez d’abord un code pour ce numéro", 400);
   }
   pendingOtpPhone = null;
+  const isNewAccount = sessionPhone !== phone;
   sessionPhone = phone;
   sessionToken = `blyp-mock-${Date.now()}`;
+  mockTransactionPinPlain = null;
+  mockFirstName = null;
+  mockLastName = null;
   return {
     token: sessionToken,
-    user: { phone, balanceFcfa },
+    user: mockUserFromState(),
+    isNewAccount,
   };
 }
 
 export function mockGetMe(token: string): ApiUser {
   assertSession(token);
-  return { phone: sessionPhone!, balanceFcfa };
+  return mockUserFromState();
+}
+
+export function mockSetOnboardingTransactionPin(
+  token: string,
+  pin: string,
+): { user: ApiUser } {
+  assertSession(token);
+  const d = String(pin ?? "").replace(/\D/g, "");
+  if (d.length !== 4) {
+    throw new ApiError("Le code PIN doit comporter 4 chiffres", 400);
+  }
+  if (mockTransactionPinPlain != null) {
+    throw new ApiError("Code PIN déjà défini", 400);
+  }
+  mockTransactionPinPlain = d;
+  return { user: mockUserFromState() };
+}
+
+export function mockSetOnboardingProfile(
+  token: string,
+  firstName: string,
+  lastName: string,
+): { user: ApiUser } {
+  assertSession(token);
+  const f = String(firstName ?? "").trim();
+  const l = String(lastName ?? "").trim();
+  if (f.length < 2 || l.length < 2) {
+    throw new ApiError("Prénom et nom : au moins 2 caractères chacun", 400);
+  }
+  if (mockTransactionPinPlain == null) {
+    throw new ApiError("Définissez d’abord votre code PIN de transaction", 400);
+  }
+  mockFirstName = f;
+  mockLastName = l;
+  return { user: mockUserFromState() };
 }
 
 export function mockDeposit(
@@ -98,8 +166,19 @@ export function mockPay(
   amount: number,
   recipientName: string,
   recipientPhone: string | null,
+  transactionPin: string,
 ): { balanceFcfa: number } {
   assertSession(token);
+  const pin = String(transactionPin ?? "").replace(/\D/g, "");
+  if (pin.length !== 4) {
+    throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
+  }
+  if (mockTransactionPinPlain == null) {
+    throw new ApiError("Complétez votre inscription (code PIN) pour payer", 403);
+  }
+  if (pin !== mockTransactionPinPlain) {
+    throw new ApiError("Code PIN incorrect", 400);
+  }
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);
   }

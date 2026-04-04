@@ -8,12 +8,16 @@ datasource db {
 }
 
 model User {
-  id           String        @id @default(cuid())
-  phone        String        @unique
-  balanceFcfa  Int           @default(0)
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  transactions Transaction[]
+  id                  String        @id @default(cuid())
+  phone               String        @unique
+  balanceFcfa         Int           @default(0)
+  /// Hash scrypt (jamais le PIN en clair) — null tant que l’onboarding n’a pas défini le PIN.
+  transactionPinHash  String?
+  firstName           String?
+  lastName            String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  transactions        Transaction[]
 }
 
 model OtpChallenge {

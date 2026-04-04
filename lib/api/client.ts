@@ -158,7 +158,7 @@ export async function requestOtp(phoneDigits: string): Promise<{ ok: boolean }> 
 export async function verifyOtp(
   phoneDigits: string,
   code: string,
-): Promise<{ token: string; user: ApiUser }> {
+): Promise<{ token: string; user: ApiUser; isNewAccount?: boolean }> {
   if (USE_MOCK_API) return mock.mockVerifyOtp(phoneDigits, code);
   const body = JSON.stringify({ phone: phoneDigits, code });
   let lastError: unknown;
@@ -185,6 +185,31 @@ export async function getMe(token: string): Promise<ApiUser> {
   return request("/me", { token });
 }
 
+export async function setOnboardingTransactionPin(
+  token: string,
+  pin: string,
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) return mock.mockSetOnboardingTransactionPin(token, pin);
+  return request("/auth/onboarding/transaction-pin", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ pin }),
+  });
+}
+
+export async function setOnboardingProfile(
+  token: string,
+  firstName: string,
+  lastName: string,
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) return mock.mockSetOnboardingProfile(token, firstName, lastName);
+  return request("/auth/onboarding/profile", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ firstName, lastName }),
+  });
+}
+
 export async function deposit(
   token: string,
   amount: number,
@@ -202,12 +227,25 @@ export async function pay(
   amount: number,
   recipientName: string,
   recipientPhone: string | null,
+  transactionPin: string,
 ): Promise<{ balanceFcfa: number }> {
-  if (USE_MOCK_API) return mock.mockPay(token, amount, recipientName, recipientPhone);
+  if (USE_MOCK_API)
+    return mock.mockPay(
+      token,
+      amount,
+      recipientName,
+      recipientPhone,
+      transactionPin,
+    );
   return request("/payments/pay", {
     method: "POST",
     token,
-    body: JSON.stringify({ amount, recipientName, recipientPhone }),
+    body: JSON.stringify({
+      amount,
+      recipientName,
+      recipientPhone,
+      transactionPin,
+    }),
   });
 }
 

@@ -1,15 +1,16 @@
-import { AndroidOtpSmsAutofill } from "../../components/AndroidOtpSmsAutofill";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   ApiError,
   fetchHealth,
   pay as apiPay,
-  sayHello,
+  setOnboardingProfile,
+  setOnboardingTransactionPin,
 } from "@/lib/api/client";
-import { API_BASE_URL, USE_MOCK_API } from "@/lib/config";
+import { USE_MOCK_API } from "@/lib/config";
 import {
   formatCameroonPhoneDisplay,
   formatFcfa,
+  inferCameroonMobileMoneyBrand,
   normalizeCameroonPhoneDigits,
 } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
@@ -35,6 +36,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView as SafeModalArea, useSafeAreaInsets } from "react-native-safe-area-context";
+import { AndroidOtpSmsAutofill } from "../../components/AndroidOtpSmsAutofill";
 
 /** Vert identité Blyp */
 const BLYP_GREEN = "#5dc705";
@@ -49,6 +51,33 @@ const OTP_RESEND_COOLDOWN_SEC = 60;
 const MAX_OTP_SENDS_PER_SESSION = 8;
 
 const OTP_LEN = 6;
+const ONBOARDING_PIN_LEN = 4;
+
+const REG_STEPS = [
+  "phone",
+  "otp",
+  "pin",
+  "pinConfirm",
+  "profile",
+] as const;
+type RegStep = (typeof REG_STEPS)[number];
+
+function regModalTitle(step: RegStep): string {
+  switch (step) {
+    case "phone":
+      return "Téléphone";
+    case "otp":
+      return "Code SMS";
+    case "pin":
+      return "Code PIN";
+    case "pinConfirm":
+      return "Confirmer";
+    case "profile":
+      return "Votre profil";
+    default:
+      return "";
+  }
+}
 
 export default function Index() {
   const {
@@ -61,20 +90,34 @@ export default function Index() {
   } = useAuth();
   const [amount, setAmount] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS'>('IDLE');
+  const [payPinModalVisible, setPayPinModalVisible] = useState(false);
+  const [payPinDraft, setPayPinDraft] = useState("");
+  const [payPendingAmount, setPayPendingAmount] = useState(0);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
   const [welcomePhone, setWelcomePhone] = useState("");
   const [welcomeOtp, setWelcomeOtp] = useState("");
-  const [welcomeStep, setWelcomeStep] = useState<"phone" | "otp">("phone");
+  const [welcomeStep, setWelcomeStep] = useState<RegStep>("phone");
+  const [onboardingPin, setOnboardingPin] = useState("");
+  const [onboardingPinConfirm, setOnboardingPinConfirm] = useState("");
+  const [onboardingFirstName, setOnboardingFirstName] = useState("");
+  const [onboardingLastName, setOnboardingLastName] = useState("");
   const [authOtpSending, setAuthOtpSending] = useState(false);
   const [authResendSending, setAuthResendSending] = useState(false);
   const [authVerifySending, setAuthVerifySending] = useState(false);
+  const [authPinSaving, setAuthPinSaving] = useState(false);
+  const [authProfileSaving, setAuthProfileSaving] = useState(false);
   const [otpResendCooldown, setOtpResendCooldown] = useState(0);
   const [otpSendCount, setOtpSendCount] = useState(0);
-  const [helloSending, setHelloSending] = useState(false);
   const inviteBootstrapped = useRef(false);
+  const prevUserRef = useRef(user);
   const regPhoneInputRef = useRef<TextInput>(null);
   const regOtpInputRef = useRef<TextInput>(null);
+  const regPinInputRef = useRef<TextInput>(null);
+  const regPinConfirmInputRef = useRef<TextInput>(null);
+  const regFirstNameInputRef = useRef<TextInput>(null);
+  const regLastNameInputRef = useRef<TextInput>(null);
+  const prevRegVisibleRef = useRef(false);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
   const railwayOtpHashAlertShownRef = useRef(false);
@@ -86,36 +129,70 @@ export default function Index() {
   const regInsets = useSafeAreaInsets();
   const regSheetTop = regInsets.top + REG_SHEET_EXTRA_TOP;
 
-  const showRegisterOverlay = !user && registerInviteVisible;
+  const phoneWalletBrand = inferCameroonMobileMoneyBrand(welcomePhone);
+
+  const showRegisterOverlay =
+    registerInviteVisible && (!user || Boolean(user.needsOnboarding));
+
+  useEffect(() => {
+    if (prevUserRef.current && !user) {
+      inviteBootstrapped.current = false;
+    }
+    prevUserRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user && !inviteBootstrapped.current) {
+    if (!inviteBootstrapped.current) {
       inviteBootstrapped.current = true;
-      setRegisterInviteVisible(true);
+      if (!user || user.needsOnboarding) {
+        setRegisterInviteVisible(true);
+      }
     }
   }, [authLoading, user]);
 
   useEffect(() => {
-    if (user) setRegisterInviteVisible(false);
+    if (user && !user.needsOnboarding) {
+      setRegisterInviteVisible(false);
+    }
   }, [user]);
 
   useEffect(() => {
-    if (registerInviteVisible) {
-      setWelcomeStep("phone");
-      setWelcomeOtp("");
-      setOtpResendCooldown(0);
-      setOtpSendCount(0);
-      setRegSlideWidth(0);
-    } else {
+    if (!registerInviteVisible) {
+      prevRegVisibleRef.current = false;
       setWelcomeStep("phone");
       setWelcomeOtp("");
       setWelcomePhone("");
       setOtpResendCooldown(0);
       setOtpSendCount(0);
       setRegSlideWidth(0);
+      setOnboardingPin("");
+      setOnboardingPinConfirm("");
+      setOnboardingFirstName("");
+      setOnboardingLastName("");
+      return;
     }
-  }, [registerInviteVisible]);
+    if (!prevRegVisibleRef.current) {
+      prevRegVisibleRef.current = true;
+      if (user?.needsOnboarding) {
+        setWelcomeStep(user.onboardingStep === "profile" ? "profile" : "pin");
+        const nine = user.phone.replace(/\D/g, "").slice(-9);
+        setWelcomePhone(nine);
+        setOnboardingFirstName(user.firstName?.trim() ?? "");
+        setOnboardingLastName(user.lastName?.trim() ?? "");
+      } else {
+        setWelcomeStep("phone");
+        setWelcomeOtp("");
+        setWelcomePhone("");
+        setOtpResendCooldown(0);
+        setOtpSendCount(0);
+        setOnboardingPin("");
+        setOnboardingPinConfirm("");
+        setOnboardingFirstName("");
+        setOnboardingLastName("");
+      }
+    }
+  }, [registerInviteVisible, user]);
 
   useEffect(() => {
     if (welcomeStep !== "otp" || otpResendCooldown <= 0) return;
@@ -126,16 +203,11 @@ export default function Index() {
   }, [welcomeStep, otpResendCooldown > 0]);
 
   useEffect(() => {
-    if (showRegisterOverlay) {
-      regSlideX.setValue(0);
-    }
-  }, [showRegisterOverlay, regSlideX]);
-
-  useEffect(() => {
     if (!showRegisterOverlay) return;
     const w =
       regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
-    const to = welcomeStep === "otp" ? -w : 0;
+    const idx = Math.max(0, REG_STEPS.indexOf(welcomeStep));
+    const to = -w * idx;
     Animated.timing(regSlideX, {
       toValue: to,
       duration: 320,
@@ -186,9 +258,15 @@ export default function Index() {
     Keyboard.dismiss();
     setAuthVerifySending(true);
     try {
-      await verifyAndSignIn(welcomePhone, welcomeOtp);
+      const u = await verifyAndSignIn(welcomePhone, welcomeOtp);
       setWelcomeOtp("");
-      setRegisterInviteVisible(false);
+      if (!u.needsOnboarding) {
+        setRegisterInviteVisible(false);
+      } else {
+        setWelcomeStep("pin");
+        setOnboardingPin("");
+        setOnboardingPinConfirm("");
+      }
     } catch (e) {
       Alert.alert(
         "Vérification",
@@ -203,6 +281,96 @@ export default function Index() {
   const applySmsAutofillOtp = useCallback((digits: string) => {
     setWelcomeOtp(digits);
   }, []);
+
+  const goBackToRegistrationPhone = useCallback(() => {
+    Keyboard.dismiss();
+    setWelcomeStep("phone");
+    setOtpResendCooldown(0);
+  }, []);
+
+  const goBackInRegistrationHeader = useCallback(() => {
+    Keyboard.dismiss();
+    if (welcomeStep === "otp") {
+      goBackToRegistrationPhone();
+      return;
+    }
+    if (welcomeStep === "pin") {
+      setWelcomeStep("otp");
+      setOnboardingPin("");
+      return;
+    }
+    if (welcomeStep === "pinConfirm") {
+      setWelcomeStep("pin");
+      setOnboardingPinConfirm("");
+    }
+  }, [welcomeStep, goBackToRegistrationPhone]);
+
+  const submitOnboardingPinContinue = useCallback(() => {
+    const d = onboardingPin.replace(/\D/g, "");
+    if (d.length !== ONBOARDING_PIN_LEN) return;
+    Keyboard.dismiss();
+    setWelcomeStep("pinConfirm");
+    setOnboardingPinConfirm("");
+  }, [onboardingPin]);
+
+  const submitOnboardingPinConfirm = useCallback(async () => {
+    const a = onboardingPin.replace(/\D/g, "");
+    const b = onboardingPinConfirm.replace(/\D/g, "");
+    if (a.length !== ONBOARDING_PIN_LEN || b.length !== ONBOARDING_PIN_LEN) return;
+    if (a !== b) {
+      Alert.alert("Code PIN", "Les deux saisies ne correspondent pas.");
+      return;
+    }
+    if (!token) return;
+    Keyboard.dismiss();
+    setAuthPinSaving(true);
+    try {
+      await setOnboardingTransactionPin(token, b);
+      await refreshUser();
+      setWelcomeStep("profile");
+      setOnboardingPin("");
+      setOnboardingPinConfirm("");
+    } catch (e) {
+      Alert.alert(
+        "Code PIN",
+        e instanceof ApiError ? e.message : "Enregistrement impossible.",
+      );
+    } finally {
+      setAuthPinSaving(false);
+    }
+  }, [
+    onboardingPin,
+    onboardingPinConfirm,
+    token,
+    refreshUser,
+  ]);
+
+  const submitOnboardingProfile = useCallback(async () => {
+    const f = onboardingFirstName.trim();
+    const l = onboardingLastName.trim();
+    if (f.length < 2 || l.length < 2) {
+      Alert.alert(
+        "Profil",
+        "Prénom et nom : au moins 2 caractères chacun.",
+      );
+      return;
+    }
+    if (!token) return;
+    Keyboard.dismiss();
+    setAuthProfileSaving(true);
+    try {
+      await setOnboardingProfile(token, f, l);
+      await refreshUser();
+      setRegisterInviteVisible(false);
+    } catch (e) {
+      Alert.alert(
+        "Profil",
+        e instanceof ApiError ? e.message : "Enregistrement impossible.",
+      );
+    } finally {
+      setAuthProfileSaving(false);
+    }
+  }, [onboardingFirstName, onboardingLastName, token, refreshUser]);
 
   useEffect(() => {
     if (user) return;
@@ -232,11 +400,13 @@ export default function Index() {
     if (!showRegisterOverlay) return;
     const delay = Platform.OS === "android" ? 450 : 120;
     const t = setTimeout(() => {
-      if (welcomeStep === "phone") {
-        regPhoneInputRef.current?.focus();
-      } else {
-        regOtpInputRef.current?.focus();
-      }
+      if (welcomeStep === "phone") regPhoneInputRef.current?.focus();
+      else if (welcomeStep === "otp") regOtpInputRef.current?.focus();
+      else if (welcomeStep === "pin") regPinInputRef.current?.focus();
+      else if (welcomeStep === "pinConfirm")
+        regPinConfirmInputRef.current?.focus();
+      else if (welcomeStep === "profile")
+        regFirstNameInputRef.current?.focus();
     }, delay);
     return () => clearTimeout(t);
   }, [showRegisterOverlay, welcomeStep]);
@@ -258,12 +428,6 @@ export default function Index() {
           "[Blyp] ANDROID_SMS_OTP_APP_HASH (lu par le serveur / Railway)",
           JSON.stringify(snap, null, 2),
         );
-        const lines = [
-          `Brut : ${snap.rawAsSeenByServer ? JSON.stringify(snap.rawAsSeenByServer) : "(vide)"}`,
-          `Longueur : ${snap.rawLength}`,
-          `Segments 11 car. (${snap.validSegmentCount}) : ${snap.valid11CharHashes.length ? snap.valid11CharHashes.join(", ") : "—"}`,
-        ];
-        Alert.alert("SMS Retriever — côté API", lines.join("\n\n"));
       } catch (e) {
         console.warn("[Blyp] GET /health impossible", e);
       }
@@ -279,7 +443,7 @@ export default function Index() {
     avatar: null,
   };
 
-  const handlePay = async () => {
+  const handlePay = () => {
     const n = parseInt(amount, 10);
     if (!amount || !Number.isFinite(n) || n <= 0 || paymentStatus === "SENDING")
       return;
@@ -290,14 +454,37 @@ export default function Index() {
       );
       return;
     }
+    if (user?.needsOnboarding) {
+      Alert.alert(
+        "Inscription",
+        "Terminez la création de votre compte (PIN et profil) avant de payer.",
+      );
+      return;
+    }
     Keyboard.dismiss();
+    setPayPendingAmount(n);
+    setPayPinDraft("");
+    setPayPinModalVisible(true);
+  };
+
+  const cancelPayPin = useCallback(() => {
+    setPayPinModalVisible(false);
+    setPayPinDraft("");
+  }, []);
+
+  const confirmPayWithPin = useCallback(async () => {
+    const pin = payPinDraft.replace(/\D/g, "");
+    if (pin.length !== ONBOARDING_PIN_LEN || !token) return;
+    setPayPinModalVisible(false);
+    setPayPinDraft("");
     setPaymentStatus("SENDING");
     try {
       await apiPay(
         token,
-        n,
+        payPendingAmount,
         detectedDriver.name,
         detectedDriver.phone.replace(/\s/g, "") || null,
+        pin,
       );
       await refreshUser();
       setPaymentStatus("SUCCESS");
@@ -308,7 +495,12 @@ export default function Index() {
       );
       setPaymentStatus("IDLE");
     }
-  };
+  }, [
+    payPinDraft,
+    token,
+    payPendingAmount,
+    refreshUser,
+  ]);
 
   if (paymentStatus === 'SUCCESS') {
     return (
@@ -401,52 +593,6 @@ export default function Index() {
                 </Pressable>
               )}
 
-              <Pressable
-                style={({ pressed }) => [
-                  styles.sayHelloBtn,
-                  pressed && !helloSending && styles.sayHelloBtnPressed,
-                  helloSending && styles.sayHelloBtnDisabled,
-                ]}
-                disabled={helloSending}
-                onPress={async () => {
-                  Keyboard.dismiss();
-                  setHelloSending(true);
-                  try {
-                    const r = await sayHello();
-                    if (USE_MOCK_API || r.id.startsWith("mock-hello")) {
-                      Alert.alert(
-                        "Say Hello — mode démo",
-                        "Rien n’est écrit dans PostgreSQL / Railway : l’app tourne sans EXPO_PUBLIC_API_URL dans le binaire.\n\nAjoute l’URL HTTPS de ton API dans .env à la racine du projet, puis reconstruis avec npx expo run:android (ou ios).",
-                      );
-                      return;
-                    }
-                    const d = new Date(r.createdAt);
-                    Alert.alert(
-                      "Say Hello",
-                      `API utilisée :\n${API_BASE_URL}\n\nHorodatage serveur :\n${d.toLocaleString("fr-FR", {
-                        dateStyle: "medium",
-                        timeStyle: "medium",
-                      })}\n\nUTC : ${r.createdAt}\nid : ${r.id}`,
-                    );
-                  } catch (e) {
-                    Alert.alert(
-                      "Say Hello",
-                      e instanceof ApiError ? e.message : "Impossible d’enregistrer.",
-                    );
-                  } finally {
-                    setHelloSending(false);
-                  }
-                }}
-                accessibilityRole="button"
-                accessibilityLabel="Say Hello"
-              >
-                {helloSending ? (
-                  <ActivityIndicator color="#fff" size="small" />
-                ) : (
-                  <Text style={styles.sayHelloBtnText}>Say Hello</Text>
-                )}
-              </Pressable>
-
               {/* SECTION PROFIL */}
               <View style={styles.profileSection}>
                 {!detectedDriver.avatar ? (
@@ -508,17 +654,15 @@ export default function Index() {
             transparent
             animationType="slide"
             statusBarTranslucent
-            onRequestClose={() => setRegisterInviteVisible(false)}
+            onRequestClose={() => {
+              Keyboard.dismiss();
+            }}
           >
             <View style={styles.regModalRoot}>
               <Pressable
                 style={styles.regModalBackdrop}
-                onPress={() => {
-                  Keyboard.dismiss();
-                  setRegisterInviteVisible(false);
-                }}
-                accessibilityLabel="Fermer"
-                accessibilityRole="button"
+                onPress={() => Keyboard.dismiss()}
+                accessibilityLabel="Fond"
               />
               <View style={[styles.regModalSheet, { marginTop: regSheetTop }]}>
                 <KeyboardAvoidingView
@@ -530,21 +674,30 @@ export default function Index() {
                     edges={["bottom", "left", "right"]}
                   >
                     <View style={styles.regModalHeader}>
-                      <Pressable
-                        onPress={() => {
-                          Keyboard.dismiss();
-                          setRegisterInviteVisible(false);
-                        }}
-                        style={({ pressed }) => [
-                          styles.regModalCloseBtn,
-                          pressed && styles.regModalCloseBtnPressed,
-                        ]}
-                        hitSlop={12}
-                      >
-                        <Ionicons name="close" size={28} color="#333" />
-                      </Pressable>
+                      {welcomeStep === "otp" ||
+                      welcomeStep === "pin" ||
+                      welcomeStep === "pinConfirm" ? (
+                        <Pressable
+                          onPress={goBackInRegistrationHeader}
+                          style={({ pressed }) => [
+                            styles.regModalBackHeaderBtn,
+                            pressed && styles.regModalBackHeaderBtnPressed,
+                          ]}
+                          hitSlop={12}
+                          accessibilityLabel={
+                            welcomeStep === "otp"
+                              ? "Modifier le numéro"
+                              : "Retour"
+                          }
+                          accessibilityRole="button"
+                        >
+                          <Ionicons name="chevron-back" size={28} color="#333" />
+                        </Pressable>
+                      ) : (
+                        <View style={styles.regModalHeaderLeading} />
+                      )}
                       <Text style={styles.regModalHeaderTitle}>
-                        {welcomeStep === "phone" ? "Inscription" : "Code SMS"}
+                        {regModalTitle(welcomeStep)}
                       </Text>
                       <View style={styles.regModalHeaderSpacer} />
                     </View>
@@ -567,7 +720,7 @@ export default function Index() {
                           style={[
                             styles.regModalSlideRow,
                             {
-                              width: regSlidePanelW * 2,
+                              width: regSlidePanelW * REG_STEPS.length,
                               transform: [{ translateX: regSlideX }],
                             },
                           ]}
@@ -579,11 +732,16 @@ export default function Index() {
                             ]}
                           >
                             <Text style={styles.regModalLead}>
-                              Créez votre compte en quelques secondes. Nous vous enverrons un
-                              code par SMS pour vérifier votre numéro.
+                              Nous vous enverrons un code par SMS pour vérifier votre numéro.
                             </Text>
                             <Text style={styles.regModalLabel}>Numéro de téléphone</Text>
                             <View style={styles.regModalPhoneWrap}>
+                              <Text
+                                style={styles.regModalFlag}
+                                accessibilityLabel="Cameroun"
+                              >
+                                🇨🇲
+                              </Text>
                               <Text style={styles.regModalPrefix}>+237</Text>
                               <TextInput
                                 ref={regPhoneInputRef}
@@ -598,6 +756,26 @@ export default function Index() {
                                 }
                                 showSoftInputOnFocus
                               />
+                              {phoneWalletBrand === "orange" && (
+                                <Image
+                                  source={require("../../assets/images/orange-money.png")}
+                                  style={[
+                                    styles.regModalWalletLogo,
+                                    styles.regModalWalletLogoOrange,
+                                  ]}
+                                  accessibilityLabel="Orange Money"
+                                />
+                              )}
+                              {phoneWalletBrand === "mtn" && (
+                                <Image
+                                  source={require("../../assets/images/mtn-mobile-money.png")}
+                                  style={[
+                                    styles.regModalWalletLogo,
+                                    styles.regModalWalletLogoMtn,
+                                  ]}
+                                  accessibilityLabel="MTN Mobile Money"
+                                />
+                              )}
                             </View>
                             <Pressable
                               style={({ pressed }) => [
@@ -639,15 +817,8 @@ export default function Index() {
                             <Text style={styles.regModalLead}>
                               {USE_MOCK_API
                                 ? `Démo : saisissez les ${OTP_LEN} chiffres — envoi automatique.`
-                                : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS — envoi automatique.`}
+                                : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS.`}
                             </Text>
-                            {Platform.OS === "android" && !USE_MOCK_API && (
-                              <Text style={styles.regModalOtpAutofillHint}>
-                                Si le serveur envoie la clé Android en fin de SMS, le code peut se
-                                remplir tout seul. Sinon : suggestion au-dessus du clavier, ou copie
-                                les 6 chiffres puis reviens ici.
-                              </Text>
-                            )}
                             <Text style={styles.regModalOtpHint}>
                               +237{" "}
                               {welcomePhone
@@ -701,8 +872,8 @@ export default function Index() {
                             </Pressable>
                             {otpSendCount >= MAX_OTP_SENDS_PER_SESSION ? (
                               <Text style={styles.regModalResendLimit}>
-                                Limite d’envois atteinte. Fermez l’inscription et réessayez plus
-                                tard, ou modifiez le numéro ci-dessous.
+                                Limite d’envois atteinte. Réessayez plus tard ou modifiez le numéro
+                                ci-dessous.
                               </Text>
                             ) : otpResendCooldown > 0 ? (
                               <Text style={styles.regModalResendHint}>
@@ -742,15 +913,178 @@ export default function Index() {
                                 styles.regModalBackLink,
                                 pressed && { opacity: 0.6 },
                               ]}
-                              onPress={() => {
-                                Keyboard.dismiss();
-                                setWelcomeStep("phone");
-                                setOtpResendCooldown(0);
-                              }}
+                              onPress={goBackToRegistrationPhone}
                             >
                               <Text style={styles.regModalBackLinkText}>
                                 Modifier le numéro
                               </Text>
+                            </Pressable>
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
+                            ]}
+                          >
+                            <Text style={styles.regModalLead}>
+                              Choisissez un code PIN à 4 chiffres pour valider vos paiements. Ne le
+                              partagez avec personne.
+                            </Text>
+                            <Text style={styles.regModalLabel}>Nouveau code PIN</Text>
+                            <TextInput
+                              ref={regPinInputRef}
+                              style={styles.regModalOtpInput}
+                              placeholder="• • • •"
+                              placeholderTextColor="#DDD"
+                              keyboardType="number-pad"
+                              secureTextEntry
+                              value={onboardingPin}
+                              onChangeText={(t) =>
+                                setOnboardingPin(
+                                  t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN),
+                                )
+                              }
+                              maxLength={ONBOARDING_PIN_LEN}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              showSoftInputOnFocus
+                            />
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  onboardingPin.replace(/\D/g, "").length ===
+                                    ONBOARDING_PIN_LEN &&
+                                  styles.regModalPrimaryBtnPressed,
+                                onboardingPin.replace(/\D/g, "").length !==
+                                  ONBOARDING_PIN_LEN &&
+                                  styles.regModalPrimaryBtnDisabled,
+                              ]}
+                              disabled={
+                                onboardingPin.replace(/\D/g, "").length !==
+                                ONBOARDING_PIN_LEN
+                              }
+                              onPress={submitOnboardingPinContinue}
+                            >
+                              <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
+                            </Pressable>
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
+                            ]}
+                          >
+                            <Text style={styles.regModalLead}>
+                              Saisissez à nouveau votre code PIN pour confirmer.
+                            </Text>
+                            <Text style={styles.regModalLabel}>Confirmation</Text>
+                            <TextInput
+                              ref={regPinConfirmInputRef}
+                              style={styles.regModalOtpInput}
+                              placeholder="• • • •"
+                              placeholderTextColor="#DDD"
+                              keyboardType="number-pad"
+                              secureTextEntry
+                              value={onboardingPinConfirm}
+                              onChangeText={(t) =>
+                                setOnboardingPinConfirm(
+                                  t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN),
+                                )
+                              }
+                              maxLength={ONBOARDING_PIN_LEN}
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              showSoftInputOnFocus
+                            />
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  onboardingPinConfirm.replace(/\D/g, "").length ===
+                                    ONBOARDING_PIN_LEN &&
+                                  !authPinSaving &&
+                                  styles.regModalPrimaryBtnPressed,
+                                (onboardingPinConfirm.replace(/\D/g, "").length !==
+                                  ONBOARDING_PIN_LEN ||
+                                  authPinSaving) &&
+                                  styles.regModalPrimaryBtnDisabled,
+                              ]}
+                              disabled={
+                                onboardingPinConfirm.replace(/\D/g, "").length !==
+                                  ONBOARDING_PIN_LEN || authPinSaving
+                              }
+                              onPress={() => void submitOnboardingPinConfirm()}
+                            >
+                              {authPinSaving ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={styles.regModalPrimaryBtnText}>
+                                  Enregistrer le PIN
+                                </Text>
+                              )}
+                            </Pressable>
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
+                            ]}
+                          >
+                            <Text style={styles.regModalLead}>
+                              Indiquez votre prénom et votre nom pour finaliser votre compte.
+                            </Text>
+                            <Text style={styles.regModalLabel}>Prénom</Text>
+                            <TextInput
+                              ref={regFirstNameInputRef}
+                              style={styles.regModalProfileInput}
+                              placeholder="Ex. Jean"
+                              placeholderTextColor="#CCC"
+                              value={onboardingFirstName}
+                              onChangeText={setOnboardingFirstName}
+                              autoCapitalize="words"
+                              autoCorrect={false}
+                              maxLength={80}
+                            />
+                            <Text style={styles.regModalLabel}>Nom</Text>
+                            <TextInput
+                              ref={regLastNameInputRef}
+                              style={styles.regModalProfileInput}
+                              placeholder="Ex. Kamga"
+                              placeholderTextColor="#CCC"
+                              value={onboardingLastName}
+                              onChangeText={setOnboardingLastName}
+                              autoCapitalize="words"
+                              autoCorrect={false}
+                              maxLength={80}
+                            />
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  onboardingFirstName.trim().length >= 2 &&
+                                  onboardingLastName.trim().length >= 2 &&
+                                  !authProfileSaving &&
+                                  styles.regModalPrimaryBtnPressed,
+                                (onboardingFirstName.trim().length < 2 ||
+                                  onboardingLastName.trim().length < 2 ||
+                                  authProfileSaving) &&
+                                  styles.regModalPrimaryBtnDisabled,
+                              ]}
+                              disabled={
+                                onboardingFirstName.trim().length < 2 ||
+                                onboardingLastName.trim().length < 2 ||
+                                authProfileSaving
+                              }
+                              onPress={() => void submitOnboardingProfile()}
+                            >
+                              {authProfileSaving ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={styles.regModalPrimaryBtnText}>
+                                  Terminer
+                                </Text>
+                              )}
                             </Pressable>
                           </View>
                         </Animated.View>
@@ -758,6 +1092,71 @@ export default function Index() {
                     </ScrollView>
                   </SafeModalArea>
                 </KeyboardAvoidingView>
+              </View>
+            </View>
+          </Modal>
+          <Modal
+            visible={payPinModalVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={cancelPayPin}
+          >
+            <View style={styles.payPinModalRoot} pointerEvents="box-none">
+              <Pressable
+                style={styles.payPinModalBackdrop}
+                onPress={cancelPayPin}
+                accessibilityLabel="Fermer"
+              />
+              <View style={styles.payPinModalCard}>
+                <Text style={styles.payPinModalTitle}>Code PIN</Text>
+                <Text style={styles.payPinModalSub}>
+                  Saisissez votre PIN à 4 chiffres pour confirmer le paiement de{" "}
+                  {formatFcfa(payPendingAmount)} FCFA.
+                </Text>
+                <TextInput
+                  style={styles.payPinModalInput}
+                  placeholder="• • • •"
+                  placeholderTextColor="#CCC"
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  maxLength={ONBOARDING_PIN_LEN}
+                  value={payPinDraft}
+                  onChangeText={(t) =>
+                    setPayPinDraft(t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN))
+                  }
+                  autoFocus
+                />
+                <View style={styles.payPinModalActions}>
+                  <Pressable
+                    style={styles.payPinModalCancelBtn}
+                    onPress={cancelPayPin}
+                  >
+                    <Text style={styles.payPinModalCancelText}>Annuler</Text>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.payPinModalOkBtn,
+                      (payPinDraft.replace(/\D/g, "").length !== ONBOARDING_PIN_LEN ||
+                        paymentStatus === "SENDING") &&
+                        styles.payPinModalOkBtnDisabled,
+                      pressed &&
+                        payPinDraft.replace(/\D/g, "").length === ONBOARDING_PIN_LEN &&
+                        paymentStatus !== "SENDING" &&
+                        styles.payPinModalOkBtnPressed,
+                    ]}
+                    disabled={
+                      payPinDraft.replace(/\D/g, "").length !== ONBOARDING_PIN_LEN ||
+                      paymentStatus === "SENDING"
+                    }
+                    onPress={() => void confirmPayWithPin()}
+                  >
+                    {paymentStatus === "SENDING" ? (
+                      <ActivityIndicator color="#fff" size="small" />
+                    ) : (
+                      <Text style={styles.payPinModalOkText}>Payer</Text>
+                    )}
+                  </Pressable>
+                </View>
               </View>
             </View>
           </Modal>
@@ -816,32 +1215,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: ACCENT,
-  },
-  sayHelloBtn: {
-    alignSelf: "center",
-    marginTop: 12,
-    marginBottom: 4,
-    minWidth: 160,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 22,
-    backgroundColor: "#222",
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 48,
-  },
-  sayHelloBtnPressed: {
-    opacity: 0.88,
-    transform: [{ scale: 0.98 }],
-  },
-  sayHelloBtnDisabled: {
-    opacity: 0.5,
-  },
-  sayHelloBtnText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "700",
-    letterSpacing: 0.5,
   },
   balanceAmountRow: {
     flexDirection: "row",
@@ -923,13 +1296,18 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#F0F0F0",
   },
-  regModalCloseBtn: {
+  /** Espace réservé (même largeur que la flèche retour) pour garder le titre centré. */
+  regModalHeaderLeading: {
+    width: 44,
+    height: 44,
+  },
+  regModalBackHeaderBtn: {
     width: 44,
     height: 44,
     justifyContent: "center",
     alignItems: "flex-start",
   },
-  regModalCloseBtnPressed: { opacity: 0.6 },
+  regModalBackHeaderBtnPressed: { opacity: 0.6 },
   regModalHeaderTitle: {
     fontSize: 17,
     fontWeight: "700",
@@ -957,13 +1335,6 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     marginBottom: 22,
   },
-  regModalOtpAutofillHint: {
-    fontSize: 11,
-    color: "#999",
-    lineHeight: 16,
-    marginTop: -12,
-    marginBottom: 14,
-  },
   regModalLabel: {
     fontSize: 12,
     fontWeight: "600",
@@ -977,24 +1348,50 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#F8F8F8",
     borderRadius: 20,
-    paddingHorizontal: 20,
+    paddingLeft: 12,
+    paddingRight: 6,
     borderWidth: 1,
     borderColor: "#EEE",
     marginBottom: 20,
     minHeight: 56,
   },
+  regModalFlag: {
+    fontSize: 15,
+    lineHeight: 19,
+    marginRight: 5,
+  },
   regModalPrefix: {
-    fontSize: 17,
+    fontSize: 13,
     fontWeight: "700",
     color: "#333",
-    marginRight: 10,
+    marginRight: 6,
+    letterSpacing: -0.2,
   },
   regModalPhoneInput: {
     flex: 1,
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "600",
     color: "#222",
-    paddingVertical: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 0,
+    minWidth: 0,
+  },
+  regModalWalletLogo: {
+    marginLeft: "auto",
+    flexShrink: 0,
+    alignSelf: "center",
+    resizeMode: "contain",
+  },
+  /** Boîte plus carrée : évite le vide latéral avec le logo Orange (fond noir / icône centrée). */
+  regModalWalletLogoOrange: {
+    width: 26,
+    height: 26,
+    marginRight: 4,
+  },
+  /** Logo MTN plus horizontal. */
+  regModalWalletLogoMtn: {
+    width: 56,
+    height: 24,
   },
   regModalPrimaryBtn: {
     backgroundColor: ACCENT,
@@ -1036,6 +1433,95 @@ const styles = StyleSheet.create({
     borderColor: "#EEE",
     marginBottom: 20,
     paddingHorizontal: 12,
+  },
+  regModalProfileInput: {
+    width: "100%",
+    minHeight: 48,
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#222",
+    backgroundColor: "#F8F8F8",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#EEE",
+    marginBottom: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  payPinModalRoot: {
+    flex: 1,
+    justifyContent: "center",
+  },
+  payPinModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.5)",
+  },
+  payPinModalCard: {
+    marginHorizontal: 24,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 22,
+    zIndex: 1,
+  },
+  payPinModalTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    color: "#222",
+    marginBottom: 8,
+  },
+  payPinModalSub: {
+    fontSize: 14,
+    color: "#666",
+    lineHeight: 20,
+    marginBottom: 18,
+  },
+  payPinModalInput: {
+    height: 52,
+    fontSize: 22,
+    fontWeight: "700",
+    letterSpacing: 10,
+    textAlign: "center",
+    color: "#222",
+    backgroundColor: "#F8F8F8",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#EEE",
+    marginBottom: 20,
+  },
+  payPinModalActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
+  payPinModalCancelBtn: {
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  payPinModalCancelText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#666",
+  },
+  payPinModalOkBtn: {
+    flex: 1,
+    backgroundColor: ACCENT,
+    paddingVertical: 14,
+    borderRadius: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 48,
+  },
+  payPinModalOkBtnDisabled: {
+    backgroundColor: "#CCC",
+  },
+  payPinModalOkBtnPressed: {
+    opacity: 0.92,
+  },
+  payPinModalOkText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "800",
   },
   regModalResendHint: {
     fontSize: 14,

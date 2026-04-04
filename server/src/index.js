@@ -11,12 +11,15 @@ import {
   deliverOtpSms,
   describeSmsSetup,
 } from "./sms.js";
+import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
 
 const prisma = new PrismaClient();
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure";
 const OTP_PEPPER = process.env.OTP_PEPPER || "pepper";
+const TRANSACTION_PIN_PEPPER =
+  process.env.TRANSACTION_PIN_PEPPER?.trim() || OTP_PEPPER;
 
 /** Délai minimum entre deux envois SMS pour un même numéro (évite abus / coûts). */
 const OTP_RESEND_COOLDOWN_MS = 60_000;
@@ -53,6 +56,28 @@ function authMiddleware(req, res, next) {
   } catch {
     return res.status(401).json({ error: "Session invalide" });
   }
+}
+
+function trimStr(s) {
+  return String(s ?? "").trim();
+}
+
+function getOnboardingStep(u) {
+  if (!u?.transactionPinHash) return "pin";
+  if (!trimStr(u.firstName) || !trimStr(u.lastName)) return "profile";
+  return null;
+}
+
+function userToApi(u) {
+  const onboardingStep = getOnboardingStep(u);
+  return {
+    phone: u.phone,
+    balanceFcfa: u.balanceFcfa,
+    needsOnboarding: onboardingStep != null,
+    onboardingStep,
+    firstName: u.firstName ?? null,
+    lastName: u.lastName ?? null,
+  };
 }
 
 app.post("/auth/request-otp", async (req, res) => {
@@ -137,7 +162,8 @@ app.post("/auth/verify-otp", async (req, res) => {
       return res.status(400).json({ error: "Code incorrect ou expiré" });
     }
     await prisma.otpChallenge.deleteMany({ where: { phone } });
-    let user = await prisma.user.findUnique({ where: { phone } });
+    const existingBefore = await prisma.user.findUnique({ where: { phone } });
+    let user = existingBefore;
     if (!user) {
       user = await prisma.user.create({
         data: { phone, balanceFcfa: 0 },
@@ -146,7 +172,8 @@ app.post("/auth/verify-otp", async (req, res) => {
     const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "30d" });
     res.json({
       token,
-      user: { phone: user.phone, balanceFcfa: user.balanceFcfa },
+      user: userToApi(user),
+      isNewAccount: !existingBefore,
     });
   } catch (e) {
     console.error(e);
@@ -157,7 +184,73 @@ app.post("/auth/verify-otp", async (req, res) => {
 app.get("/me", authMiddleware, async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.userId } });
   if (!user) return res.status(401).json({ error: "Utilisateur introuvable" });
-  res.json({ phone: user.phone, balanceFcfa: user.balanceFcfa });
+  res.json(userToApi(user));
+});
+
+app.post("/auth/onboarding/transaction-pin", authMiddleware, async (req, res) => {
+  try {
+    const pin = String(req.body?.pin ?? "").replace(/\D/g, "");
+    if (pin.length !== 4) {
+      return res
+        .status(400)
+        .json({ error: "Le code PIN doit comporter 4 chiffres" });
+    }
+    const row = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!row) return res.status(401).json({ error: "Utilisateur introuvable" });
+    if (row.transactionPinHash) {
+      return res.status(400).json({ error: "Code PIN déjà défini" });
+    }
+    let hash;
+    try {
+      hash = hashTransactionPin(pin, TRANSACTION_PIN_PEPPER);
+    } catch (e) {
+      console.error("[onboarding/pin]", e);
+      return res.status(500).json({ error: "Configuration serveur (PIN) invalide" });
+    }
+    const updated = await prisma.user.update({
+      where: { id: req.userId },
+      data: { transactionPinHash: hash },
+    });
+    res.json({ user: userToApi(updated) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Enregistrement du PIN impossible" });
+  }
+});
+
+app.post("/auth/onboarding/profile", authMiddleware, async (req, res) => {
+  try {
+    const firstName = trimStr(req.body?.firstName);
+    const lastName = trimStr(req.body?.lastName);
+    if (firstName.length < 2 || firstName.length > 80) {
+      return res
+        .status(400)
+        .json({ error: "Prénom invalide (2 à 80 caractères)" });
+    }
+    if (lastName.length < 2 || lastName.length > 80) {
+      return res.status(400).json({ error: "Nom invalide (2 à 80 caractères)" });
+    }
+    const nameRe = /^[a-zA-ZÀ-ÿ\s'-]+$/;
+    if (!nameRe.test(firstName) || !nameRe.test(lastName)) {
+      return res.status(400).json({
+        error: "Prénom ou nom : lettres, espaces, tirets et apostrophes uniquement",
+      });
+    }
+    const row = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!row?.transactionPinHash) {
+      return res
+        .status(400)
+        .json({ error: "Définissez d’abord votre code PIN de transaction" });
+    }
+    const updated = await prisma.user.update({
+      where: { id: req.userId },
+      data: { firstName, lastName },
+    });
+    res.json({ user: userToApi(updated) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Enregistrement du profil impossible" });
+  }
 });
 
 app.post("/wallet/deposit", authMiddleware, async (req, res) => {
@@ -194,12 +287,35 @@ app.post("/payments/pay", authMiddleware, async (req, res) => {
   const amount = parseInt(String(req.body?.amount), 10);
   const recipientName = req.body?.recipientName || "Bénéficiaire";
   const recipientPhone = req.body?.recipientPhone ?? null;
+  const transactionPin = String(req.body?.transactionPin ?? "").replace(
+    /\D/g,
+    "",
+  );
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "Montant invalide" });
+  }
+  if (transactionPin.length !== 4) {
+    return res
+      .status(400)
+      .json({ error: "Code PIN de transaction requis (4 chiffres)" });
   }
   const user = await prisma.user.findUnique({ where: { id: req.userId } });
   if (!user || user.balanceFcfa < amount) {
     return res.status(400).json({ error: "Solde insuffisant" });
+  }
+  if (!user.transactionPinHash) {
+    return res.status(403).json({
+      error: "Complétez votre inscription (code PIN) pour payer",
+    });
+  }
+  if (
+    !verifyTransactionPin(
+      transactionPin,
+      user.transactionPinHash,
+      TRANSACTION_PIN_PEPPER,
+    )
+  ) {
+    return res.status(400).json({ error: "Code PIN incorrect" });
   }
   try {
     const result = await prisma.$transaction(async (tx) => {
