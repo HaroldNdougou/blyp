@@ -5,9 +5,9 @@ import type { ApiUser, TransactionItem } from "./types";
 
 export { ApiError } from "./errors";
 
-/** Affiché quand le téléphone n’atteint pas l’API (USB / Wi‑Fi / firewall). */
+/** Affiché quand `fetch` échoue (pas une erreur JSON du serveur). */
 const API_UNREACHABLE_HINT =
-  "Le téléphone n’atteint pas l’API. Sur un vrai appareil : même Wi‑Fi que le PC et EXPO_PUBLIC_API_URL=http://IP_DU_PC:3001, ou branche en USB, lance « adb reverse tcp:3001 tcp:3001 », mets http://127.0.0.1:3001 dans .env puis rebuild (npx expo run:android). N’utilise pas 10.0.2.2 hors émulateur.";
+  "La requête réseau a échoué avant la réponse du serveur. Causes fréquentes : Wi‑Fi / 4G instable, timeout, ou API locale sans « adb reverse ». Sur PC : EXPO_PUBLIC_API_URL=http://IP_DU_PC:3001 ou http://127.0.0.1:3001 + adb reverse tcp:3001 tcp:3001 + npx expo run:android.";
 
 async function parseJson(res: Response): Promise<unknown> {
   const text = await res.text();
@@ -49,9 +49,13 @@ async function request<T>(
       ...rest,
       headers,
     });
-  } catch {
+  } catch (cause) {
+    const technical =
+      cause instanceof Error && cause.message
+        ? `\n\nTechnique : ${cause.message}`
+        : "";
     throw new ApiError(
-      `${API_UNREACHABLE_HINT}\n\n(URL actuelle : ${API_BASE_URL || "(vide — mode démo)"})`,
+      `${API_UNREACHABLE_HINT}\n\nSi le SMS vient d’arriver, réessaie « Valider » dans 2–3 s (souvent un raté passager). Sinon vérifie les logs de l’API (Railway) au moment du clic.${technical}\n\nURL : ${API_BASE_URL || "(vide — mode démo)"}`,
       0,
     );
   }
@@ -94,10 +98,24 @@ export async function verifyOtp(
   code: string,
 ): Promise<{ token: string; user: ApiUser }> {
   if (USE_MOCK_API) return mock.mockVerifyOtp(phoneDigits, code);
-  return request("/auth/verify-otp", {
-    method: "POST",
-    body: JSON.stringify({ phone: phoneDigits, code }),
-  });
+  const body = JSON.stringify({ phone: phoneDigits, code });
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await request("/auth/verify-otp", {
+        method: "POST",
+        body,
+      });
+    } catch (e) {
+      lastError = e;
+      if (e instanceof ApiError && e.status === 0 && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 800));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastError;
 }
 
 export async function getMe(token: string): Promise<ApiUser> {

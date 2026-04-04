@@ -4,8 +4,41 @@
  * Sans rien en prod → erreur ; en dev → code loggé dans la console.
  */
 
+let warnedMissingAndroidSmsHash = false;
+
+/** Hashes 11 car. pour Google SMS Retriever (séparateurs , ou ;). Guillemets .env tolérés. */
+function parseSmsRetrieverHashes() {
+  const raw = String(process.env.ANDROID_SMS_OTP_APP_HASH ?? "").trim();
+  const unquoted = raw.replace(/^["']|["']$/g, "");
+  return unquoted
+    .split(/[,;]+/)
+    .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+    .filter((s) => s.length === 11);
+}
+
+function warnMissingAndroidSmsHashOnce() {
+  if (warnedMissingAndroidSmsHash || process.env.NODE_ENV === "production") {
+    return;
+  }
+  warnedMissingAndroidSmsHash = true;
+  console.warn(
+    "[SMS] ANDROID_SMS_OTP_APP_HASH absent : SMS = « Bonjour CODE » seul — pas d’auto-remplissage Android (SMS Retriever). " +
+      "Logs Metro (__DEV__) sur l’écran OTP : [Blyp] ANDROID_SMS_OTP_APP_HASH=…",
+  );
+}
+
+/**
+ * Corps du SMS OTP. Avec ANDROID_SMS_OTP_APP_HASH (11 car. chacun, plusieurs séparés par virgule),
+ * les lignes sont ajoutées en fin de message pour le SMS Retriever (auto-saisie sans READ_SMS).
+ */
 function otpMessage(code) {
-  return `Bonjour ${code}`;
+  const base = `Bonjour ${code}`;
+  const hashes = parseSmsRetrieverHashes();
+  if (hashes.length === 0) {
+    warnMissingAndroidSmsHashOnce();
+    return base;
+  }
+  return `${base}\n\n${hashes.join("\n")}`;
 }
 
 /** Obit SMS API v2 — doc : GET bulksms, destination = 237 + 9 chiffres nationaux. */

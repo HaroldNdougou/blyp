@@ -1,0 +1,12 @@
+---
+description: Environnement de test Android physique pour le projet Blyp
+alwaysApply: true
+---
+
+# Appareil de développement Android
+
+- **Pas d’émulateur** : le développement et les tests se font sur un **téléphone physique**.
+- Modèle : **Redmi 9C**.
+- Connexion : **USB**, avec **débogage USB** activé.
+
+Pour les conseils (Expo, `adb`, `expo run:android`, `adb reverse`, Metro), partir de ce contexte et ne pas proposer l’émulateur comme option par défaut.

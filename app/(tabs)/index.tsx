@@ -1,30 +1,33 @@
+import { AndroidOtpSmsAutofill } from "../../components/AndroidOtpSmsAutofill";
 import { useAuth } from "@/contexts/AuthContext";
 import { ApiError, pay as apiPay, sayHello } from "@/lib/api/client";
 import { API_BASE_URL, USE_MOCK_API } from "@/lib/config";
 import {
-    formatCameroonPhoneDisplay,
-    formatFcfa,
-    normalizeCameroonPhoneDigits,
+  formatCameroonPhoneDisplay,
+  formatFcfa,
+  normalizeCameroonPhoneDigits,
 } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Alert,
-    Image,
-    Keyboard,
-    KeyboardAvoidingView,
-    Modal,
-    Platform,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableWithoutFeedback,
-    View,
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableWithoutFeedback,
+  useWindowDimensions,
+  View,
 } from "react-native";
 import { SafeAreaView as SafeModalArea, useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -39,6 +42,8 @@ const REG_SHEET_EXTRA_TOP = 36;
 const OTP_RESEND_COOLDOWN_SEC = 60;
 /** Limite d’envois par ouverture du modal d’inscription. */
 const MAX_OTP_SENDS_PER_SESSION = 8;
+
+const OTP_LEN = 6;
 
 export default function Index() {
   const {
@@ -65,6 +70,13 @@ export default function Index() {
   const inviteBootstrapped = useRef(false);
   const regPhoneInputRef = useRef<TextInput>(null);
   const regOtpInputRef = useRef<TextInput>(null);
+  const otpAutoSubmittedRef = useRef<string | null>(null);
+  const otpVerifyInFlightRef = useRef(false);
+  const regSlideX = useRef(new Animated.Value(0)).current;
+  const [regSlideWidth, setRegSlideWidth] = useState(0);
+  const { width: windowWidth } = useWindowDimensions();
+  const regSlidePanelW =
+    regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
   const regInsets = useSafeAreaInsets();
   const regSheetTop = regInsets.top + REG_SHEET_EXTRA_TOP;
 
@@ -88,12 +100,14 @@ export default function Index() {
       setWelcomeOtp("");
       setOtpResendCooldown(0);
       setOtpSendCount(0);
+      setRegSlideWidth(0);
     } else {
       setWelcomeStep("phone");
       setWelcomeOtp("");
       setWelcomePhone("");
       setOtpResendCooldown(0);
       setOtpSendCount(0);
+      setRegSlideWidth(0);
     }
   }, [registerInviteVisible]);
 
@@ -104,6 +118,30 @@ export default function Index() {
     }, 1000);
     return () => clearInterval(id);
   }, [welcomeStep, otpResendCooldown > 0]);
+
+  useEffect(() => {
+    if (showRegisterOverlay) {
+      regSlideX.setValue(0);
+    }
+  }, [showRegisterOverlay, regSlideX]);
+
+  useEffect(() => {
+    if (!showRegisterOverlay) return;
+    const w =
+      regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
+    const to = welcomeStep === "otp" ? -w : 0;
+    Animated.timing(regSlideX, {
+      toValue: to,
+      duration: 320,
+      useNativeDriver: true,
+    }).start();
+  }, [
+    welcomeStep,
+    showRegisterOverlay,
+    regSlideWidth,
+    windowWidth,
+    regSlideX,
+  ]);
 
   const requestOtpForRegistration = async (mode: "initial" | "resend") => {
     if (welcomePhone.length !== 9) return;
@@ -135,6 +173,54 @@ export default function Index() {
     }
   };
 
+  const submitOtpVerification = useCallback(async () => {
+    if (welcomeOtp.length !== OTP_LEN || welcomePhone.length !== 9) return;
+    if (otpVerifyInFlightRef.current) return;
+    otpVerifyInFlightRef.current = true;
+    Keyboard.dismiss();
+    setAuthVerifySending(true);
+    try {
+      await verifyAndSignIn(welcomePhone, welcomeOtp);
+      setWelcomeOtp("");
+      setRegisterInviteVisible(false);
+    } catch (e) {
+      Alert.alert(
+        "Vérification",
+        e instanceof ApiError ? e.message : "Code invalide.",
+      );
+    } finally {
+      otpVerifyInFlightRef.current = false;
+      setAuthVerifySending(false);
+    }
+  }, [welcomePhone, welcomeOtp, verifyAndSignIn]);
+
+  const applySmsAutofillOtp = useCallback((digits: string) => {
+    setWelcomeOtp(digits);
+  }, []);
+
+  useEffect(() => {
+    if (user) return;
+    if (welcomeStep === "phone") {
+      otpAutoSubmittedRef.current = null;
+      return;
+    }
+    if (welcomeOtp.length < OTP_LEN) {
+      otpAutoSubmittedRef.current = null;
+      return;
+    }
+    if (authVerifySending || welcomePhone.length !== 9) return;
+    if (otpAutoSubmittedRef.current === welcomeOtp) return;
+    otpAutoSubmittedRef.current = welcomeOtp;
+    void submitOtpVerification();
+  }, [
+    user,
+    welcomeStep,
+    welcomeOtp,
+    welcomePhone,
+    authVerifySending,
+    submitOtpVerification,
+  ]);
+
   /** Focus + clavier après ouverture du modal / changement d’étape (délai Android = fin animation). */
   useEffect(() => {
     if (!showRegisterOverlay) return;
@@ -148,8 +234,6 @@ export default function Index() {
     }, delay);
     return () => clearTimeout(t);
   }, [showRegisterOverlay, welcomeStep]);
-
-  const OTP_LEN = 6;
 
   const detectedDriver = {
     name: "Taxi Mohamadou",
@@ -238,7 +322,7 @@ export default function Index() {
                       style={styles.balanceReassuranceIcon}
                     />
                     <Text style={styles.balanceReassurance}>
-                      Votre argent est protégé et utilisable uniquement par vous.
+                      Votre argent est protégé.
                     </Text>
                   </View>
                 </View>
@@ -432,188 +516,220 @@ export default function Index() {
                       keyboardShouldPersistTaps="handled"
                       showsVerticalScrollIndicator={false}
                     >
-                      {welcomeStep === "phone" ? (
-                        <>
-                          <Text style={styles.regModalLead}>
-                            Créez votre compte en quelques secondes. Nous vous enverrons un code
-                            par SMS pour vérifier votre numéro.
-                          </Text>
-                          <Text style={styles.regModalLabel}>Numéro de téléphone</Text>
-                          <View style={styles.regModalPhoneWrap}>
-                            <Text style={styles.regModalPrefix}>+237</Text>
-                            <TextInput
-                              ref={regPhoneInputRef}
-                              style={styles.regModalPhoneInput}
-                              placeholder="612345678"
-                              placeholderTextColor="#CCC"
-                              keyboardType="number-pad"
-                              maxLength={9}
-                              value={welcomePhone}
-                              onChangeText={(t) =>
-                                setWelcomePhone(normalizeCameroonPhoneDigits(t))
-                              }
-                              showSoftInputOnFocus
-                            />
-                          </View>
-                          <Pressable
-                            style={({ pressed }) => [
-                              styles.regModalPrimaryBtn,
-                              pressed &&
-                                welcomePhone.length === 9 &&
-                                !authOtpSending &&
-                                otpSendCount < MAX_OTP_SENDS_PER_SESSION &&
-                                styles.regModalPrimaryBtnPressed,
-                              (welcomePhone.length !== 9 ||
-                                authOtpSending ||
-                                otpSendCount >= MAX_OTP_SENDS_PER_SESSION) &&
-                                styles.regModalPrimaryBtnDisabled,
+                      <View
+                        style={styles.regModalSlideClip}
+                        onLayout={(e) => {
+                          const w = e.nativeEvent.layout.width;
+                          if (w > 0 && Math.abs(w - regSlideWidth) > 0.5) {
+                            setRegSlideWidth(w);
+                          }
+                        }}
+                      >
+                        <Animated.View
+                          style={[
+                            styles.regModalSlideRow,
+                            {
+                              width: regSlidePanelW * 2,
+                              transform: [{ translateX: regSlideX }],
+                            },
+                          ]}
+                        >
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
                             ]}
-                            disabled={
-                              welcomePhone.length !== 9 ||
-                              authOtpSending ||
-                              otpSendCount >= MAX_OTP_SENDS_PER_SESSION
-                            }
-                            onPress={async () => {
-                              if (welcomePhone.length !== 9) return;
-                              Keyboard.dismiss();
-                              await requestOtpForRegistration("initial");
-                            }}
                           >
-                            {authOtpSending ? (
-                              <ActivityIndicator color="#fff" size="small" />
-                            ) : (
-                              <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
-                            )}
-                          </Pressable>
-                        </>
-                      ) : (
-                        <>
-                          <Text style={styles.regModalLead}>
-                            {USE_MOCK_API
-                              ? `Démo : saisissez ${OTP_LEN} chiffres au choix, puis Valider.`
-                              : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS.`}
-                          </Text>
-                          <Text style={styles.regModalOtpHint}>
-                            +237{" "}
-                            {welcomePhone
-                              ? formatCameroonPhoneDisplay(welcomePhone)
-                              : "…"}
-                          </Text>
-                          <Text style={styles.regModalLabel}>Code de vérification</Text>
-                          <TextInput
-                            ref={regOtpInputRef}
-                            style={styles.regModalOtpInput}
-                            placeholder="• • • • • •"
-                            placeholderTextColor="#DDD"
-                            keyboardType="number-pad"
-                            value={welcomeOtp}
-                            onChangeText={(t) =>
-                              setWelcomeOtp(t.replace(/\D/g, "").slice(0, OTP_LEN))
-                            }
-                            maxLength={OTP_LEN}
-                            textContentType="oneTimeCode"
-                            autoComplete="sms-otp"
-                            showSoftInputOnFocus
-                          />
-                          <Pressable
-                            style={({ pressed }) => [
-                              styles.regModalPrimaryBtn,
-                              pressed &&
-                                welcomeOtp.length === OTP_LEN &&
-                                !authVerifySending &&
-                                styles.regModalPrimaryBtnPressed,
-                              (welcomeOtp.length !== OTP_LEN || authVerifySending) &&
-                                styles.regModalPrimaryBtnDisabled,
-                            ]}
-                            disabled={
-                              welcomeOtp.length !== OTP_LEN || authVerifySending
-                            }
-                            onPress={async () => {
-                              if (welcomeOtp.length !== OTP_LEN) return;
-                              Keyboard.dismiss();
-                              setAuthVerifySending(true);
-                              try {
-                                await verifyAndSignIn(welcomePhone, welcomeOtp);
-                                setRegisterInviteVisible(false);
-                              } catch (e) {
-                                Alert.alert(
-                                  "Vérification",
-                                  e instanceof ApiError
-                                    ? e.message
-                                    : "Code invalide.",
-                                );
-                              } finally {
-                                setAuthVerifySending(false);
-                              }
-                            }}
-                          >
-                            {authVerifySending ? (
-                              <ActivityIndicator color="#fff" size="small" />
-                            ) : (
-                              <Text style={styles.regModalPrimaryBtnText}>Valider</Text>
-                            )}
-                          </Pressable>
-                          {otpSendCount >= MAX_OTP_SENDS_PER_SESSION ? (
-                            <Text style={styles.regModalResendLimit}>
-                              Limite d’envois atteinte. Fermez l’inscription et réessayez plus
-                              tard, ou modifiez le numéro ci-dessous.
+                            <Text style={styles.regModalLead}>
+                              Créez votre compte en quelques secondes. Nous vous enverrons un
+                              code par SMS pour vérifier votre numéro.
                             </Text>
-                          ) : otpResendCooldown > 0 ? (
-                            <Text style={styles.regModalResendHint}>
-                              Renvoyer le code dans{" "}
-                              <Text style={styles.regModalResendHintEm}>
-                                {otpResendCooldown}s
-                              </Text>
-                            </Text>
-                          ) : (
+                            <Text style={styles.regModalLabel}>Numéro de téléphone</Text>
+                            <View style={styles.regModalPhoneWrap}>
+                              <Text style={styles.regModalPrefix}>+237</Text>
+                              <TextInput
+                                ref={regPhoneInputRef}
+                                style={styles.regModalPhoneInput}
+                                placeholder="612345678"
+                                placeholderTextColor="#CCC"
+                                keyboardType="number-pad"
+                                maxLength={9}
+                                value={welcomePhone}
+                                onChangeText={(t) =>
+                                  setWelcomePhone(normalizeCameroonPhoneDigits(t))
+                                }
+                                showSoftInputOnFocus
+                              />
+                            </View>
                             <Pressable
                               style={({ pressed }) => [
-                                styles.regModalResendBtn,
-                                (authResendSending || authVerifySending) &&
-                                  styles.regModalResendBtnDisabled,
+                                styles.regModalPrimaryBtn,
                                 pressed &&
-                                  !authResendSending &&
-                                  !authVerifySending &&
-                                  styles.regModalResendBtnPressed,
+                                  welcomePhone.length === 9 &&
+                                  !authOtpSending &&
+                                  otpSendCount < MAX_OTP_SENDS_PER_SESSION &&
+                                  styles.regModalPrimaryBtnPressed,
+                                (welcomePhone.length !== 9 ||
+                                  authOtpSending ||
+                                  otpSendCount >= MAX_OTP_SENDS_PER_SESSION) &&
+                                  styles.regModalPrimaryBtnDisabled,
                               ]}
-                              disabled={authResendSending || authVerifySending}
+                              disabled={
+                                welcomePhone.length !== 9 ||
+                                authOtpSending ||
+                                otpSendCount >= MAX_OTP_SENDS_PER_SESSION
+                              }
                               onPress={async () => {
+                                if (welcomePhone.length !== 9) return;
                                 Keyboard.dismiss();
-                                await requestOtpForRegistration("resend");
+                                await requestOtpForRegistration("initial");
                               }}
                             >
-                              {authResendSending ? (
-                                <ActivityIndicator color={ACCENT} size="small" />
+                              {authOtpSending ? (
+                                <ActivityIndicator color="#fff" size="small" />
                               ) : (
-                                <Text style={styles.regModalResendBtnText}>
-                                  Renvoyer le code
-                                </Text>
+                                <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
                               )}
                             </Pressable>
-                          )}
-                          <Pressable
-                            style={({ pressed }) => [
-                              styles.regModalBackLink,
-                              pressed && { opacity: 0.6 },
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
                             ]}
-                            onPress={() => {
-                              Keyboard.dismiss();
-                              setWelcomeStep("phone");
-                              setOtpResendCooldown(0);
-                            }}
                           >
-                            <Text style={styles.regModalBackLinkText}>
-                              Modifier le numéro
+                            <Text style={styles.regModalLead}>
+                              {USE_MOCK_API
+                                ? `Démo : saisissez les ${OTP_LEN} chiffres — envoi automatique.`
+                                : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS — envoi automatique.`}
                             </Text>
-                          </Pressable>
-                        </>
-                      )}
+                            {Platform.OS === "android" && !USE_MOCK_API && (
+                              <Text style={styles.regModalOtpAutofillHint}>
+                                Si le serveur envoie la clé Android en fin de SMS, le code peut se
+                                remplir tout seul. Sinon : suggestion au-dessus du clavier, ou copie
+                                les 6 chiffres puis reviens ici.
+                              </Text>
+                            )}
+                            <Text style={styles.regModalOtpHint}>
+                              +237{" "}
+                              {welcomePhone
+                                ? formatCameroonPhoneDisplay(welcomePhone)
+                                : "…"}
+                            </Text>
+                            <Text style={styles.regModalLabel}>Code de vérification</Text>
+                            <TextInput
+                              ref={regOtpInputRef}
+                              style={styles.regModalOtpInput}
+                              placeholder="• • • • • •"
+                              placeholderTextColor="#DDD"
+                              keyboardType="number-pad"
+                              value={welcomeOtp}
+                              onChangeText={(t) =>
+                                setWelcomeOtp(t.replace(/\D/g, "").slice(0, OTP_LEN))
+                              }
+                              maxLength={OTP_LEN}
+                              textContentType="oneTimeCode"
+                              autoCapitalize="none"
+                              autoCorrect={false}
+                              spellCheck={false}
+                              autoComplete={
+                                Platform.OS === "android" ? "sms-otp" : "one-time-code"
+                              }
+                              {...(Platform.OS === "android"
+                                ? { importantForAutofill: "yes" as const }
+                                : {})}
+                              showSoftInputOnFocus
+                            />
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  welcomeOtp.length === OTP_LEN &&
+                                  !authVerifySending &&
+                                  styles.regModalPrimaryBtnPressed,
+                                (welcomeOtp.length !== OTP_LEN || authVerifySending) &&
+                                  styles.regModalPrimaryBtnDisabled,
+                              ]}
+                              disabled={
+                                welcomeOtp.length !== OTP_LEN || authVerifySending
+                              }
+                              onPress={() => void submitOtpVerification()}
+                            >
+                              {authVerifySending ? (
+                                <ActivityIndicator color="#fff" size="small" />
+                              ) : (
+                                <Text style={styles.regModalPrimaryBtnText}>Valider</Text>
+                              )}
+                            </Pressable>
+                            {otpSendCount >= MAX_OTP_SENDS_PER_SESSION ? (
+                              <Text style={styles.regModalResendLimit}>
+                                Limite d’envois atteinte. Fermez l’inscription et réessayez plus
+                                tard, ou modifiez le numéro ci-dessous.
+                              </Text>
+                            ) : otpResendCooldown > 0 ? (
+                              <Text style={styles.regModalResendHint}>
+                                Renvoyer le code dans{" "}
+                                <Text style={styles.regModalResendHintEm}>
+                                  {otpResendCooldown}s
+                                </Text>
+                              </Text>
+                            ) : (
+                              <Pressable
+                                style={({ pressed }) => [
+                                  styles.regModalResendBtn,
+                                  (authResendSending || authVerifySending) &&
+                                    styles.regModalResendBtnDisabled,
+                                  pressed &&
+                                    !authResendSending &&
+                                    !authVerifySending &&
+                                    styles.regModalResendBtnPressed,
+                                ]}
+                                disabled={authResendSending || authVerifySending}
+                                onPress={async () => {
+                                  Keyboard.dismiss();
+                                  await requestOtpForRegistration("resend");
+                                }}
+                              >
+                                {authResendSending ? (
+                                  <ActivityIndicator color={ACCENT} size="small" />
+                                ) : (
+                                  <Text style={styles.regModalResendBtnText}>
+                                    Renvoyer le code
+                                  </Text>
+                                )}
+                              </Pressable>
+                            )}
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalBackLink,
+                                pressed && { opacity: 0.6 },
+                              ]}
+                              onPress={() => {
+                                Keyboard.dismiss();
+                                setWelcomeStep("phone");
+                                setOtpResendCooldown(0);
+                              }}
+                            >
+                              <Text style={styles.regModalBackLinkText}>
+                                Modifier le numéro
+                              </Text>
+                            </Pressable>
+                          </View>
+                        </Animated.View>
+                      </View>
                     </ScrollView>
                   </SafeModalArea>
                 </KeyboardAvoidingView>
               </View>
             </View>
           </Modal>
+          {showRegisterOverlay && (
+            <AndroidOtpSmsAutofill
+              applyOtp={welcomeStep === "otp"}
+              otpLength={OTP_LEN}
+              onCode={applySmsAutofillOtp}
+            />
+          )}
         </View>
       </TouchableWithoutFeedback>
     </KeyboardAvoidingView>
@@ -705,7 +821,7 @@ const styles = StyleSheet.create({
   balanceAmountNum: {
     fontSize: 18,
     fontWeight: "800",
-    color: "#222",
+    color: ACCENT,
   },
   balanceCurrency: {
     fontSize: 13,
@@ -715,14 +831,15 @@ const styles = StyleSheet.create({
   },
   balanceReassuranceRow: {
     marginTop: 0,
+    width: "100%",
     paddingHorizontal: 12,
     alignItems: "center",
-    alignSelf: "center",
-    maxWidth: 320,
   },
   balanceReassuranceInner: {
     flexDirection: "row",
     alignItems: "flex-start",
+    justifyContent: "center",
+    alignSelf: "center",
     maxWidth: 300,
   },
   balanceReassuranceIcon: {
@@ -730,8 +847,8 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   balanceReassurance: {
-    flex: 1,
     flexShrink: 1,
+    maxWidth: 248,
     fontSize: 9,
     fontWeight: "300",
     color: "#999",
@@ -786,11 +903,28 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 28,
   },
+  regModalSlideClip: {
+    width: "100%",
+    overflow: "hidden",
+  },
+  regModalSlideRow: {
+    flexDirection: "row",
+  },
+  regModalSlidePage: {
+    flexShrink: 0,
+  },
   regModalLead: {
     fontSize: 13,
     color: "#666",
     lineHeight: 19,
     marginBottom: 22,
+  },
+  regModalOtpAutofillHint: {
+    fontSize: 11,
+    color: "#999",
+    lineHeight: 16,
+    marginTop: -12,
+    marginBottom: 14,
   },
   regModalLabel: {
     fontSize: 12,
