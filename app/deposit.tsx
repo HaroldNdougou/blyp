@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/contexts/ToastContext";
 import { deposit as apiDeposit, ApiError } from "@/lib/api/client";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
@@ -23,6 +24,7 @@ const SHEET_EXTRA_TOP = 36;
 
 export default function DepositScreen() {
   const { token, refreshUser } = useAuth();
+  const { showToastFromApi } = useToast();
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const insets = useSafeAreaInsets();
@@ -106,8 +108,9 @@ export default function DepositScreen() {
                   }
                   setSubmitting(true);
                   try {
-                    await apiDeposit(token, n);
+                    const { toast } = await apiDeposit(token, n);
                     await refreshUser();
+                    if (toast) showToastFromApi(toast);
                     router.back();
                   } catch (e) {
                     Alert.alert(

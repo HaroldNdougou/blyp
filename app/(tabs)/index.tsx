@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/contexts/ToastContext";
 import {
   ApiError,
   fetchHealth,
@@ -62,6 +63,13 @@ const REG_STEPS = [
 ] as const;
 type RegStep = (typeof REG_STEPS)[number];
 
+/** Bénéficiaire démo (écran paiement) — référence stable pour les hooks. */
+const DEMO_DRIVER = {
+  name: "Taxi Mohamadou",
+  phone: "698 25 68 96",
+  avatar: null as const,
+};
+
 function regModalTitle(step: RegStep): string {
   switch (step) {
     case "phone":
@@ -88,6 +96,7 @@ export default function Index() {
     verifyAndSignIn,
     refreshUser,
   } = useAuth();
+  const { showToastFromApi } = useToast();
   const [amount, setAmount] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS'>('IDLE');
   const [payPinModalVisible, setPayPinModalVisible] = useState(false);
@@ -120,6 +129,9 @@ export default function Index() {
   const prevRegVisibleRef = useRef(false);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
+  const pinFirstAutoSubmittedRef = useRef<string | null>(null);
+  const pinConfirmAutoSubmittedRef = useRef<string | null>(null);
+  const pinConfirmVerifyInFlightRef = useRef(false);
   const railwayOtpHashAlertShownRef = useRef(false);
   const regSlideX = useRef(new Animated.Value(0)).current;
   const [regSlideWidth, setRegSlideWidth] = useState(0);
@@ -319,9 +331,13 @@ export default function Index() {
     if (a.length !== ONBOARDING_PIN_LEN || b.length !== ONBOARDING_PIN_LEN) return;
     if (a !== b) {
       Alert.alert("Code PIN", "Les deux saisies ne correspondent pas.");
+      setOnboardingPinConfirm("");
+      pinConfirmAutoSubmittedRef.current = null;
       return;
     }
     if (!token) return;
+    if (pinConfirmVerifyInFlightRef.current) return;
+    pinConfirmVerifyInFlightRef.current = true;
     Keyboard.dismiss();
     setAuthPinSaving(true);
     try {
@@ -330,12 +346,15 @@ export default function Index() {
       setWelcomeStep("profile");
       setOnboardingPin("");
       setOnboardingPinConfirm("");
+      pinConfirmAutoSubmittedRef.current = null;
     } catch (e) {
       Alert.alert(
         "Code PIN",
         e instanceof ApiError ? e.message : "Enregistrement impossible.",
       );
+      pinConfirmAutoSubmittedRef.current = null;
     } finally {
+      pinConfirmVerifyInFlightRef.current = false;
       setAuthPinSaving(false);
     }
   }, [
@@ -359,9 +378,10 @@ export default function Index() {
     Keyboard.dismiss();
     setAuthProfileSaving(true);
     try {
-      await setOnboardingProfile(token, f, l);
+      const { toast } = await setOnboardingProfile(token, f, l);
       await refreshUser();
       setRegisterInviteVisible(false);
+      if (toast) showToastFromApi(toast);
     } catch (e) {
       Alert.alert(
         "Profil",
@@ -370,7 +390,13 @@ export default function Index() {
     } finally {
       setAuthProfileSaving(false);
     }
-  }, [onboardingFirstName, onboardingLastName, token, refreshUser]);
+  }, [
+    onboardingFirstName,
+    onboardingLastName,
+    token,
+    refreshUser,
+    showToastFromApi,
+  ]);
 
   useEffect(() => {
     if (user) return;
@@ -393,6 +419,48 @@ export default function Index() {
     welcomePhone,
     authVerifySending,
     submitOtpVerification,
+  ]);
+
+  useEffect(() => {
+    if (!showRegisterOverlay || welcomeStep !== "pin") {
+      if (welcomeStep !== "pin") pinFirstAutoSubmittedRef.current = null;
+      return;
+    }
+    const d = onboardingPin.replace(/\D/g, "");
+    if (d.length < ONBOARDING_PIN_LEN) {
+      pinFirstAutoSubmittedRef.current = null;
+      return;
+    }
+    if (pinFirstAutoSubmittedRef.current === d) return;
+    pinFirstAutoSubmittedRef.current = d;
+    submitOnboardingPinContinue();
+  }, [
+    showRegisterOverlay,
+    welcomeStep,
+    onboardingPin,
+    submitOnboardingPinContinue,
+  ]);
+
+  useEffect(() => {
+    if (!showRegisterOverlay || welcomeStep !== "pinConfirm") {
+      if (welcomeStep !== "pinConfirm") pinConfirmAutoSubmittedRef.current = null;
+      return;
+    }
+    const b = onboardingPinConfirm.replace(/\D/g, "");
+    if (b.length < ONBOARDING_PIN_LEN) {
+      pinConfirmAutoSubmittedRef.current = null;
+      return;
+    }
+    if (authPinSaving || pinConfirmVerifyInFlightRef.current) return;
+    if (pinConfirmAutoSubmittedRef.current === b) return;
+    pinConfirmAutoSubmittedRef.current = b;
+    void submitOnboardingPinConfirm();
+  }, [
+    showRegisterOverlay,
+    welcomeStep,
+    onboardingPinConfirm,
+    authPinSaving,
+    submitOnboardingPinConfirm,
   ]);
 
   /** Focus + clavier après ouverture du modal / changement d’étape (délai Android = fin animation). */
@@ -437,12 +505,6 @@ export default function Index() {
     };
   }, [welcomeStep]);
 
-  const detectedDriver = {
-    name: "Taxi Mohamadou",
-    phone: "698 25 68 96",
-    avatar: null,
-  };
-
   const handlePay = () => {
     const n = parseInt(amount, 10);
     if (!amount || !Number.isFinite(n) || n <= 0 || paymentStatus === "SENDING")
@@ -479,14 +541,15 @@ export default function Index() {
     setPayPinDraft("");
     setPaymentStatus("SENDING");
     try {
-      await apiPay(
+      const { toast } = await apiPay(
         token,
         payPendingAmount,
-        detectedDriver.name,
-        detectedDriver.phone.replace(/\s/g, "") || null,
+        DEMO_DRIVER.name,
+        DEMO_DRIVER.phone.replace(/\s/g, "") || null,
         pin,
       );
       await refreshUser();
+      if (toast) showToastFromApi(toast);
       setPaymentStatus("SUCCESS");
     } catch (e) {
       Alert.alert(
@@ -495,12 +558,7 @@ export default function Index() {
       );
       setPaymentStatus("IDLE");
     }
-  }, [
-    payPinDraft,
-    token,
-    payPendingAmount,
-    refreshUser,
-  ]);
+  }, [payPinDraft, token, payPendingAmount, refreshUser, showToastFromApi]);
 
   if (paymentStatus === 'SUCCESS') {
     return (
@@ -508,7 +566,7 @@ export default function Index() {
         <Text style={styles.successEmoji}>✅</Text>
         <Text style={styles.successText}>Payé !</Text>
         <Text style={styles.successSub}>
-          {formatFcfa(parseInt(amount, 10) || 0)} FCFA versé à {detectedDriver.name}
+          {formatFcfa(parseInt(amount, 10) || 0)} FCFA versé à {DEMO_DRIVER.name}
         </Text>
         <Pressable
           style={styles.resetButton}
@@ -595,15 +653,15 @@ export default function Index() {
 
               {/* SECTION PROFIL */}
               <View style={styles.profileSection}>
-                {!detectedDriver.avatar ? (
+                {!DEMO_DRIVER.avatar ? (
                   <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                    <Text style={styles.avatarLetter}>{detectedDriver.name.charAt(0)}</Text>
+                    <Text style={styles.avatarLetter}>{DEMO_DRIVER.name.charAt(0)}</Text>
                   </View>
                 ) : (
-                  <Image source={detectedDriver.avatar} style={styles.avatar} />
+                  <Image source={DEMO_DRIVER.avatar} style={styles.avatar} />
                 )}
-                <Text style={styles.driverName}>{detectedDriver.name}</Text>
-                <Text style={styles.driverPhone}>{detectedDriver.phone}</Text>
+                <Text style={styles.driverName}>{DEMO_DRIVER.name}</Text>
+                <Text style={styles.driverPhone}>{DEMO_DRIVER.phone}</Text>
               </View>
 
               {/* SECTION INPUT */}

@@ -1,7 +1,12 @@
 import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
 import * as mock from "./mockBackend";
-import type { ApiUser, TransactionItem } from "./types";
+import type {
+  ApiNotificationItem,
+  ApiToastPayload,
+  ApiUser,
+  TransactionItem,
+} from "./types";
 
 export { ApiError } from "./errors";
 
@@ -201,7 +206,7 @@ export async function setOnboardingProfile(
   token: string,
   firstName: string,
   lastName: string,
-): Promise<{ user: ApiUser }> {
+): Promise<{ user: ApiUser; toast?: ApiToastPayload }> {
   if (USE_MOCK_API) return mock.mockSetOnboardingProfile(token, firstName, lastName);
   return request("/auth/onboarding/profile", {
     method: "POST",
@@ -213,7 +218,11 @@ export async function setOnboardingProfile(
 export async function deposit(
   token: string,
   amount: number,
-): Promise<{ balanceFcfa: number }> {
+): Promise<{
+  balanceFcfa: number;
+  transactionId?: string;
+  toast?: ApiToastPayload;
+}> {
   if (USE_MOCK_API) return mock.mockDeposit(token, amount);
   return request("/wallet/deposit", {
     method: "POST",
@@ -228,7 +237,7 @@ export async function pay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
-): Promise<{ balanceFcfa: number }> {
+): Promise<{ balanceFcfa: number; toast?: ApiToastPayload }> {
   if (USE_MOCK_API)
     return mock.mockPay(
       token,
@@ -246,6 +255,29 @@ export async function pay(
       recipientPhone,
       transactionPin,
     }),
+  });
+}
+
+export async function listNotifications(
+  token: string,
+  limit?: number,
+): Promise<{ items: ApiNotificationItem[] }> {
+  if (USE_MOCK_API) return mock.mockListNotifications(token, limit);
+  const q =
+    limit != null && Number.isFinite(limit)
+      ? `?limit=${encodeURIComponent(String(limit))}`
+      : "";
+  return request(`/me/notifications${q}`, { token });
+}
+
+export async function markNotificationRead(
+  token: string,
+  id: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) return mock.mockMarkNotificationRead(token, id);
+  return request(`/me/notifications/${encodeURIComponent(id)}/read`, {
+    method: "PATCH",
+    token,
   });
 }
 

@@ -18,3 +18,22 @@ export type TransactionItem = {
   counterpartyPhone: string | null;
   createdAt: string;
 };
+
+/** Toast renvoyé par l’API après un événement (texte défini côté serveur). */
+export type ApiToastPayload = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  emoji: string | null;
+};
+
+export type ApiNotificationItem = {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  emoji: string | null;
+  read: boolean;
+  createdAt: string;
+};
