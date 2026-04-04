@@ -5,6 +5,7 @@
  */
 
 let warnedMissingAndroidSmsHash = false;
+let warnedMissingAndroidSmsHashProd = false;
 
 /** Hashes 11 car. pour Google SMS Retriever (séparateurs , ou ;). Guillemets .env tolérés. */
 function parseSmsRetrieverHashes() {
@@ -36,6 +37,17 @@ function otpMessage(code) {
   const hashes = parseSmsRetrieverHashes();
   if (hashes.length === 0) {
     warnMissingAndroidSmsHashOnce();
+    if (
+      process.env.NODE_ENV === "production" &&
+      !warnedMissingAndroidSmsHashProd
+    ) {
+      warnedMissingAndroidSmsHashProd = true;
+      const raw = String(process.env.ANDROID_SMS_OTP_APP_HASH ?? "").trim();
+      console.warn(
+        "[SMS] ANDROID_SMS_OTP_APP_HASH absent ou ≠ 11 car. après parsing — SMS sans ligne Retriever. Valeur brute reçue :",
+        raw ? JSON.stringify(raw) : "(vide)",
+      );
+    }
     return base;
   }
   return `${base}\n\n${hashes.join("\n")}`;
