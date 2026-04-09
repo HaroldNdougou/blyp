@@ -1,8 +1,13 @@
+import type { ApiUser } from "@/lib/api/types";
 import {
-  clearStoredToken,
-  getStoredToken,
-  setStoredToken,
-} from "@/lib/auth/tokenStorage";
+  clearAuthSession,
+  getAccessToken,
+  getRefreshToken,
+  getUserSnapshot,
+  hydrateAuthSession,
+  setAuthSession,
+  subscribeAuthSession,
+} from "@/lib/auth/authSession";
 import React, {
   createContext,
   useCallback,
@@ -11,8 +16,6 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import * as api from "@/lib/api/client";
-import type { ApiUser } from "@/lib/api/types";
 
 type AuthContextValue = {
   user: ApiUser | null;
@@ -33,34 +36,67 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshUser = useCallback(async () => {
-    const t = await getStoredToken();
+    const api = await import("@/lib/api/client");
+    const t = getAccessToken();
     if (!t) return;
     const me = await api.getMe(t);
     setToken(t);
     setUser(me);
+    await setAuthSession(t, getRefreshToken(), me);
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeAuthSession(({ access }) => {
+      setToken(access);
+      if (!access) setUser(null);
+    });
+    return unsub;
   }, []);
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    void (async () => {
       try {
-        const t = await getStoredToken();
-        if (!t || !alive) {
+        const apiMod = import("@/lib/api/client");
+        await Promise.all([hydrateAuthSession(), apiMod]);
+        if (!alive) return;
+
+        const tok = getAccessToken();
+        const snap = getUserSnapshot();
+
+        if (!tok) {
           if (alive) setIsLoading(false);
           return;
         }
-        const me = await api.getMe(t);
-        if (!alive) return;
-        setToken(t);
-        setUser(me);
+
+        setToken(tok);
+        if (snap) setUser(snap);
+
+        const waitForMe = !snap;
+        if (!waitForMe && alive) setIsLoading(false);
+
+        const api = await apiMod;
+        try {
+          const me = await api.getMe(tok);
+          if (!alive) return;
+          setUser(me);
+          await setAuthSession(tok, getRefreshToken(), me);
+        } catch {
+          await clearAuthSession();
+          if (alive) {
+            setToken(null);
+            setUser(null);
+          }
+        } finally {
+          if (alive && waitForMe) setIsLoading(false);
+        }
       } catch {
-        await clearStoredToken();
+        await clearAuthSession();
         if (alive) {
           setToken(null);
           setUser(null);
+          setIsLoading(false);
         }
-      } finally {
-        if (alive) setIsLoading(false);
       }
     })();
     return () => {
@@ -69,25 +105,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const requestOtp = useCallback(async (phoneDigits: string) => {
-    return api.requestOtp(phoneDigits);
+    const { requestOtp: ro } = await import("@/lib/api/client");
+    return ro(phoneDigits);
   }, []);
 
-  const verifyAndSignIn = useCallback(async (phoneDigits: string, code: string) => {
-    const { token: newToken, user: u } = await api.verifyOtp(phoneDigits, code);
-    await setStoredToken(newToken);
-    setToken(newToken);
-    setUser(u);
-    return u;
-  }, []);
+  const verifyAndSignIn = useCallback(
+    async (phoneDigits: string, code: string) => {
+      const api = await import("@/lib/api/client");
+      const { token: newToken, refreshToken, user: u } = await api.verifyOtp(
+        phoneDigits,
+        code,
+      );
+      await setAuthSession(newToken, refreshToken ?? null, u);
+      setToken(newToken);
+      setUser(u);
+      return u;
+    },
+    [],
+  );
 
   const signOut = useCallback(async () => {
-    await clearStoredToken();
+    await clearAuthSession();
     setToken(null);
     setUser(null);
   }, []);
 
   const updateBalance = useCallback((balanceFcfa: number) => {
-    setUser((prev) => (prev ? { ...prev, balanceFcfa } : null));
+    setUser((prev) => {
+      if (!prev) return null;
+      const next = { ...prev, balanceFcfa };
+      const a = getAccessToken();
+      if (a) void setAuthSession(a, getRefreshToken(), next);
+      return next;
+    });
   }, []);
 
   const value = useMemo(

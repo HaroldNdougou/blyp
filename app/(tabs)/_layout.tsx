@@ -1,3 +1,4 @@
+import { useAuth } from "@/contexts/AuthContext";
 import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import { View } from "react-native";
@@ -35,6 +36,7 @@ function NineDotKeypadIcon({ color }: { color: string }) {
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
+  const { token } = useAuth();
 
   return (
     <Tabs
@@ -53,24 +55,41 @@ export default function TabLayout() {
         },
       }}
     >
-      <Tabs.Screen
-        name="index"
-        options={{
-          tabBarIcon: ({ color }) => <NineDotKeypadIcon color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="history"
-        options={{
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "swap-vertical" : "swap-vertical-outline"}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
-    </Tabs>
+        <Tabs.Screen
+          name="index"
+          options={{
+            tabBarIcon: ({ color }) => <NineDotKeypadIcon color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="history"
+          options={{
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? "swap-vertical" : "swap-vertical-outline"}
+                size={24}
+                color={color}
+              />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{
+            /**
+             * Ne pas utiliser `href: null` quand déconnecté : le passage 2 → 3 onglets
+             * remontait les écrans et réinitialisait l’état (ex. montant saisi sur l’accueil).
+             */
+            tabBarButton: token ? undefined : () => null,
+            tabBarIcon: ({ color, focused }) => (
+              <Ionicons
+                name={focused ? "person" : "person-outline"}
+                size={24}
+                color={color}
+              />
+            ),
+          }}
+        />
+      </Tabs>
   );
 }

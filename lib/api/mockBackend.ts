@@ -1,11 +1,5 @@
-import { ApiError } from "./errors";
-import type {
-  ApiNotificationItem,
-  ApiToastPayload,
-  ApiUser,
-  OnboardingStep,
-  TransactionItem,
-} from "./types";
+import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
+import type { ApiUser, OnboardingStep, TransactionItem } from "./types";
 
 function normalizeCameroonPhone(raw: string): string | null {
   const d = String(raw ?? "").replace(/\D/g, "");
@@ -16,7 +10,10 @@ function normalizeCameroonPhone(raw: string): string | null {
 }
 
 let pendingOtpPhone: string | null = null;
+/** Jeton d’accès (Bearer). */
 let sessionToken: string | null = null;
+/** Jeton de rafraîchissement (rotation à chaque refresh). */
+let sessionRefreshToken: string | null = null;
 let sessionPhone: string | null = null;
 /** PIN mock (clair en mémoire — uniquement mode démo). */
 let mockTransactionPinPlain: string | null = null;
@@ -25,7 +22,6 @@ let mockLastName: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
 let mockHelloSeq = 0;
-const mockNotifications: ApiNotificationItem[] = [];
 const lastMockOtpAtByPhone = new Map<string, number>();
 const MOCK_OTP_RESEND_MS = 60_000;
 
@@ -84,7 +80,12 @@ export function mockRequestOtp(phoneDigits: string): { ok: boolean } {
 export function mockVerifyOtp(
   phoneDigits: string,
   code: string,
-): { token: string; user: ApiUser; isNewAccount: boolean } {
+): {
+  token: string;
+  refreshToken: string;
+  user: ApiUser;
+  isNewAccount: boolean;
+} {
   const phone = normalizeCameroonPhone(phoneDigits);
   const clean = code.replace(/\D/g, "");
   if (!phone || clean.length !== 6) {
@@ -96,15 +97,32 @@ export function mockVerifyOtp(
   pendingOtpPhone = null;
   const isNewAccount = sessionPhone !== phone;
   sessionPhone = phone;
-  sessionToken = `blyp-mock-${Date.now()}`;
+  const ts = Date.now();
+  sessionToken = `blyp-mock-access-${ts}`;
+  sessionRefreshToken = `blyp-mock-refresh-${ts}`;
   mockTransactionPinPlain = null;
   mockFirstName = null;
   mockLastName = null;
   return {
     token: sessionToken,
+    refreshToken: sessionRefreshToken,
     user: mockUserFromState(),
     isNewAccount,
   };
+}
+
+export function mockRefreshSession(refreshToken: string): {
+  token: string;
+  refreshToken: string;
+} {
+  const r = String(refreshToken ?? "").trim();
+  if (!sessionRefreshToken || r !== sessionRefreshToken) {
+    throw new ApiError("Session expirée. Reconnectez-vous.", 401);
+  }
+  const ts = Date.now();
+  sessionToken = `blyp-mock-access-${ts}`;
+  sessionRefreshToken = `blyp-mock-refresh-${ts}`;
+  return { token: sessionToken, refreshToken: sessionRefreshToken };
 }
 
 export function mockGetMe(token: string): ApiUser {
@@ -128,26 +146,11 @@ export function mockSetOnboardingTransactionPin(
   return { user: mockUserFromState() };
 }
 
-function pushMockToast(payload: Omit<ApiToastPayload, "id">): ApiToastPayload {
-  const id = `mock-n-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  const full: ApiToastPayload = { id, ...payload };
-  mockNotifications.unshift({
-    id: full.id,
-    kind: full.kind,
-    title: full.title,
-    body: full.body,
-    emoji: full.emoji,
-    read: false,
-    createdAt: new Date().toISOString(),
-  });
-  return full;
-}
-
 export function mockSetOnboardingProfile(
   token: string,
   firstName: string,
   lastName: string,
-): { user: ApiUser; toast?: ApiToastPayload } {
+): { user: ApiUser } {
   assertSession(token);
   const f = String(firstName ?? "").trim();
   const l = String(lastName ?? "").trim();
@@ -157,32 +160,15 @@ export function mockSetOnboardingProfile(
   if (mockTransactionPinPlain == null) {
     throw new ApiError("Définissez d’abord votre code PIN de transaction", 400);
   }
-  const wasMissing =
-    !mockFirstName?.trim() ||
-    mockFirstName.trim().length < 2 ||
-    !mockLastName?.trim() ||
-    mockLastName.trim().length < 2;
   mockFirstName = f;
   mockLastName = l;
-  const toast = wasMissing
-    ? pushMockToast({
-        kind: "onboarding_welcome",
-        title: "Bienvenue sur Blyp",
-        body: f ? `${f}, votre compte est prêt.` : "Votre inscription est terminée.",
-        emoji: "🎉",
-      })
-    : undefined;
-  return { user: mockUserFromState(), ...(toast ? { toast } : {}) };
+  return { user: mockUserFromState() };
 }
 
 export function mockDeposit(
   token: string,
   amount: number,
-): {
-  balanceFcfa: number;
-  transactionId?: string;
-  toast?: ApiToastPayload;
-} {
+): { balanceFcfa: number } {
   assertSession(token);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);
@@ -197,13 +183,7 @@ export function mockDeposit(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
-  const toast = pushMockToast({
-    kind: "wallet_deposit",
-    title: "Solde crédité",
-    body: `+${Math.round(amount).toLocaleString("fr-FR")} FCFA sur votre compte.`,
-    emoji: "💰",
-  });
-  return { balanceFcfa, transactionId: row.id, toast };
+  return { balanceFcfa };
 }
 
 export function mockPay(
@@ -212,7 +192,7 @@ export function mockPay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
-): { balanceFcfa: number; toast?: ApiToastPayload } {
+): { balanceFcfa: number } {
   assertSession(token);
   const pin = String(transactionPin ?? "").replace(/\D/g, "");
   if (pin.length !== 4) {
@@ -222,7 +202,9 @@ export function mockPay(
     throw new ApiError("Complétez votre inscription (code PIN) pour payer", 403);
   }
   if (pin !== mockTransactionPinPlain) {
-    throw new ApiError("Code PIN incorrect", 400);
+    throw new ApiError("Code PIN incorrect", 400, {
+      code: API_ERROR_TRANSACTION_PIN_INVALID,
+    });
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);
@@ -240,14 +222,7 @@ export function mockPay(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
-  const who = String(recipientName ?? "").trim().slice(0, 80) || "Bénéficiaire";
-  const toast = pushMockToast({
-    kind: "payment_sent",
-    title: "Paiement envoyé",
-    body: `${Math.round(amount).toLocaleString("fr-FR")} FCFA envoyés à ${who}`,
-    emoji: "✅",
-  });
-  return { balanceFcfa, toast };
+  return { balanceFcfa };
 }
 
 export function mockListTransactions(token: string): { items: TransactionItem[] } {
@@ -257,26 +232,6 @@ export function mockListTransactions(token: string): { items: TransactionItem[] 
 
 export function mockHealth(): boolean {
   return true;
-}
-
-export function mockListNotifications(
-  _token: string,
-  limit?: number,
-): { items: ApiNotificationItem[] } {
-  assertSession(_token);
-  const n =
-    limit != null && Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 30;
-  return { items: mockNotifications.slice(0, n) };
-}
-
-export function mockMarkNotificationRead(
-  token: string,
-  id: string,
-): { ok: boolean } {
-  assertSession(token);
-  const row = mockNotifications.find((x) => x.id === id);
-  if (row) row.read = true;
-  return { ok: true };
 }
 
 export function mockSayHello(): {

@@ -12,11 +12,6 @@ import {
   describeSmsSetup,
 } from "./sms.js";
 import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
-import {
-  toastOnboardingWelcome,
-  toastPaymentSent,
-  toastWalletDeposit,
-} from "./notifications.js";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -231,57 +226,6 @@ app.get("/me", authMiddleware, async (req, res) => {
   res.json(userToApi(user));
 });
 
-app.get("/me/notifications", authMiddleware, async (req, res) => {
-  try {
-    const raw = parseInt(String(req.query.limit ?? "30"), 10);
-    const limit = Math.min(50, Math.max(1, Number.isFinite(raw) ? raw : 30));
-    const rows = await prisma.userNotification.findMany({
-      where: { userId: req.userId },
-      orderBy: { createdAt: "desc" },
-      take: limit,
-    });
-    res.json({
-      items: rows.map((r) => ({
-        id: r.id,
-        kind: r.kind,
-        title: r.title,
-        body: r.body,
-        emoji: r.emoji,
-        read: r.readAt != null,
-        createdAt: r.createdAt.toISOString(),
-      })),
-    });
-  } catch (e) {
-    console.error("[me/notifications]", e);
-    res.status(500).json({ error: "Impossible de charger les notifications" });
-  }
-});
-
-app.patch("/me/notifications/:id/read", authMiddleware, async (req, res) => {
-  try {
-    const id = String(req.params.id ?? "").trim();
-    if (!id) {
-      return res.status(400).json({ error: "Identifiant invalide" });
-    }
-    const row = await prisma.userNotification.findFirst({
-      where: { id, userId: req.userId },
-    });
-    if (!row) {
-      return res.status(404).json({ error: "Notification introuvable" });
-    }
-    if (!row.readAt) {
-      await prisma.userNotification.update({
-        where: { id },
-        data: { readAt: new Date() },
-      });
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("[me/notifications/read]", e);
-    res.status(500).json({ error: "Mise à jour impossible" });
-  }
-});
-
 app.post("/auth/onboarding/transaction-pin", authMiddleware, async (req, res) => {
   try {
     const pin = String(req.body?.pin ?? "").replace(/\D/g, "");
@@ -337,33 +281,11 @@ app.post("/auth/onboarding/profile", authMiddleware, async (req, res) => {
         .status(400)
         .json({ error: "Définissez d’abord votre code PIN de transaction" });
     }
-    const wasMissingProfile =
-      !trimStr(row.firstName) || !trimStr(row.lastName);
     const updated = await prisma.user.update({
       where: { id: req.userId },
       data: { firstName, lastName },
     });
-    let toast = null;
-    if (wasMissingProfile) {
-      const payload = toastOnboardingWelcome(firstName);
-      const notif = await prisma.userNotification.create({
-        data: {
-          userId: req.userId,
-          kind: payload.kind,
-          title: payload.title,
-          body: payload.body,
-          emoji: payload.emoji,
-        },
-      });
-      toast = {
-        id: notif.id,
-        kind: notif.kind,
-        title: notif.title,
-        body: notif.body,
-        emoji: notif.emoji,
-      };
-    }
-    res.json({ user: userToApi(updated), ...(toast ? { toast } : {}) });
+    res.json({ user: userToApi(updated) });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Enregistrement du profil impossible" });
@@ -376,46 +298,24 @@ app.post("/wallet/deposit", authMiddleware, async (req, res) => {
     return res.status(400).json({ error: "Montant invalide" });
   }
   try {
-    const { balanceFcfa, depositId, toast } = await prisma.$transaction(
-      async (tx) => {
-        const user = await tx.user.update({
-          where: { id: req.userId },
-          data: { balanceFcfa: { increment: amount } },
-        });
-        const row = await tx.transaction.create({
-          data: {
-            userId: req.userId,
-            type: "DEPOSIT",
-            amountFcfa: amount,
-            counterpartyName: "Rechargement",
-            counterpartyPhone: null,
-          },
-        });
-        const payload = toastWalletDeposit(amount);
-        const notif = await tx.userNotification.create({
-          data: {
-            userId: req.userId,
-            kind: payload.kind,
-            title: payload.title,
-            body: payload.body,
-            emoji: payload.emoji,
-          },
-        });
-        return {
-          balanceFcfa: user.balanceFcfa,
-          depositId: row.id,
-          toast: {
-            id: notif.id,
-            kind: notif.kind,
-            title: notif.title,
-            body: notif.body,
-            emoji: notif.emoji,
-          },
-        };
-      },
-    );
+    const { balanceFcfa, depositId } = await prisma.$transaction(async (tx) => {
+      const user = await tx.user.update({
+        where: { id: req.userId },
+        data: { balanceFcfa: { increment: amount } },
+      });
+      const row = await tx.transaction.create({
+        data: {
+          userId: req.userId,
+          type: "DEPOSIT",
+          amountFcfa: amount,
+          counterpartyName: "Rechargement",
+          counterpartyPhone: null,
+        },
+      });
+      return { balanceFcfa: user.balanceFcfa, depositId: row.id };
+    });
     console.log("[wallet/deposit] enregistré", { userId: req.userId, amount, depositId });
-    res.json({ balanceFcfa, transactionId: depositId, toast });
+    res.json({ balanceFcfa, transactionId: depositId });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Dépôt impossible" });
@@ -457,7 +357,7 @@ app.post("/payments/pay", authMiddleware, async (req, res) => {
     return res.status(400).json({ error: "Code PIN incorrect" });
   }
   try {
-    const { balanceFcfa, toast } = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const u = await tx.user.update({
         where: { id: req.userId },
         data: { balanceFcfa: { decrement: amount } },
@@ -471,28 +371,9 @@ app.post("/payments/pay", authMiddleware, async (req, res) => {
           counterpartyPhone: recipientPhone,
         },
       });
-      const payload = toastPaymentSent(amount, recipientName);
-      const notif = await tx.userNotification.create({
-        data: {
-          userId: req.userId,
-          kind: payload.kind,
-          title: payload.title,
-          body: payload.body,
-          emoji: payload.emoji,
-        },
-      });
-      return {
-        balanceFcfa: u.balanceFcfa,
-        toast: {
-          id: notif.id,
-          kind: notif.kind,
-          title: notif.title,
-          body: notif.body,
-          emoji: notif.emoji,
-        },
-      };
+      return u;
     });
-    res.json({ balanceFcfa, toast });
+    res.json({ balanceFcfa: result.balanceFcfa });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Paiement impossible" });

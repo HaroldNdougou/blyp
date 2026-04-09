@@ -8,33 +8,16 @@ datasource db {
 }
 
 model User {
-  id                  String              @id @default(cuid())
-  phone               String              @unique
-  balanceFcfa         Int                 @default(0)
+  id                  String        @id @default(cuid())
+  phone               String        @unique
+  balanceFcfa         Int           @default(0)
   /// Hash scrypt (jamais le PIN en clair) — null tant que l’onboarding n’a pas défini le PIN.
   transactionPinHash  String?
   firstName           String?
   lastName            String?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
   transactions        Transaction[]
-  notifications       UserNotification[]
-}
-
-/// Notifications in-app (titres / corps définis uniquement côté serveur — jamais de texte arbitraire client).
-model UserNotification {
-  id        String    @id @default(cuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind      String    @db.VarChar(64)
-  title     String    @db.VarChar(160)
-  body      String    @db.VarChar(500)
-  emoji     String?   @db.VarChar(16)
-  readAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([userId, createdAt(sort: Desc)])
-  @@index([userId, readAt])
 }
 
 model OtpChallenge {
