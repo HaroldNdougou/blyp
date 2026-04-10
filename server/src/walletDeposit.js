@@ -169,10 +169,6 @@ export function createWalletDepositHandlers(
 
   async function postWalletDeposit(req, res) {
     const amount = parseInt(String(req.body?.amount), 10);
-    const transactionPin = String(req.body?.transactionPin ?? "").replace(
-      /\D/g,
-      "",
-    );
     const idempotencyKey = trimIdempotencyKey(req.headers["idempotency-key"]);
     const payerPhoneOverride = req.body?.payerPhone;
     const mmProviderRaw = req.body?.mmProvider;
@@ -186,26 +182,9 @@ export function createWalletDepositHandlers(
         error: `Montant invalide (${DEPOSIT_MIN_FCFA}–${DEPOSIT_MAX_FCFA} FCFA)`,
       });
     }
-    if (transactionPin.length !== 4) {
-      return res
-        .status(400)
-        .json({ error: "Code PIN de transaction requis (4 chiffres)" });
-    }
-
     const user = await prisma.user.findUnique({ where: { id: req.userId } });
-    if (!user?.transactionPinHash) {
-      return res.status(403).json({
-        error: "Définissez d’abord votre code PIN dans l’inscription",
-      });
-    }
-    if (
-      !verifyTransactionPin(
-        transactionPin,
-        user.transactionPinHash,
-        TRANSACTION_PIN_PEPPER,
-      )
-    ) {
-      return res.status(400).json({ error: "Code PIN incorrect" });
+    if (!user) {
+      return res.status(404).json({ error: "Utilisateur introuvable" });
     }
 
     if (idempotencyKey) {

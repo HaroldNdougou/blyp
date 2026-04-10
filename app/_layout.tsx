@@ -35,7 +35,8 @@ export default function RootLayout() {
                 name="deposit"
                 options={{
                   presentation: "transparentModal",
-                  animation: "slide_from_bottom",
+                  // « none » : ouverture/fermeture immédiate (slide_from_bottom ~300 ms).
+                  animation: "none",
                   contentStyle: { backgroundColor: "transparent" },
                 }}
               />

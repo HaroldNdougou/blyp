@@ -37,7 +37,9 @@ import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const PayRegisterOverlay = lazy(() => import("./PayRegisterOverlay"));
+/** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
+const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
+const PayRegisterOverlay = lazy(importPayRegisterOverlay);
 
 /** Vert identité Blyp */
 const BLYP_GREEN = "#5dc705";
@@ -82,7 +84,10 @@ export default function PayHomeScreen() {
   const payPinFailedRef = useRef(0);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
-  const [connexionPromptVisible, setConnexionPromptVisible] = useState(false);
+  /** null = fermé ; même UI que la connexion rapide, message selon le contexte. */
+  const [connexionPromptKind, setConnexionPromptKind] = useState<
+    null | "pay" | "recharge"
+  >(null);
   const [insufficientBalanceVisible, setInsufficientBalanceVisible] =
     useState(false);
   const inviteBootstrapped = useRef(false);
@@ -121,6 +126,29 @@ export default function PayHomeScreen() {
   useEffect(() => {
     if (!token) setAmount("");
   }, [token]);
+
+  /** Précharge la route recharge pour un tap plus réactif (évite le coût du 1er import). */
+  useEffect(() => {
+    void import("@/app/deposit");
+  }, []);
+
+  /**
+   * Inscription / connexion rapide : chunk hors bundle initial (accueil plus léger),
+   * préchargé après le 1er paint puis en temps mort (fin des interactions / anim).
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const warm = () => {
+      if (!cancelled) void importPayRegisterOverlay();
+    };
+    const raf = requestAnimationFrame(warm);
+    const task = InteractionManager.runAfterInteractions(warm);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      task.cancel();
+    };
+  }, []);
 
   useFocusEffect(
     useCallback(() => {
@@ -227,7 +255,7 @@ export default function PayHomeScreen() {
       return;
     if (!token) {
       Keyboard.dismiss();
-      setConnexionPromptVisible(true);
+      setConnexionPromptKind("pay");
       return;
     }
     if (user?.needsOnboarding) {
@@ -427,7 +455,14 @@ export default function PayHomeScreen() {
                         styles.balanceAddBtn,
                         pressed && styles.balanceAddBtnPressed,
                       ]}
-                      onPress={() => router.push("/deposit")}
+                      onPress={() => {
+                        if (!token) {
+                          Keyboard.dismiss();
+                          setConnexionPromptKind("recharge");
+                          return;
+                        }
+                        router.push("/deposit");
+                      }}
                       accessibilityRole="button"
                       accessibilityLabel="Recharger le compte"
                       hitSlop={10}
@@ -486,30 +521,32 @@ export default function PayHomeScreen() {
             </View>
           </SafeAreaView>
 
-          {showRegisterOverlay && (
+          {showRegisterOverlay ? (
             <Suspense fallback={null}>
               <PayRegisterOverlay
                 onComplete={() => setRegisterInviteVisible(false)}
               />
             </Suspense>
-          )}
+          ) : null}
 
           <Modal
-            visible={connexionPromptVisible}
+            visible={connexionPromptKind != null}
             transparent
             animationType="fade"
-            onRequestClose={() => setConnexionPromptVisible(false)}
+            onRequestClose={() => setConnexionPromptKind(null)}
           >
             <View style={styles.connexionModalRoot} pointerEvents="box-none">
               <Pressable
                 style={styles.connexionModalBackdrop}
-                onPress={() => setConnexionPromptVisible(false)}
+                onPress={() => setConnexionPromptKind(null)}
                 accessibilityLabel="Fermer"
               />
               <View style={styles.connexionModalCard}>
                 <Text style={styles.connexionModalTitle}>Connexion</Text>
                 <Text style={styles.connexionModalMessage}>
-                  Créez un compte ou connectez-vous pour payer.
+                  {connexionPromptKind === "recharge"
+                    ? "Créez un compte ou connectez-vous pour recharger votre solde."
+                    : "Créez un compte ou connectez-vous pour payer."}
                 </Text>
                 <View style={styles.connexionModalActions}>
                   <Pressable
@@ -517,7 +554,7 @@ export default function PayHomeScreen() {
                       styles.connexionModalBtnHit,
                       pressed && styles.connexionModalBtnPressed,
                     ]}
-                    onPress={() => setConnexionPromptVisible(false)}
+                    onPress={() => setConnexionPromptKind(null)}
                     accessibilityRole="button"
                     accessibilityLabel="Annuler"
                   >
@@ -529,7 +566,7 @@ export default function PayHomeScreen() {
                       pressed && styles.connexionModalBtnPressed,
                     ]}
                     onPress={() => {
-                      setConnexionPromptVisible(false);
+                      setConnexionPromptKind(null);
                       setRegisterInviteVisible(true);
                     }}
                     accessibilityRole="button"

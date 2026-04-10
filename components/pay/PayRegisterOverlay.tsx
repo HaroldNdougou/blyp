@@ -1,3 +1,4 @@
+import { AndroidOtpSmsAutofill } from "@/components/AndroidOtpSmsAutofill";
 import { useAuth } from "@/contexts/AuthContext";
 import {
   ApiError,
@@ -30,15 +31,14 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaView as SafeModalArea, useSafeAreaInsets } from "react-native-safe-area-context";
-import { AndroidOtpSmsAutofill } from "@/components/AndroidOtpSmsAutofill";
+import { SafeAreaView as SafeModalArea } from "react-native-safe-area-context";
 
 /** Vert identité Blyp */
 const BLYP_GREEN = "#5dc705";
 const ACCENT = BLYP_GREEN;
 
-/** Même principe que `app/deposit.tsx` : feuille sous la barre de statut. */
-const REG_SHEET_EXTRA_TOP = 36;
+/** Part de la hauteur d’écran pour la feuille (depuis le bas), aligné sur `app/deposit.tsx`. */
+const REG_SHEET_HEIGHT_RATIO = 0.85;
 
 /** Aligné sur le cooldown serveur (`/auth/request-otp`). */
 const OTP_RESEND_COOLDOWN_SEC = 60;
@@ -108,11 +108,10 @@ export default function PayRegisterOverlay({
   const railwayOtpHashAlertShownRef = useRef(false);
   const regSlideX = useRef(new Animated.Value(0)).current;
   const [regSlideWidth, setRegSlideWidth] = useState(0);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const regSlidePanelW =
     regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
-  const regInsets = useSafeAreaInsets();
-  const regSheetTop = regInsets.top + REG_SHEET_EXTRA_TOP;
+  const regSheetHeight = windowHeight * REG_SHEET_HEIGHT_RATIO;
 
   const phoneWalletBrand = inferCameroonMobileMoneyBrand(welcomePhone);
 
@@ -378,9 +377,9 @@ export default function PayRegisterOverlay({
     submitOnboardingPinConfirm,
   ]);
 
-  /** Focus + clavier après ouverture du modal / changement d’étape (délai Android = fin animation). */
+  /** Focus + clavier : court délai pour la mise en page du modal (pas d’animation d’entrée). */
   useEffect(() => {
-    const delay = Platform.OS === "android" ? 450 : 120;
+    const delay = Platform.OS === "android" ? 100 : 50;
     const t = setTimeout(() => {
       if (welcomeStep === "phone") regPhoneInputRef.current?.focus();
       else if (welcomeStep === "otp") regOtpInputRef.current?.focus();
@@ -424,7 +423,7 @@ export default function PayRegisterOverlay({
       <Modal
         visible
             transparent
-            animationType="slide"
+            animationType="none"
             statusBarTranslucent
             onRequestClose={() => {
               if (welcomeStep === "phone") {
@@ -447,7 +446,7 @@ export default function PayRegisterOverlay({
                 }
                 accessibilityRole="button"
               />
-              <View style={[styles.regModalSheet, { marginTop: regSheetTop }]}>
+              <View style={[styles.regModalSheet, { height: regSheetHeight }]}>
                 <KeyboardAvoidingView
                   style={styles.regModalKeyboard}
                   behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -901,7 +900,7 @@ export default function PayRegisterOverlay({
 }
 
 const styles = StyleSheet.create({
-  /** Modal inscription — aligné sur `app/deposit.tsx` (feuille + header). */
+  /** Modal inscription — feuille ~75 % hauteur depuis le bas, comme `app/deposit.tsx`. */
   regModalRoot: {
     flex: 1,
     backgroundColor: "transparent",
@@ -911,7 +910,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   regModalSheet: {
-    flex: 1,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,

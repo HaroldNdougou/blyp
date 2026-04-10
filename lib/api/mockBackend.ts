@@ -180,25 +180,12 @@ export function mockSetOnboardingProfile(
 export function mockDeposit(
   token: string,
   amount: number,
-  transactionPin: string,
   idempotencyKey: string,
 ): WalletDepositResponse {
   assertSession(token);
   const idem = String(idempotencyKey ?? "").trim();
   if (!idem) {
     throw new ApiError("Rechargement : identifiant de requête manquant", 400);
-  }
-  const pin = String(transactionPin ?? "").replace(/\D/g, "");
-  if (pin.length !== 4) {
-    throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
-  }
-  if (mockTransactionPinPlain == null) {
-    throw new ApiError("Définissez d’abord votre code PIN de transaction", 403);
-  }
-  if (pin !== mockTransactionPinPlain) {
-    throw new ApiError("Code PIN incorrect", 400, {
-      code: API_ERROR_TRANSACTION_PIN_INVALID,
-    });
   }
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);

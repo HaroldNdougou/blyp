@@ -311,7 +311,6 @@ export async function setOnboardingProfile(
 export async function deposit(
   token: string,
   amount: number,
-  transactionPin: string,
   idempotencyKey: string,
   options?: {
     /** MSISDN sans + : 9 chiffres 6XXXXXXXX ou 237… (sandbox PawaPay). */
@@ -321,12 +320,7 @@ export async function deposit(
   },
 ): Promise<WalletDepositResponse> {
   if (USE_MOCK_API) {
-    return (await loadMock()).mockDeposit(
-      token,
-      amount,
-      transactionPin,
-      idempotencyKey,
-    );
+    return (await loadMock()).mockDeposit(token, amount, idempotencyKey);
   }
   return request<WalletDepositResponse>("/wallet/deposit", {
     method: "POST",
@@ -334,7 +328,6 @@ export async function deposit(
     headers: { "Idempotency-Key": idempotencyKey },
     body: JSON.stringify({
       amount,
-      transactionPin,
       ...(options?.payerPhone?.trim()
         ? { payerPhone: options.payerPhone.trim() }
         : {}),

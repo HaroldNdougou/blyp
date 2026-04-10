@@ -7,24 +7,26 @@ import {
 import { setPendingDepositAmountForPayHome } from "@/lib/pendingDepositForPayHome";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
-import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 const GREEN = "#5dc705";
 
-/** Espace laissé au-dessus de la feuille (sous la zone statut / encoche). */
-const SHEET_EXTRA_TOP = 36;
+/** Part de la hauteur d’écran occupée par la feuille modale (depuis le bas). */
+const SHEET_HEIGHT_RATIO = 0.85;
 
 const POLL_MS = 2500;
 const POLL_MAX = 24;
@@ -65,7 +67,6 @@ async function pollDepositCompleted(
 export default function DepositScreen() {
   const { token, refreshUser } = useAuth();
   const [amount, setAmount] = useState("");
-  const [pin, setPin] = useState("");
   /** Optionnel : numéro facturé par PawaPay (ex. MSISDN sandbox 237653456789). */
   const [sandboxPayerPhone, setSandboxPayerPhone] = useState("");
   /** Optionnel : MTN_MOMO_CMR ou ORANGE_CMR si l’auto-détection ne convient pas. */
@@ -73,12 +74,69 @@ export default function DepositScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [waitingProvider, setWaitingProvider] = useState(false);
   const idempotencyKeyRef = useRef<string | null>(null);
-  const insets = useSafeAreaInsets();
-  const sheetTopMargin = insets.top + SHEET_EXTRA_TOP;
+  const amountInputRef = useRef<TextInput>(null);
+  const { height: windowHeight } = useWindowDimensions();
+  const sheetHeight = windowHeight * SHEET_HEIGHT_RATIO;
 
   const n = parseInt(amount, 10);
   const amountOk = Number.isFinite(n) && n > 0;
-  const pinOk = pin.replace(/\D/g, "").length === 4;
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      amountInputRef.current?.focus();
+    }, Platform.OS === "android" ? 120 : 60);
+    return () => clearTimeout(t);
+  }, []);
+
+  const submitDeposit = async () => {
+    if (!Number.isFinite(n) || n <= 0 || !token) {
+      if (!token) {
+        Alert.alert(
+          "Connexion",
+          "Vous devez être connecté pour recharger.",
+        );
+      }
+      return;
+    }
+    if (submitting || waitingProvider) return;
+
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = newIdempotencyKey();
+    }
+    const idempotencyKey = idempotencyKeyRef.current;
+
+    setSubmitting(true);
+    try {
+      const res = await apiDeposit(token, n, idempotencyKey, {
+        payerPhone: sandboxPayerPhone.trim() || undefined,
+        mmProvider: sandboxMmProvider.trim() || undefined,
+      });
+      if (res.status === "completed") {
+        await refreshUser();
+        setPendingDepositAmountForPayHome(n);
+        idempotencyKeyRef.current = null;
+        router.back();
+        return;
+      }
+      setSubmitting(false);
+      setWaitingProvider(true);
+      await pollDepositCompleted(token, res.depositIntentId);
+      await refreshUser();
+      setPendingDepositAmountForPayHome(n);
+      idempotencyKeyRef.current = null;
+      router.back();
+    } catch (e) {
+      Alert.alert(
+        "Rechargement",
+        e instanceof ApiError
+          ? e.message
+          : "Impossible de créditer le compte.",
+      );
+    } finally {
+      setSubmitting(false);
+      setWaitingProvider(false);
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -88,7 +146,7 @@ export default function DepositScreen() {
         accessibilityLabel="Fermer"
         accessibilityRole="button"
       />
-      <View style={[styles.sheetShell, { marginTop: sheetTopMargin }]}>
+      <View style={[styles.sheetShell, { height: sheetHeight }]}>
         <KeyboardAvoidingView
           style={styles.sheet}
           behavior={Platform.OS === "ios" ? "padding" : "height"}
@@ -107,43 +165,33 @@ export default function DepositScreen() {
               <View style={styles.headerSpacer} />
             </View>
 
-            <View style={styles.body}>
-              <Text style={styles.lead}>
-                Saisissez votre code PIN de transaction (comme pour payer). Avec PawaPay
-                (serveur en mode async), le débit se fait sur le Mobile Money du numéro
-                indiqué ; en sandbox utilisez les MSISDN de test de la doc PawaPay
-                (ex. MTN 237653456789, Orange 237693456789).
-              </Text>
-
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.scrollContent}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
               <Text style={styles.label}>Montant du dépôt</Text>
               <View style={styles.inputWrap}>
                 <TextInput
+                  ref={amountInputRef}
                   style={styles.input}
                   placeholder="0"
                   placeholderTextColor="#DDD"
                   keyboardType="numeric"
+                  returnKeyType="done"
+                  autoFocus
                   value={amount}
                   onChangeText={(t) => {
                     idempotencyKeyRef.current = null;
                     setAmount(t);
                   }}
+                  onSubmitEditing={() => {
+                    void submitDeposit();
+                  }}
                   maxLength={8}
                 />
                 <Text style={styles.currency}>FCFA</Text>
-              </View>
-
-              <Text style={styles.label}>Code PIN (4 chiffres)</Text>
-              <View style={styles.pinWrap}>
-                <TextInput
-                  style={styles.pinInput}
-                  placeholder="••••"
-                  placeholderTextColor="#DDD"
-                  keyboardType="number-pad"
-                  secureTextEntry
-                  maxLength={4}
-                  value={pin}
-                  onChangeText={(t) => setPin(t.replace(/\D/g, "").slice(0, 4))}
-                />
               </View>
 
               <Text style={styles.labelOption}>PawaPay — numéro à débiter (optionnel)</Text>
@@ -152,16 +200,24 @@ export default function DepositScreen() {
                 placeholder="Laisser vide = numéro du compte Blyp"
                 placeholderTextColor="#BBB"
                 keyboardType="phone-pad"
+                returnKeyType="done"
                 value={sandboxPayerPhone}
                 onChangeText={setSandboxPayerPhone}
+                onSubmitEditing={() => {
+                  void submitDeposit();
+                }}
               />
               <TextInput
                 style={[styles.optionInput, styles.optionInputSecond]}
                 placeholder="Fournisseur : MTN_MOMO_CMR ou ORANGE_CMR (optionnel)"
                 placeholderTextColor="#BBB"
                 autoCapitalize="characters"
+                returnKeyType="done"
                 value={sandboxMmProvider}
                 onChangeText={setSandboxMmProvider}
+                onSubmitEditing={() => {
+                  void submitDeposit();
+                }}
               />
 
               {waitingProvider ? (
@@ -178,79 +234,21 @@ export default function DepositScreen() {
                 </View>
               ) : null}
 
-              <View style={styles.hintRow}>
-                <View style={styles.hintIcon}>
-                  <Ionicons name="flash-outline" size={18} color={GREEN} />
-                </View>
-                <Text style={styles.hint}>
-                  Paiements internes Blyp restent instantanés — le cash-in passe par le
-                  fournisseur lorsque le mode async est activé côté serveur.
-                </Text>
-              </View>
-
               <Pressable
                 style={({ pressed }) => [
                   styles.primaryBtn,
-                  pressed && amountOk && pinOk && styles.primaryBtnPressed,
-                  (!amountOk || !pinOk || submitting || waitingProvider || !token) &&
+                  pressed && amountOk && styles.primaryBtnPressed,
+                  (!amountOk || submitting || waitingProvider || !token) &&
                     styles.primaryBtnDisabled,
                 ]}
                 disabled={
                   !amountOk ||
-                  !pinOk ||
                   submitting ||
                   waitingProvider ||
                   !token
                 }
-                onPress={async () => {
-                  if (!Number.isFinite(n) || n <= 0 || !token) {
-                    if (!token) {
-                      Alert.alert(
-                        "Connexion",
-                        "Vous devez être connecté pour recharger.",
-                      );
-                    }
-                    return;
-                  }
-                  const pinDigits = pin.replace(/\D/g, "");
-                  if (pinDigits.length !== 4) return;
-
-                  if (!idempotencyKeyRef.current) {
-                    idempotencyKeyRef.current = newIdempotencyKey();
-                  }
-                  const idempotencyKey = idempotencyKeyRef.current;
-
-                  setSubmitting(true);
-                  try {
-                    const res = await apiDeposit(token, n, pinDigits, idempotencyKey, {
-                      payerPhone: sandboxPayerPhone.trim() || undefined,
-                      mmProvider: sandboxMmProvider.trim() || undefined,
-                    });
-                    if (res.status === "completed") {
-                      await refreshUser();
-                      setPendingDepositAmountForPayHome(n);
-                      idempotencyKeyRef.current = null;
-                      router.back();
-                      return;
-                    }
-                    setSubmitting(false);
-                    setWaitingProvider(true);
-                    await pollDepositCompleted(token, res.depositIntentId);
-                    await refreshUser();
-                    setPendingDepositAmountForPayHome(n);
-                    idempotencyKeyRef.current = null;
-                    router.back();
-                  } catch (e) {
-                    Alert.alert(
-                      "Rechargement",
-                      e instanceof ApiError
-                        ? e.message
-                        : "Impossible de créditer le compte.",
-                    );
-                  } finally {
-                    setSubmitting(false);
-                    setWaitingProvider(false);
-                  }
+                onPress={() => {
+                  void submitDeposit();
                 }}
               >
                 {submitting || waitingProvider ? (
@@ -259,7 +257,7 @@ export default function DepositScreen() {
                   <Text style={styles.primaryBtnText}>Valider</Text>
                 )}
               </Pressable>
-            </View>
+            </ScrollView>
           </SafeAreaView>
         </KeyboardAvoidingView>
       </View>
@@ -277,7 +275,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   sheetShell: {
-    flex: 1,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: "#fff",
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
@@ -309,16 +310,14 @@ const styles = StyleSheet.create({
     color: "#333",
   },
   headerSpacer: { width: 44 },
-  body: {
+  scroll: {
     flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 25,
     paddingTop: 10,
-  },
-  lead: {
-    fontSize: 13,
-    color: "#666",
-    lineHeight: 19,
-    marginBottom: 18,
+    paddingBottom: 24,
+    flexGrow: 1,
   },
   label: {
     fontSize: 12,
@@ -340,7 +339,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
-    fontSize: 14,
+    fontSize: 12,
     color: "#333",
     borderWidth: 1,
     borderColor: "#EEE",
@@ -366,22 +365,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#222",
   },
-  pinWrap: {
-    backgroundColor: "#F8F8F8",
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 14,
-  },
-  pinInput: {
-    height: 52,
-    fontSize: 22,
-    fontWeight: "700",
-    color: "#222",
-    letterSpacing: 8,
-    textAlign: "center",
-  },
   currency: {
     fontSize: 18,
     fontWeight: "800",
@@ -406,20 +389,8 @@ const styles = StyleSheet.create({
     color: "#444",
     lineHeight: 18,
   },
-  hintRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-    paddingHorizontal: 4,
-  },
-  hintIcon: { marginRight: 10 },
-  hint: {
-    flex: 1,
-    fontSize: 13,
-    color: "#888",
-    lineHeight: 18,
-  },
   primaryBtn: {
+    marginTop: 8,
     backgroundColor: GREEN,
     height: 56,
     borderRadius: 28,
