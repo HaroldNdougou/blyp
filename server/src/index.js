@@ -12,6 +12,7 @@ import {
   describeSmsSetup,
 } from "./sms.js";
 import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
+import { createWalletDepositHandlers } from "./walletDeposit.js";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -22,6 +23,12 @@ const OTP_PEPPER =
   String(process.env.OTP_PEPPER ?? "pepper").trim() || "pepper";
 const TRANSACTION_PIN_PEPPER =
   process.env.TRANSACTION_PIN_PEPPER?.trim() || OTP_PEPPER;
+
+const walletDeposit = createWalletDepositHandlers(
+  prisma,
+  verifyTransactionPin,
+  TRANSACTION_PIN_PEPPER,
+);
 
 /** Délai minimum entre deux envois SMS pour un même numéro (évite abus / coûts). */
 const OTP_RESEND_COOLDOWN_MS = 60_000;
@@ -43,6 +50,11 @@ function pruneOtpVerifySuccessCache() {
 }
 
 app.use(cors({ origin: true }));
+app.post(
+  "/webhooks/pawapay/deposit",
+  express.raw({ type: "*/*", limit: "128kb" }),
+  (req, res) => void walletDeposit.postPawapayDepositWebhook(req, res),
+);
 app.use(express.json());
 
 function hashOtp(phone, code) {
@@ -292,35 +304,13 @@ app.post("/auth/onboarding/profile", authMiddleware, async (req, res) => {
   }
 });
 
-app.post("/wallet/deposit", authMiddleware, async (req, res) => {
-  const amount = parseInt(String(req.body?.amount), 10);
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return res.status(400).json({ error: "Montant invalide" });
-  }
-  try {
-    const { balanceFcfa, depositId } = await prisma.$transaction(async (tx) => {
-      const user = await tx.user.update({
-        where: { id: req.userId },
-        data: { balanceFcfa: { increment: amount } },
-      });
-      const row = await tx.transaction.create({
-        data: {
-          userId: req.userId,
-          type: "DEPOSIT",
-          amountFcfa: amount,
-          counterpartyName: "Rechargement",
-          counterpartyPhone: null,
-        },
-      });
-      return { balanceFcfa: user.balanceFcfa, depositId: row.id };
-    });
-    console.log("[wallet/deposit] enregistré", { userId: req.userId, amount, depositId });
-    res.json({ balanceFcfa, transactionId: depositId });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Dépôt impossible" });
-  }
-});
+app.post("/wallet/deposit", authMiddleware, (req, res) =>
+  void walletDeposit.postWalletDeposit(req, res),
+);
+
+app.get("/wallet/deposits/:id", authMiddleware, (req, res) =>
+  void walletDeposit.getWalletDepositStatus(req, res),
+);
 
 app.post("/payments/pay", authMiddleware, async (req, res) => {
   const amount = parseInt(String(req.body?.amount), 10);
@@ -571,11 +561,16 @@ function logSmsStartup() {
 }
 
 async function main() {
-  await ensureProductionDatabaseReady();
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Blyp API http://0.0.0.0:${PORT}`);
-    logSmsStartup();
+  // Écouter d’abord : sinon le healthcheck Railway (/health) time out pendant prisma db push.
+  await new Promise((resolve, reject) => {
+    const srv = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Blyp API http://0.0.0.0:${PORT}`);
+      resolve(undefined);
+    });
+    srv.on("error", reject);
   });
+  await ensureProductionDatabaseReady();
+  logSmsStartup();
 }
 
 main().catch((e) => {

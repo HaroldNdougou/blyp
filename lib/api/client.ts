@@ -6,7 +6,12 @@ import {
 } from "@/lib/auth/authSession";
 import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
-import type { ApiUser, TransactionItem } from "./types";
+import type {
+  ApiUser,
+  TransactionItem,
+  WalletDepositResponse,
+  WalletDepositStatusResponse,
+} from "./types";
 
 export {
   ApiError,
@@ -306,13 +311,54 @@ export async function setOnboardingProfile(
 export async function deposit(
   token: string,
   amount: number,
-): Promise<{ balanceFcfa: number }> {
-  if (USE_MOCK_API) return (await loadMock()).mockDeposit(token, amount);
-  return request("/wallet/deposit", {
+  transactionPin: string,
+  idempotencyKey: string,
+  options?: {
+    /** MSISDN sans + : 9 chiffres 6XXXXXXXX ou 237… (sandbox PawaPay). */
+    payerPhone?: string;
+    /** MTN_MOMO_CMR | ORANGE_CMR */
+    mmProvider?: string;
+  },
+): Promise<WalletDepositResponse> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockDeposit(
+      token,
+      amount,
+      transactionPin,
+      idempotencyKey,
+    );
+  }
+  return request<WalletDepositResponse>("/wallet/deposit", {
     method: "POST",
     token,
-    body: JSON.stringify({ amount }),
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({
+      amount,
+      transactionPin,
+      ...(options?.payerPhone?.trim()
+        ? { payerPhone: options.payerPhone.trim() }
+        : {}),
+      ...(options?.mmProvider?.trim()
+        ? { mmProvider: options.mmProvider.trim() }
+        : {}),
+    }),
   });
+}
+
+export async function getDepositIntentStatus(
+  token: string,
+  depositIntentId: string,
+): Promise<WalletDepositStatusResponse> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockGetDepositIntentStatus(
+      token,
+      depositIntentId,
+    );
+  }
+  return request<WalletDepositStatusResponse>(
+    `/wallet/deposits/${encodeURIComponent(depositIntentId)}`,
+    { token },
+  );
 }
 
 export async function pay(

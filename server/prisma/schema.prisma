@@ -8,16 +8,46 @@ datasource db {
 }
 
 model User {
-  id                  String        @id @default(cuid())
-  phone               String        @unique
-  balanceFcfa         Int           @default(0)
+  id                  String           @id @default(cuid())
+  phone               String           @unique
+  balanceFcfa         Int              @default(0)
   /// Hash scrypt (jamais le PIN en clair) — null tant que l’onboarding n’a pas défini le PIN.
   transactionPinHash  String?
   firstName           String?
   lastName            String?
-  createdAt           DateTime      @default(now())
-  updatedAt           DateTime      @updatedAt
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
   transactions        Transaction[]
+  depositIntents      DepositIntent[]
+}
+
+/// Intention de recharge (cash-in) — audit, idempotence, branchement agrégateur (ex. PawaPay).
+enum DepositIntentStatus {
+  PENDING_PROVIDER
+  COMPLETED
+  FAILED
+}
+
+model DepositIntent {
+  id                   String                @id @default(cuid())
+  userId               String
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amountFcfa           Int
+  status               DepositIntentStatus   @default(PENDING_PROVIDER)
+  /// Clé client (header Idempotency-Key) : même requête = même issue (retry réseau).
+  idempotencyKey       String?
+  /// Lien vers la ligne `Transaction` DEPOSIT une fois le solde crédité.
+  ledgerTransactionId  String?               @unique
+  /// Référence fournisseur (PawaPay, etc.) pour corrélation webhook.
+  providerRef          String?
+  /// UUID v4 envoyé à PawaPay comme `depositId` (callbacks + GET statut).
+  pawapayDepositId     String?               @unique
+  failureReason        String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([userId, createdAt])
+  @@unique([userId, idempotencyKey])
 }
 
 model OtpChallenge {

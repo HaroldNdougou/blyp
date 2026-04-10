@@ -13,5 +13,5 @@ COPY src ./src
 ENV NODE_ENV=production
 EXPOSE 3001
 
-# Schéma : voir index.js (db push en arrière-plan après listen) pour ne pas bloquer le healthcheck Railway.
+# Schéma : index.js écoute d’abord puis prisma db push (évite timeout healthcheck Railway sur /health).
 CMD ["node", "src/index.js"]

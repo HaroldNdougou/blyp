@@ -1,5 +1,11 @@
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
-import type { ApiUser, OnboardingStep, TransactionItem } from "./types";
+import type {
+  ApiUser,
+  OnboardingStep,
+  TransactionItem,
+  WalletDepositResponse,
+  WalletDepositStatusResponse,
+} from "./types";
 
 function normalizeCameroonPhone(raw: string): string | null {
   const d = String(raw ?? "").replace(/\D/g, "");
@@ -24,6 +30,12 @@ let transactions: TransactionItem[] = [];
 let mockHelloSeq = 0;
 const lastMockOtpAtByPhone = new Map<string, number>();
 const MOCK_OTP_RESEND_MS = 60_000;
+/** Idempotence rechargement (mode démo). */
+const mockDepositIdempotencyCache = new Map<string, WalletDepositResponse>();
+const mockDepositStatusByIntentId = new Map<
+  string,
+  WalletDepositStatusResponse
+>();
 
 function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
@@ -168,14 +180,39 @@ export function mockSetOnboardingProfile(
 export function mockDeposit(
   token: string,
   amount: number,
-): { balanceFcfa: number } {
+  transactionPin: string,
+  idempotencyKey: string,
+): WalletDepositResponse {
   assertSession(token);
+  const idem = String(idempotencyKey ?? "").trim();
+  if (!idem) {
+    throw new ApiError("Rechargement : identifiant de requête manquant", 400);
+  }
+  const pin = String(transactionPin ?? "").replace(/\D/g, "");
+  if (pin.length !== 4) {
+    throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
+  }
+  if (mockTransactionPinPlain == null) {
+    throw new ApiError("Définissez d’abord votre code PIN de transaction", 403);
+  }
+  if (pin !== mockTransactionPinPlain) {
+    throw new ApiError("Code PIN incorrect", 400, {
+      code: API_ERROR_TRANSACTION_PIN_INVALID,
+    });
+  }
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);
   }
+  const cacheKey = `${token}|${idem}`;
+  const cached = mockDepositIdempotencyCache.get(cacheKey);
+  if (cached) return cached;
+
   balanceFcfa += amount;
+  const ts = Date.now();
+  const transactionId = `mock-${ts}-d`;
+  const depositIntentId = `mock-intent-${ts}`;
   const row: TransactionItem = {
-    id: `mock-${Date.now()}-d`,
+    id: transactionId,
     type: "received",
     amountFcfa: amount,
     counterpartyName: "Rechargement",
@@ -183,7 +220,33 @@ export function mockDeposit(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
-  return { balanceFcfa };
+  const res: WalletDepositResponse = {
+    status: "completed",
+    balanceFcfa,
+    transactionId,
+    depositIntentId,
+  };
+  mockDepositIdempotencyCache.set(cacheKey, res);
+  mockDepositStatusByIntentId.set(depositIntentId, {
+    status: "completed",
+    depositIntentId,
+    amountFcfa: amount,
+    balanceFcfa,
+    transactionId,
+  });
+  return res;
+}
+
+export function mockGetDepositIntentStatus(
+  token: string,
+  depositIntentId: string,
+): WalletDepositStatusResponse {
+  assertSession(token);
+  const row = mockDepositStatusByIntentId.get(depositIntentId);
+  if (!row) {
+    throw new ApiError("Dépôt introuvable", 404);
+  }
+  return row;
 }
 
 export function mockPay(
