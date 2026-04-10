@@ -506,11 +506,22 @@ async function ensureProductionDatabaseReady() {
     );
     process.exit(1);
   }
+  const acceptDataLoss =
+    process.env.PRISMA_DB_PUSH_ACCEPT_DATA_LOSS === "true" ||
+    process.env.PRISMA_DB_PUSH_ACCEPT_DATA_LOSS === "1";
+  const dbPushCmd = acceptDataLoss
+    ? "npx prisma db push --skip-generate --accept-data-loss"
+    : "npx prisma db push --skip-generate";
+  if (acceptDataLoss) {
+    console.warn(
+      "[blyp] PRISMA_DB_PUSH_ACCEPT_DATA_LOSS est activé : Prisma peut supprimer tables/colonnes absentes de schema.prisma. À n’utiliser qu’en connaissance de cause.",
+    );
+  }
   const attempts = 8;
   const delayMs = 4000;
   for (let i = 0; i < attempts; i++) {
     try {
-      execSync("npx prisma db push --skip-generate", {
+      execSync(dbPushCmd, {
         cwd: process.cwd(),
         env: { ...process.env, CI: "true" },
         stdio: "inherit",
@@ -527,7 +538,10 @@ async function ensureProductionDatabaseReady() {
       console.error(`[blyp] Sync DB tentative ${i + 1}/${attempts} échouée: ${msg}`);
       if (i === attempts - 1) {
         console.error(
-          "[blyp] FATAL: impossible de joindre Postgres ou d’appliquer le schéma. Vérifie que le service API référence bien la variable DATABASE_URL du plugin Postgres.",
+          "[blyp] FATAL: prisma db push a échoué après plusieurs tentatives.",
+        );
+        console.error(
+          "[blyp] Si les logs mentionnent « drop » / « data loss » (ex. table UserNotification absente du schema.prisma) : soit ajoute ces modèles via « npx prisma db pull » avec DATABASE_URL prod puis commit le schema, soit définis temporairement PRISMA_DB_PUSH_ACCEPT_DATA_LOSS=true sur Railway (supprime les objets non décrits — sauvegarde avant).",
         );
         process.exit(1);
       }
