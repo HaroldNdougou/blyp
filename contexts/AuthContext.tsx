@@ -1,4 +1,5 @@
 import type { ApiUser } from "@/lib/api/types";
+import { clearAllTransactionsSnapshots } from "@/lib/transactionsCache";
 import {
   clearAuthSession,
   getAccessToken,
@@ -53,12 +54,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return unsub;
   }, []);
 
+  /**
+   * Hydratation SecureStore seule pour lever le splash : ne pas attendre `import(api/client)`
+   * (gros module en dev → dizaines de secondes possibles avant le 1er écran).
+   * `/me` part après, en arrière-plan.
+   */
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const apiMod = import("@/lib/api/client");
-        await Promise.all([hydrateAuthSession(), apiMod]);
+        await hydrateAuthSession();
         if (!alive) return;
 
         const tok = getAccessToken();
@@ -71,27 +76,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setToken(tok);
         if (snap) setUser(snap);
+        if (alive) setIsLoading(false);
 
-        const waitForMe = !snap;
-        if (!waitForMe && alive) setIsLoading(false);
-
-        const api = await apiMod;
-        try {
-          const me = await api.getMe(tok);
-          if (!alive) return;
-          setUser(me);
-          await setAuthSession(tok, getRefreshToken(), me);
-        } catch {
-          await clearAuthSession();
-          if (alive) {
-            setToken(null);
-            setUser(null);
+        void (async () => {
+          const api = await import("@/lib/api/client");
+          const current = getAccessToken();
+          if (!alive || !current || current !== tok) return;
+          try {
+            const me = await api.getMe(current);
+            if (!alive || getAccessToken() !== current) return;
+            setUser(me);
+            await setAuthSession(current, getRefreshToken(), me);
+          } catch {
+            await clearAuthSession();
+            clearAllTransactionsSnapshots();
+            if (alive) {
+              setToken(null);
+              setUser(null);
+            }
           }
-        } finally {
-          if (alive && waitForMe) setIsLoading(false);
-        }
+        })();
       } catch {
         await clearAuthSession();
+        clearAllTransactionsSnapshots();
         if (alive) {
           setToken(null);
           setUser(null);
@@ -126,6 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await clearAuthSession();
+    clearAllTransactionsSnapshots();
     setToken(null);
     setUser(null);
   }, []);

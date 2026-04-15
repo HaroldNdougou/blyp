@@ -1,11 +1,9 @@
 import { useAuth } from "@/contexts/AuthContext";
-import {
-  ApiError,
-  isTransactionPinInvalidError,
-  pay as apiPay,
-} from "@/lib/api/client";
-import { formatFcfa } from "@/lib/format";
+import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
+import { formatFcfa } from "@/lib/formatFcfa";
 import { consumePendingDepositAmountForPayHome } from "@/lib/pendingDepositForPayHome";
+import { useMarkRootShellReady } from "@/lib/rootShellReady";
+import { setTransactionsSnapshot } from "@/lib/transactionsCache";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
 import React, {
@@ -26,7 +24,6 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
@@ -35,7 +32,10 @@ import {
 
 import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
 import { useFocusEffect } from "@react-navigation/native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 /** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
 const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
@@ -66,6 +66,7 @@ const DEMO_DRIVER = {
 };
 
 export default function PayHomeScreen() {
+  useMarkRootShellReady();
   const insets = useSafeAreaInsets();
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
   const [amount, setAmount] = useState("");
@@ -127,28 +128,54 @@ export default function PayHomeScreen() {
     if (!token) setAmount("");
   }, [token]);
 
-  /** Précharge la route recharge pour un tap plus réactif (évite le coût du 1er import). */
-  useEffect(() => {
-    void import("@/app/deposit");
-  }, []);
-
   /**
-   * Inscription / connexion rapide : chunk hors bundle initial (accueil plus léger),
-   * préchargé après le 1er paint puis en temps mort (fin des interactions / anim).
+   * Release : après l’accueil, précharge espacé (temps morts).
+   * Dev : **aucun** préchargement — sinon Metro enchaîne 4–5 gros bundles et le log
+   * ressemble à un cold start de 10 s alors que l’UI peut déjà être là.
    */
   useEffect(() => {
+    if (authLoading) return;
+    if (__DEV__) return;
     let cancelled = false;
-    const warm = () => {
-      if (!cancelled) void importPayRegisterOverlay();
-    };
-    const raf = requestAnimationFrame(warm);
-    const task = InteractionManager.runAfterInteractions(warm);
+    const gap = (ms: number) =>
+      new Promise<void>((r) => setTimeout(r, ms));
+
+    void (async () => {
+      await new Promise<void>((r) =>
+        InteractionManager.runAfterInteractions(() => r()),
+      );
+      if (cancelled) return;
+      await gap(400);
+      if (cancelled) return;
+
+      void import("@/app/deposit");
+      await gap(120);
+      if (cancelled) return;
+      void import("@/components/history/HistoryScreen");
+      await gap(120);
+      if (cancelled) return;
+      void import("@/app/(tabs)/profile");
+      await gap(120);
+      if (cancelled) return;
+      void importPayRegisterOverlay();
+
+      if (!token) return;
+      await gap(200);
+      if (cancelled) return;
+      try {
+        const { listTransactions } = await import("@/lib/api/client");
+        if (cancelled) return;
+        const { items } = await listTransactions(token);
+        if (!cancelled) setTransactionsSnapshot(token, items);
+      } catch {
+        /* best effort */
+      }
+    })();
+
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
-      task.cancel();
     };
-  }, []);
+  }, [authLoading, token]);
 
   useFocusEffect(
     useCallback(() => {
@@ -321,7 +348,8 @@ export default function PayHomeScreen() {
     setPayPinErrorLine(null);
     setPaymentStatus("SENDING");
     try {
-      await apiPay(
+      const { pay } = await import("@/lib/api/client");
+      await pay(
         token,
         payPendingAmount,
         DEMO_DRIVER.name,
@@ -417,7 +445,10 @@ export default function PayHomeScreen() {
     <View style={{ flex: 1, backgroundColor: "#ffffff" }}>
       <View style={{ flex: 1 }}>
         <Stack.Screen options={{ headerShown: false }} />
-          <SafeAreaView style={styles.safeArea}>
+          <SafeAreaView
+            style={styles.safeArea}
+            edges={["top", "left", "right"]}
+          >
             <View style={styles.payScreenBody}>
               <View style={styles.payTopBlock}>
                 <View style={styles.topBarRow}>

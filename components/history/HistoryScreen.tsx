@@ -1,6 +1,10 @@
 import { useAuth } from "@/contexts/AuthContext";
-import { ApiError, listTransactions } from "@/lib/api/client";
+import { ApiError } from "@/lib/api/errors";
 import { formatFcfa, formatTransactionDate } from "@/lib/format";
+import {
+  getTransactionsSnapshot,
+  setTransactionsSnapshot,
+} from "@/lib/transactionsCache";
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -8,7 +12,6 @@ import {
   FlatList,
   ListRenderItem,
   Platform,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
@@ -20,7 +23,10 @@ import Animated, {
   useSharedValue,
   withSpring,
 } from "react-native-reanimated";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import {
+  SafeAreaView,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 type HistoryRow = {
   id: string;
@@ -136,11 +142,31 @@ export default function HistoryScreen() {
         return;
       }
       let cancelled = false;
-      setLoading(true);
-      setError(null);
-      listTransactions(token)
-        .then(({ items }) => {
+      const cached = getTransactionsSnapshot(token);
+      if (cached) {
+        setRows(
+          cached.map((t) => ({
+            id: t.id,
+            name: t.counterpartyName,
+            amount: formatFcfa(t.amountFcfa),
+            date: formatTransactionDate(t.createdAt),
+            type: t.type,
+          })),
+        );
+        setLoading(false);
+        setError(null);
+      } else {
+        setLoading(true);
+        setError(null);
+      }
+
+      void (async () => {
+        const { listTransactions } = await import("@/lib/api/client");
+        if (cancelled) return;
+        try {
+          const { items } = await listTransactions(token);
           if (cancelled) return;
+          setTransactionsSnapshot(token, items);
           setRows(
             items.map((t) => ({
               id: t.id,
@@ -150,18 +176,19 @@ export default function HistoryScreen() {
               type: t.type,
             })),
           );
-        })
-        .catch((e) => {
+          setError(null);
+        } catch (e) {
           if (!cancelled) {
             setError(
               e instanceof ApiError ? e.message : "Chargement impossible.",
             );
-            setRows([]);
+            if (!cached) setRows([]);
           }
-        })
-        .finally(() => {
+        } finally {
           if (!cancelled) setLoading(false);
-        });
+        }
+      })();
+
       return () => {
         cancelled = true;
       };
@@ -229,7 +256,7 @@ export default function HistoryScreen() {
   }, [error, loading, token]);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Transactions</Text>
       </View>

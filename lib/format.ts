@@ -58,10 +58,7 @@ export function formatCameroonPhoneDisplay(digits: string): string {
   return parts.join(" ");
 }
 
-/** Affichage montant FCFA type "12 500" */
-export function formatFcfa(amount: number): string {
-  return Math.max(0, Math.floor(amount)).toLocaleString("fr-FR");
-}
+export { formatFcfa } from "./formatFcfa";
 
 export function formatTransactionDate(iso: string): string {
   const d = new Date(iso);
