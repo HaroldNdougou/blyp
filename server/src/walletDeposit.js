@@ -10,13 +10,16 @@ import {
 } from "./pawapayClient.js";
 
 const DEPOSIT_MODE = (process.env.DEPOSIT_MODE || "sync").toLowerCase();
+/** Plafond transaction FCFA — 6 chiffres (COBAC/BEAC, sans agrément au démarrage). */
+export const MAX_TX_AMOUNT_FCFA = 999_999;
 const DEPOSIT_MIN_FCFA = Math.max(
   1,
   parseInt(String(process.env.DEPOSIT_MIN_FCFA ?? "1"), 10) || 1,
 );
 const DEPOSIT_MAX_FCFA = Math.min(
-  10_000_000,
-  parseInt(String(process.env.DEPOSIT_MAX_FCFA ?? "500000"), 10) || 500_000,
+  MAX_TX_AMOUNT_FCFA,
+  parseInt(String(process.env.DEPOSIT_MAX_FCFA ?? String(MAX_TX_AMOUNT_FCFA)), 10) ||
+    MAX_TX_AMOUNT_FCFA,
 );
 const PAWAPAY_WEBHOOK_SECRET = (process.env.PAWAPAY_WEBHOOK_SECRET || "").trim();
 const PAWAPAY_WEBHOOK_VERIFY = (

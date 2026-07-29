@@ -1,17 +1,28 @@
+import { useTranslation } from "react-i18next";
+import { useTheme } from "@/contexts/ThemeContext";
+import type { ThemeColors } from "@/lib/theme/colors";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 /** Délai avant rafale ; intervalle entre chaque effacement (ms). */
 const BACKSPACE_REPEAT_DELAY_MS = 360;
 const BACKSPACE_REPEAT_INTERVAL_MS = 42;
 
+type KeypadStyles = ReturnType<typeof createKeypadStyles>;
+
 function KeypadBackspaceKey({
   onBackspace,
   disabled,
+  styles,
+  iconColor,
+  backspaceLabel,
 }: {
   onBackspace: () => void;
   disabled?: boolean;
+  styles: KeypadStyles;
+  iconColor: string;
+  backspaceLabel: string;
 }) {
   const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,9 +64,9 @@ function KeypadBackspaceKey({
       onPressOut={onPressOut}
       disabled={disabled}
       accessibilityRole="button"
-      accessibilityLabel="Effacer"
+      accessibilityLabel={backspaceLabel}
     >
-      <Ionicons name="backspace-outline" size={26} color="#555" />
+      <Ionicons name="backspace-outline" size={26} color={iconColor} />
     </Pressable>
   );
 }
@@ -73,11 +84,61 @@ const ROWS: readonly (readonly string[])[] = [
   ["", "0", "back"],
 ];
 
+function createKeypadStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    keypad: {
+      marginTop: 8,
+      paddingHorizontal: 8,
+      alignSelf: "center",
+    },
+    keypadRow: {
+      flexDirection: "row",
+      justifyContent: "center",
+      marginBottom: GAP,
+      gap: GAP,
+    },
+    keypadKey: {
+      width: KEY_SIZE,
+      height: KEY_SIZE,
+      borderRadius: KEY_SIZE / 2,
+      backgroundColor: c.keypadBackground,
+      justifyContent: "center",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: c.keypadBorder,
+    },
+    keypadKeyFn: {
+      backgroundColor: c.keypadBackgroundFn,
+    },
+    keypadKeyPressed: {
+      backgroundColor: c.keypadPressed,
+      transform: [{ scale: 0.96 }],
+    },
+    keypadKeyDisabled: {
+      opacity: 0.45,
+    },
+    keypadKeySpacer: {
+      width: KEY_SIZE,
+      height: KEY_SIZE,
+    },
+    keypadKeyText: {
+      fontSize: 28,
+      fontWeight: "700",
+      color: c.keypadText,
+      fontVariant: ["tabular-nums"],
+    },
+  });
+}
+
 function AmountNumericKeypadInner({
   onDigit,
   onBackspace,
   disabled,
 }: Props) {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const styles = useMemo(() => createKeypadStyles(colors), [colors]);
+
   return (
     <View style={styles.keypad} collapsable={false}>
       {ROWS.map((row, ri) => (
@@ -92,6 +153,9 @@ function AmountNumericKeypadInner({
                   key={ci}
                   onBackspace={onBackspace}
                   disabled={disabled}
+                  styles={styles}
+                  iconColor={colors.keypadIcon}
+                  backspaceLabel={t("a11y.backspace")}
                 />
               );
             }
@@ -108,7 +172,7 @@ function AmountNumericKeypadInner({
                 }}
                 disabled={disabled}
                 accessibilityRole="button"
-                accessibilityLabel={`Chiffre ${cell}`}
+                accessibilityLabel={t("a11y.digit", { digit: cell })}
               >
                 <Text style={styles.keypadKeyText}>{cell}</Text>
               </Pressable>
@@ -125,47 +189,3 @@ export const AmountNumericKeypad = React.memo(AmountNumericKeypadInner);
 
 const KEY_SIZE = 72;
 const GAP = 10;
-
-const styles = StyleSheet.create({
-  keypad: {
-    marginTop: 8,
-    paddingHorizontal: 8,
-    alignSelf: "center",
-  },
-  keypadRow: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginBottom: GAP,
-    gap: GAP,
-  },
-  keypadKey: {
-    width: KEY_SIZE,
-    height: KEY_SIZE,
-    borderRadius: KEY_SIZE / 2,
-    backgroundColor: "#F3F3F3",
-    justifyContent: "center",
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E8E8E8",
-  },
-  keypadKeyFn: {
-    backgroundColor: "#EEE",
-  },
-  keypadKeyPressed: {
-    backgroundColor: "#E0E0E0",
-    transform: [{ scale: 0.96 }],
-  },
-  keypadKeyDisabled: {
-    opacity: 0.45,
-  },
-  keypadKeySpacer: {
-    width: KEY_SIZE,
-    height: KEY_SIZE,
-  },
-  keypadKeyText: {
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#222",
-    fontVariant: ["tabular-nums"],
-  },
-});

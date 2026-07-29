@@ -4,6 +4,7 @@ import {
   getRefreshToken,
   setAuthSession,
 } from "@/lib/auth/authSession";
+import i18n from "@/lib/i18n";
 import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
 import type {
@@ -24,9 +25,15 @@ function loadMock() {
   return import("./mockBackend");
 }
 
-/** Affiché quand `fetch` échoue (pas une erreur JSON du serveur). */
-const API_UNREACHABLE_HINT =
-  "La requête réseau a échoué avant la réponse du serveur. Causes fréquentes : Wi‑Fi / 4G instable, timeout, ou API locale sans « adb reverse ». Sur PC : EXPO_PUBLIC_API_URL=http://IP_DU_PC:3001 ou http://127.0.0.1:3001 + adb reverse tcp:3001 tcp:3001 + npx expo run:android.";
+/** Message court affiché quand `fetch` échoue (pas une erreur JSON du serveur). */
+function networkUnreachableMessage(cause: unknown): string {
+  const hint = i18n.t("network.requestFailedHint");
+  const base = i18n.t("network.requestFailed");
+  if (__DEV__ && cause instanceof Error && cause.message) {
+    return `${base}\n\n${hint}\n\n${cause.message}`;
+  }
+  return `${base}\n\n${hint}`;
+}
 
 async function parseJson(res: Response): Promise<unknown> {
   const text = await res.text();
@@ -120,14 +127,7 @@ async function request<T>(
       headers,
     });
   } catch (cause) {
-    const technical =
-      cause instanceof Error && cause.message
-        ? `\n\nTechnique : ${cause.message}`
-        : "";
-    throw new ApiError(
-      `${API_UNREACHABLE_HINT}\n\nSi le SMS vient d’arriver, réessaie « Valider » dans 2–3 s (souvent un raté passager). Sinon vérifie les logs de l’API (Railway) au moment du clic.${technical}\n\nURL : ${API_BASE_URL || "(vide — mode démo)"}`,
-      0,
-    );
+    throw new ApiError(networkUnreachableMessage(cause), 0);
   }
   const data = await parseJson(res);
   if (!res.ok) {

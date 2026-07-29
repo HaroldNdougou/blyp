@@ -1,0 +1,45 @@
+---
+description: i18n Blyp — FR/EN obligatoire sur toute UI app (react-i18next)
+alwaysApply: true
+---
+
+# Blyp — internationalisation (FR / EN)
+
+## Langues
+
+- **FR** si la langue système du téléphone est le français.
+- **EN** pour toute autre langue (repli unique).
+- Pas de texte UI en dur dans les composants ; pas de choix manuel de langue dans l’app pour l’instant.
+
+## Stack (déjà en place)
+
+- Config : `lib/i18n/index.ts` (import `@/lib/i18n` dans `app/_layout.tsx`).
+- Détection : `lib/i18n/locale.ts` → `resolveAppLanguage()`.
+- Traductions : `lib/i18n/locales/fr.ts` et `lib/i18n/locales/en.ts`.
+- Affichage : `useTranslation()` + `t("clé")` ; formats via `formatFcfa` / `formatTransactionDate` (locale dynamique).
+
+## À faire pour chaque écran, modal, alerte ou label a11y
+
+1. Ajouter les clés **en FR et EN** dans les deux fichiers locale (même arbre, ex. `pay.amountLabel`, `register.steps.phone`).
+2. Remplacer le texte visible par `t("…")` ; interpolations : `t("pay.paidTo", { amount, name })`.
+3. Pluriels : clés i18next `_one` / `_other` (ex. `pay.pinWrongRemaining_one`).
+4. `Alert.alert` : titres et messages génériques via `t()` ; message serveur (`ApiError.message`) affiché tel quel.
+
+## Interdit dans l’UI app
+
+- Chaînes françaises/anglaises en dur dans `app/`, `components/` (sauf noms propres, numéros démo, logs dev).
+- Nouvelle lib i18n ou détection locale ad hoc.
+- Oublier l’accessibilité (`accessibilityLabel`, placeholders).
+
+## Hors scope (sauf demande explicite)
+
+- Traduire les réponses API / messages Lambda.
+- Ajouter d’autres langues que FR et EN.
+
+## Exemple
+
+```tsx
+const { t } = useTranslation();
+<Text>{t("pay.payNow")}</Text>
+<Alert.alert(t("pay.paymentTitle"), t("common.genericError")) />
+```

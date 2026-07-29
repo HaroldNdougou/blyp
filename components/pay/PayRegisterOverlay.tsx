@@ -1,5 +1,7 @@
 import { AndroidOtpSmsAutofill } from "@/components/AndroidOtpSmsAutofill";
+import { createPayRegisterStyles } from "@/components/pay/payRegisterStyles";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
 import {
   ApiError,
   fetchHealth,
@@ -13,7 +15,8 @@ import {
   normalizeCameroonPhoneDigits,
 } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Alert,
@@ -25,17 +28,12 @@ import {
   Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
 import { SafeAreaView as SafeModalArea } from "react-native-safe-area-context";
-
-/** Vert identité Blyp */
-const BLYP_GREEN = "#5dc705";
-const ACCENT = BLYP_GREEN;
 
 /** Part de la hauteur d’écran pour la feuille (depuis le bas), aligné sur `app/deposit.tsx`. */
 const REG_SHEET_HEIGHT_RATIO = 0.85;
@@ -57,28 +55,14 @@ const REG_STEPS = [
 ] as const;
 type RegStep = (typeof REG_STEPS)[number];
 
-function regModalTitle(step: RegStep): string {
-  switch (step) {
-    case "phone":
-      return "Téléphone";
-    case "otp":
-      return "Code SMS";
-    case "pin":
-      return "Code PIN";
-    case "pinConfirm":
-      return "Confirmer";
-    case "profile":
-      return "Votre profil";
-    default:
-      return "";
-  }
-}
-
 export default function PayRegisterOverlay({
   onComplete,
 }: {
   onComplete: () => void;
 }) {
+  const { t } = useTranslation();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createPayRegisterStyles(colors), [colors]);
   const { user, token, requestOtp, verifyAndSignIn, refreshUser } = useAuth();
   const [welcomePhone, setWelcomePhone] = useState("");
   const [welcomeOtp, setWelcomeOtp] = useState("");
@@ -159,8 +143,8 @@ export default function PayRegisterOverlay({
     if (welcomePhone.length !== 9) return;
     if (otpSendCount >= MAX_OTP_SENDS_PER_SESSION) {
       Alert.alert(
-        "Limite d’envois",
-        "Nombre maximum d’envois de code atteint pour cette session. Réessayez plus tard ou contactez le support.",
+        t("register.sendLimitTitle"),
+        t("register.sendLimitMessage"),
       );
       return;
     }
@@ -175,11 +159,11 @@ export default function PayRegisterOverlay({
       setOtpResendCooldown(OTP_RESEND_COOLDOWN_SEC);
     } catch (e) {
       const msg =
-        e instanceof ApiError ? e.message : "Impossible d’envoyer le code.";
+        e instanceof ApiError ? e.message : t("common.sendCodeFailed");
       if (e instanceof ApiError && e.retryAfterSeconds != null) {
         setOtpResendCooldown(e.retryAfterSeconds);
       }
-      Alert.alert("Code SMS", msg);
+      Alert.alert(t("register.smsCodeTitle"), msg);
     } finally {
       setBusy(false);
     }
@@ -203,14 +187,14 @@ export default function PayRegisterOverlay({
       }
     } catch (e) {
       Alert.alert(
-        "Vérification",
-        e instanceof ApiError ? e.message : "Code invalide.",
+        t("register.verificationTitle"),
+        e instanceof ApiError ? e.message : t("common.invalidCode"),
       );
     } finally {
       otpVerifyInFlightRef.current = false;
       setAuthVerifySending(false);
     }
-  }, [welcomePhone, welcomeOtp, verifyAndSignIn, onComplete]);
+  }, [welcomePhone, welcomeOtp, verifyAndSignIn, onComplete, t]);
 
   const applySmsAutofillOtp = useCallback((digits: string) => {
     setWelcomeOtp(digits);
@@ -257,7 +241,7 @@ export default function PayRegisterOverlay({
     const b = onboardingPinConfirm.replace(/\D/g, "");
     if (a.length !== ONBOARDING_PIN_LEN || b.length !== ONBOARDING_PIN_LEN) return;
     if (a !== b) {
-      Alert.alert("Code PIN", "Les deux saisies ne correspondent pas.");
+      Alert.alert(t("register.pinTitle"), t("register.pinMismatch"));
       setOnboardingPinConfirm("");
       pinConfirmAutoSubmittedRef.current = null;
       return;
@@ -276,8 +260,8 @@ export default function PayRegisterOverlay({
       pinConfirmAutoSubmittedRef.current = null;
     } catch (e) {
       Alert.alert(
-        "Code PIN",
-        e instanceof ApiError ? e.message : "Enregistrement impossible.",
+        t("register.pinTitle"),
+        e instanceof ApiError ? e.message : t("common.saveFailed"),
       );
       pinConfirmAutoSubmittedRef.current = null;
     } finally {
@@ -289,6 +273,7 @@ export default function PayRegisterOverlay({
     onboardingPinConfirm,
     token,
     refreshUser,
+    t,
   ]);
 
   const submitOnboardingProfile = useCallback(async () => {
@@ -296,8 +281,8 @@ export default function PayRegisterOverlay({
     const l = onboardingLastName.trim();
     if (f.length < 2 || l.length < 2) {
       Alert.alert(
-        "Profil",
-        "Prénom et nom : au moins 2 caractères chacun.",
+        t("register.profileTitle"),
+        t("register.profileMinLength"),
       );
       return;
     }
@@ -310,13 +295,13 @@ export default function PayRegisterOverlay({
       onComplete();
     } catch (e) {
       Alert.alert(
-        "Profil",
-        e instanceof ApiError ? e.message : "Enregistrement impossible.",
+        t("register.profileTitle"),
+        e instanceof ApiError ? e.message : t("common.saveFailed"),
       );
     } finally {
       setAuthProfileSaving(false);
     }
-  }, [onboardingFirstName, onboardingLastName, token, refreshUser, onComplete]);
+  }, [onboardingFirstName, onboardingLastName, token, refreshUser, onComplete, t]);
 
   useEffect(() => {
     if (user) return;
@@ -442,7 +427,7 @@ export default function PayRegisterOverlay({
                   else Keyboard.dismiss();
                 }}
                 accessibilityLabel={
-                  welcomeStep === "phone" ? "Fermer" : "Fond"
+                  welcomeStep === "phone" ? t("common.close") : t("common.background")
                 }
                 accessibilityRole="button"
               />
@@ -464,10 +449,10 @@ export default function PayRegisterOverlay({
                             pressed && styles.regModalBackHeaderBtnPressed,
                           ]}
                           hitSlop={12}
-                          accessibilityLabel="Fermer"
+                          accessibilityLabel={t("common.close")}
                           accessibilityRole="button"
                         >
-                          <Ionicons name="close" size={28} color="#333" />
+                          <Ionicons name="close" size={28} color={colors.text} />
                         </Pressable>
                       ) : welcomeStep === "otp" ||
                         welcomeStep === "pin" ||
@@ -481,18 +466,18 @@ export default function PayRegisterOverlay({
                           hitSlop={12}
                           accessibilityLabel={
                             welcomeStep === "otp"
-                              ? "Modifier le numéro"
-                              : "Retour"
+                              ? t("register.editPhone")
+                              : t("common.back")
                           }
                           accessibilityRole="button"
                         >
-                          <Ionicons name="chevron-back" size={28} color="#333" />
+                          <Ionicons name="chevron-back" size={28} color={colors.text} />
                         </Pressable>
                       ) : (
                         <View style={styles.regModalHeaderLeading} />
                       )}
                       <Text style={styles.regModalHeaderTitle}>
-                        {regModalTitle(welcomeStep)}
+                        {t(`register.steps.${welcomeStep}`)}
                       </Text>
                       <View style={styles.regModalHeaderSpacer} />
                     </View>
@@ -527,13 +512,13 @@ export default function PayRegisterOverlay({
                             ]}
                           >
                             <Text style={styles.regModalLead}>
-                              Nous vous enverrons un code par SMS pour vérifier votre numéro.
+                              {t("register.smsVerifyLead")}
                             </Text>
-                            <Text style={styles.regModalLabel}>Numéro de téléphone</Text>
+                            <Text style={styles.regModalLabel}>{t("register.phoneLabel")}</Text>
                             <View style={styles.regModalPhoneWrap}>
                               <Text
                                 style={styles.regModalFlag}
-                                accessibilityLabel="Cameroun"
+                                accessibilityLabel={t("common.cameroon")}
                               >
                                 🇨🇲
                               </Text>
@@ -541,8 +526,8 @@ export default function PayRegisterOverlay({
                               <TextInput
                                 ref={regPhoneInputRef}
                                 style={styles.regModalPhoneInput}
-                                placeholder="612345678"
-                                placeholderTextColor="#CCC"
+                                placeholder={t("register.phonePlaceholder")}
+                                placeholderTextColor={colors.placeholder}
                                 keyboardType="number-pad"
                                 maxLength={9}
                                 value={welcomePhone}
@@ -558,7 +543,7 @@ export default function PayRegisterOverlay({
                                     styles.regModalWalletLogo,
                                     styles.regModalWalletLogoOrange,
                                   ]}
-                                  accessibilityLabel="Orange Money"
+                                  accessibilityLabel={t("common.orangeMoney")}
                                 />
                               )}
                               {phoneWalletBrand === "mtn" && (
@@ -568,7 +553,7 @@ export default function PayRegisterOverlay({
                                     styles.regModalWalletLogo,
                                     styles.regModalWalletLogoMtn,
                                   ]}
-                                  accessibilityLabel="MTN Mobile Money"
+                                  accessibilityLabel={t("common.mtnMobileMoney")}
                                 />
                               )}
                             </View>
@@ -597,9 +582,9 @@ export default function PayRegisterOverlay({
                               }}
                             >
                               {authOtpSending ? (
-                                <ActivityIndicator color="#fff" size="small" />
+                                <ActivityIndicator color={colors.accentOn} size="small" />
                               ) : (
-                                <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
+                                <Text style={styles.regModalPrimaryBtnText}>{t("common.continue")}</Text>
                               )}
                             </Pressable>
                           </View>
@@ -611,8 +596,8 @@ export default function PayRegisterOverlay({
                           >
                             <Text style={styles.regModalLead}>
                               {USE_MOCK_API
-                                ? `Démo : saisissez les ${OTP_LEN} chiffres — envoi automatique.`
-                                : `Saisissez le code à ${OTP_LEN} chiffres reçu par SMS.`}
+                                ? t("register.otpDemoLead", { count: OTP_LEN })
+                                : t("register.otpLead", { count: OTP_LEN })}
                             </Text>
                             <Text style={styles.regModalOtpHint}>
                               +237{" "}
@@ -620,12 +605,12 @@ export default function PayRegisterOverlay({
                                 ? formatCameroonPhoneDisplay(welcomePhone)
                                 : "…"}
                             </Text>
-                            <Text style={styles.regModalLabel}>Code de vérification</Text>
+                            <Text style={styles.regModalLabel}>{t("register.verificationCode")}</Text>
                             <TextInput
                               ref={regOtpInputRef}
                               style={styles.regModalOtpInput}
-                              placeholder="• • • • • •"
-                              placeholderTextColor="#DDD"
+                              placeholder={t("common.otpPlaceholder")}
+                              placeholderTextColor={colors.placeholder}
                               keyboardType="number-pad"
                               value={welcomeOtp}
                               onChangeText={(t) =>
@@ -660,19 +645,18 @@ export default function PayRegisterOverlay({
                               onPress={() => void submitOtpVerification()}
                             >
                               {authVerifySending ? (
-                                <ActivityIndicator color="#fff" size="small" />
+                                <ActivityIndicator color={colors.accentOn} size="small" />
                               ) : (
-                                <Text style={styles.regModalPrimaryBtnText}>Valider</Text>
+                                <Text style={styles.regModalPrimaryBtnText}>{t("common.validate")}</Text>
                               )}
                             </Pressable>
                             {otpSendCount >= MAX_OTP_SENDS_PER_SESSION ? (
                               <Text style={styles.regModalResendLimit}>
-                                Limite d’envois atteinte. Réessayez plus tard ou modifiez le numéro
-                                ci-dessous.
+                                {t("register.resendLimit")}
                               </Text>
                             ) : otpResendCooldown > 0 ? (
                               <Text style={styles.regModalResendHint}>
-                                Renvoyer le code dans{" "}
+                                {t("register.resendIn")}{" "}
                                 <Text style={styles.regModalResendHintEm}>
                                   {otpResendCooldown}s
                                 </Text>
@@ -695,10 +679,10 @@ export default function PayRegisterOverlay({
                                 }}
                               >
                                 {authResendSending ? (
-                                  <ActivityIndicator color={ACCENT} size="small" />
+                                  <ActivityIndicator color={colors.accent} size="small" />
                                 ) : (
                                   <Text style={styles.regModalResendBtnText}>
-                                    Renvoyer le code
+                                    {t("register.resendCode")}
                                   </Text>
                                 )}
                               </Pressable>
@@ -711,7 +695,7 @@ export default function PayRegisterOverlay({
                               onPress={goBackToRegistrationPhone}
                             >
                               <Text style={styles.regModalBackLinkText}>
-                                Modifier le numéro
+                                {t("register.editPhone")}
                               </Text>
                             </Pressable>
                           </View>
@@ -722,15 +706,14 @@ export default function PayRegisterOverlay({
                             ]}
                           >
                             <Text style={styles.regModalLead}>
-                              Choisissez un code PIN à 4 chiffres pour valider vos paiements. Ne le
-                              partagez avec personne.
+                              {t("register.pinChooseLead")}
                             </Text>
-                            <Text style={styles.regModalLabel}>Nouveau code PIN</Text>
+                            <Text style={styles.regModalLabel}>{t("register.newPin")}</Text>
                             <TextInput
                               ref={regPinInputRef}
                               style={styles.regModalOtpInput}
-                              placeholder="• • • •"
-                              placeholderTextColor="#DDD"
+                              placeholder={t("common.pinPlaceholder")}
+                              placeholderTextColor={colors.placeholder}
                               keyboardType="number-pad"
                               secureTextEntry
                               value={onboardingPin}
@@ -761,7 +744,7 @@ export default function PayRegisterOverlay({
                               }
                               onPress={submitOnboardingPinContinue}
                             >
-                              <Text style={styles.regModalPrimaryBtnText}>Continuer</Text>
+                              <Text style={styles.regModalPrimaryBtnText}>{t("common.continue")}</Text>
                             </Pressable>
                           </View>
                           <View
@@ -771,14 +754,14 @@ export default function PayRegisterOverlay({
                             ]}
                           >
                             <Text style={styles.regModalLead}>
-                              Saisissez à nouveau votre code PIN pour confirmer.
+                              {t("register.pinConfirmLead")}
                             </Text>
-                            <Text style={styles.regModalLabel}>Confirmation</Text>
+                            <Text style={styles.regModalLabel}>{t("common.confirm")}</Text>
                             <TextInput
                               ref={regPinConfirmInputRef}
                               style={styles.regModalOtpInput}
-                              placeholder="• • • •"
-                              placeholderTextColor="#DDD"
+                              placeholder={t("common.pinPlaceholder")}
+                              placeholderTextColor={colors.placeholder}
                               keyboardType="number-pad"
                               secureTextEntry
                               value={onboardingPinConfirm}
@@ -812,10 +795,10 @@ export default function PayRegisterOverlay({
                               onPress={() => void submitOnboardingPinConfirm()}
                             >
                               {authPinSaving ? (
-                                <ActivityIndicator color="#fff" size="small" />
+                                <ActivityIndicator color={colors.accentOn} size="small" />
                               ) : (
                                 <Text style={styles.regModalPrimaryBtnText}>
-                                  Enregistrer le PIN
+                                  {t("register.savePin")}
                                 </Text>
                               )}
                             </Pressable>
@@ -827,26 +810,26 @@ export default function PayRegisterOverlay({
                             ]}
                           >
                             <Text style={styles.regModalLead}>
-                              Indiquez votre prénom et votre nom pour finaliser votre compte.
+                              {t("register.profileLead")}
                             </Text>
-                            <Text style={styles.regModalLabel}>Prénom</Text>
+                            <Text style={styles.regModalLabel}>{t("register.firstName")}</Text>
                             <TextInput
                               ref={regFirstNameInputRef}
                               style={styles.regModalProfileInput}
-                              placeholder="Ex. Jean"
-                              placeholderTextColor="#CCC"
+                              placeholder={t("register.firstNamePlaceholder")}
+                              placeholderTextColor={colors.placeholder}
                               value={onboardingFirstName}
                               onChangeText={setOnboardingFirstName}
                               autoCapitalize="words"
                               autoCorrect={false}
                               maxLength={80}
                             />
-                            <Text style={styles.regModalLabel}>Nom</Text>
+                            <Text style={styles.regModalLabel}>{t("register.lastName")}</Text>
                             <TextInput
                               ref={regLastNameInputRef}
                               style={styles.regModalProfileInput}
-                              placeholder="Ex. Kamga"
-                              placeholderTextColor="#CCC"
+                              placeholder={t("register.lastNamePlaceholder")}
+                              placeholderTextColor={colors.placeholder}
                               value={onboardingLastName}
                               onChangeText={setOnboardingLastName}
                               autoCapitalize="words"
@@ -874,10 +857,10 @@ export default function PayRegisterOverlay({
                               onPress={() => void submitOnboardingProfile()}
                             >
                               {authProfileSaving ? (
-                                <ActivityIndicator color="#fff" size="small" />
+                                <ActivityIndicator color={colors.accentOn} size="small" />
                               ) : (
                                 <Text style={styles.regModalPrimaryBtnText}>
-                                  Terminer
+                                  {t("register.finish")}
                                 </Text>
                               )}
                             </Pressable>
@@ -898,246 +881,3 @@ export default function PayRegisterOverlay({
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  /** Modal inscription — feuille ~75 % hauteur depuis le bas, comme `app/deposit.tsx`. */
-  regModalRoot: {
-    flex: 1,
-    backgroundColor: "transparent",
-  },
-  regModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  regModalSheet: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    overflow: "hidden",
-  },
-  regModalKeyboard: {
-    flex: 1,
-  },
-  regModalSafe: {
-    flex: 1,
-  },
-  regModalHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  /** Espace réservé (même largeur que la flèche retour) pour garder le titre centré. */
-  regModalHeaderLeading: {
-    width: 44,
-    height: 44,
-  },
-  regModalBackHeaderBtn: {
-    width: 44,
-    height: 44,
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  regModalBackHeaderBtnPressed: { opacity: 0.6 },
-  regModalHeaderTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#333",
-  },
-  regModalHeaderSpacer: { width: 44 },
-  regModalScroll: {
-    paddingHorizontal: 25,
-    paddingTop: 10,
-    paddingBottom: 28,
-  },
-  regModalSlideClip: {
-    width: "100%",
-    overflow: "hidden",
-  },
-  regModalSlideRow: {
-    flexDirection: "row",
-  },
-  regModalSlidePage: {
-    flexShrink: 0,
-  },
-  regModalLead: {
-    fontSize: 13,
-    color: "#666",
-    lineHeight: 19,
-    marginBottom: 22,
-  },
-  regModalLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#888",
-    marginBottom: 10,
-    letterSpacing: 0.8,
-    textAlign: "center",
-  },
-  regModalPhoneWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F8F8F8",
-    borderRadius: 20,
-    paddingLeft: 12,
-    paddingRight: 6,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 20,
-    minHeight: 56,
-  },
-  regModalFlag: {
-    fontSize: 15,
-    lineHeight: 19,
-    marginRight: 5,
-  },
-  regModalPrefix: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#333",
-    marginRight: 6,
-    letterSpacing: -0.2,
-  },
-  regModalPhoneInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#222",
-    paddingVertical: 12,
-    paddingHorizontal: 0,
-    minWidth: 0,
-  },
-  regModalWalletLogo: {
-    marginLeft: "auto",
-    flexShrink: 0,
-    alignSelf: "center",
-    resizeMode: "contain",
-  },
-  /** Boîte plus carrée : évite le vide latéral avec le logo Orange (fond noir / icône centrée). */
-  regModalWalletLogoOrange: {
-    width: 26,
-    height: 26,
-    marginRight: 4,
-  },
-  /** Logo MTN plus horizontal. */
-  regModalWalletLogoMtn: {
-    width: 56,
-    height: 24,
-  },
-  regModalPrimaryBtn: {
-    backgroundColor: ACCENT,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  regModalPrimaryBtnPressed: {
-    opacity: 0.92,
-    transform: [{ scale: 0.99 }],
-  },
-  regModalPrimaryBtnDisabled: {
-    backgroundColor: "#CCC",
-  },
-  regModalPrimaryBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  regModalOtpHint: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#555",
-    textAlign: "center",
-    marginBottom: 16,
-  },
-  regModalOtpInput: {
-    width: "100%",
-    height: 56,
-    fontSize: 22,
-    fontWeight: "700",
-    letterSpacing: 8,
-    textAlign: "center",
-    color: "#222",
-    backgroundColor: "#F8F8F8",
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 20,
-    paddingHorizontal: 12,
-  },
-  regModalProfileInput: {
-    width: "100%",
-    minHeight: 48,
-    fontSize: 17,
-    fontWeight: "600",
-    color: "#222",
-    backgroundColor: "#F8F8F8",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  regModalResendHint: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: "#666",
-    textAlign: "center",
-    marginTop: 4,
-    marginBottom: 4,
-  },
-  regModalResendHintEm: {
-    color: "#333",
-    fontVariant: ["tabular-nums"],
-  },
-  regModalResendBtn: {
-    alignSelf: "center",
-    marginTop: 4,
-    marginBottom: 4,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    minHeight: 44,
-    justifyContent: "center",
-  },
-  regModalResendBtnPressed: {
-    opacity: 0.65,
-  },
-  regModalResendBtnDisabled: {
-    opacity: 0.45,
-  },
-  regModalResendBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: ACCENT,
-    textDecorationLine: "underline",
-  },
-  regModalResendLimit: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#888",
-    textAlign: "center",
-    marginTop: 6,
-    marginBottom: 4,
-    lineHeight: 18,
-  },
-  regModalBackLink: {
-    alignSelf: "center",
-    marginTop: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  regModalBackLinkText: {
-    fontSize: 14,
-    fontWeight: "600",
-    color: ACCENT,
-    textDecorationLine: "underline",
-  },
-});

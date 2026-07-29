@@ -1,4 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
+import { createHistoryStyles } from "@/components/history/historyStyles";
 import { ApiError } from "@/lib/api/errors";
 import { formatFcfa, formatTransactionDate } from "@/lib/format";
 import {
@@ -7,14 +9,15 @@ import {
 } from "@/lib/transactionsCache";
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   FlatList,
   ListRenderItem,
   Platform,
-  StyleSheet,
   Text,
   View,
+  type ViewStyle,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -48,6 +51,7 @@ function AndroidElasticFlatList({
   contentContainerStyle,
   showsVerticalScrollIndicator,
   ListEmptyComponent,
+  listFlexStyle,
 }: {
   data: HistoryRow[];
   renderItem: ListRenderItem<HistoryRow>;
@@ -55,6 +59,7 @@ function AndroidElasticFlatList({
   contentContainerStyle: object;
   showsVerticalScrollIndicator: boolean;
   ListEmptyComponent?: React.ComponentType | React.ReactElement | null;
+  listFlexStyle: ViewStyle;
 }) {
   const scrollY = useSharedValue(0);
   const contentH = useSharedValue(0);
@@ -107,7 +112,7 @@ function AndroidElasticFlatList({
         data={data}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        style={[listAnimatedStyle, styles.listFlex]}
+        style={[listAnimatedStyle, listFlexStyle]}
         onScroll={scrollHandler}
         scrollEventThrottle={16}
         bounces={false}
@@ -129,6 +134,9 @@ function AndroidElasticFlatList({
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const styles = useMemo(() => createHistoryStyles(colors), [colors]);
   const [rows, setRows] = useState<HistoryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +188,7 @@ export default function HistoryScreen() {
         } catch (e) {
           if (!cancelled) {
             setError(
-              e instanceof ApiError ? e.message : "Chargement impossible.",
+              e instanceof ApiError ? e.message : t("history.loadFailed"),
             );
             if (!cached) setRows([]);
           }
@@ -192,32 +200,35 @@ export default function HistoryScreen() {
       return () => {
         cancelled = true;
       };
-    }, [token]),
+    }, [token, t]),
   );
 
-  const renderItem: ListRenderItem<HistoryRow> = ({ item }) => (
-    <View style={styles.transactionItem}>
-      <View style={styles.leftContent}>
-        <View style={styles.avatarSmall}>
-          <Text style={styles.avatarText}>
-            {(item.name.trim().charAt(0) || "?").toUpperCase()}
-          </Text>
+  const renderItem: ListRenderItem<HistoryRow> = useCallback(
+    ({ item }) => (
+      <View style={styles.transactionItem}>
+        <View style={styles.leftContent}>
+          <View style={styles.avatarSmall}>
+            <Text style={styles.avatarText}>
+              {(item.name.trim().charAt(0) || "?").toUpperCase()}
+            </Text>
+          </View>
+          <View>
+            <Text style={styles.nameText}>{item.name}</Text>
+            <Text style={styles.dateText}>{item.date}</Text>
+          </View>
         </View>
-        <View>
-          <Text style={styles.nameText}>{item.name}</Text>
-          <Text style={styles.dateText}>{item.date}</Text>
-        </View>
+        <Text
+          style={[
+            styles.amountText,
+            item.type === "received" ? styles.greenText : styles.blackText,
+          ]}
+        >
+          {item.type === "received" ? "+" : "-"}
+          {item.amount} F
+        </Text>
       </View>
-      <Text
-        style={[
-          styles.amountText,
-          item.type === "received" ? styles.greenText : styles.blackText,
-        ]}
-      >
-        {item.type === "received" ? "+" : "-"}
-        {item.amount} F
-      </Text>
-    </View>
+    ),
+    [styles],
   );
 
   const listContentStyle = [
@@ -239,26 +250,26 @@ export default function HistoryScreen() {
     if (loading) {
       return (
         <View style={styles.emptyWrap}>
-          <ActivityIndicator color="#5dc705" size="large" />
+          <ActivityIndicator color={colors.accent} size="large" />
         </View>
       );
     }
     if (!token) {
       return (
         <Text style={styles.emptyText}>
-          Connectez-vous pour voir vos transactions.
+          {t("history.signInRequired")}
         </Text>
       );
     }
     return (
-      <Text style={styles.emptyText}>Aucune transaction pour l’instant.</Text>
+      <Text style={styles.emptyText}>{t("history.empty")}</Text>
     );
-  }, [error, loading, token]);
+  }, [error, loading, token, styles, colors.accent, t]);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Transactions</Text>
+        <Text style={styles.title}>{t("history.title")}</Text>
       </View>
 
       {Platform.OS === "android" ? (
@@ -269,6 +280,7 @@ export default function HistoryScreen() {
           contentContainerStyle={listContentStyle}
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={ListEmpty}
+          listFlexStyle={styles.listFlex}
         />
       ) : (
         <FlatList
@@ -287,82 +299,3 @@ export default function HistoryScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-  header: {
-    paddingHorizontal: 25,
-    paddingVertical: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "700",
-    color: "#000",
-  },
-  listFlex: {
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: 20,
-    paddingTop: 10,
-  },
-  emptyWrap: {
-    paddingTop: 48,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  emptyText: {
-    marginTop: 32,
-    textAlign: "center",
-    paddingHorizontal: 24,
-    fontSize: 15,
-    color: "#999",
-    lineHeight: 22,
-  },
-  transactionItem: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F9F9F9",
-  },
-  leftContent: {
-    flexDirection: "row",
-    alignItems: "center",
-  },
-  avatarSmall: {
-    width: 45,
-    height: 45,
-    borderRadius: 22.5,
-    backgroundColor: "#F0F4F2",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 15,
-  },
-  avatarText: {
-    fontSize: 18,
-    fontWeight: "600",
-    color: "#4CAF50",
-  },
-  nameText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#333",
-  },
-  dateText: {
-    fontSize: 12,
-    color: "#999",
-    marginTop: 2,
-  },
-  amountText: {
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  greenText: { color: "#4CAF50" },
-  blackText: { color: "#000" },
-});

@@ -12,7 +12,7 @@ import {
   describeSmsSetup,
 } from "./sms.js";
 import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
-import { createWalletDepositHandlers } from "./walletDeposit.js";
+import { createWalletDepositHandlers, MAX_TX_AMOUNT_FCFA } from "./walletDeposit.js";
 
 const prisma = new PrismaClient();
 const app = express();
@@ -322,6 +322,11 @@ app.post("/payments/pay", authMiddleware, async (req, res) => {
   );
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: "Montant invalide" });
+  }
+  if (amount > MAX_TX_AMOUNT_FCFA) {
+    return res.status(400).json({
+      error: `Montant invalide (max ${MAX_TX_AMOUNT_FCFA.toLocaleString("fr-FR")} FCFA)`,
+    });
   }
   if (transactionPin.length !== 4) {
     return res

@@ -1,0 +1,50 @@
+---
+description: Vision Blyp — latence type Google, sécurité ultra, stack AWS full scale Afrique
+alwaysApply: true
+---
+
+# Blyp — architecture cible (à respecter)
+
+## Ambition produit
+
+- App **ultra rapide** : affichage **instantané au clic** (cache local + UI optimiste) ; le réseau confirme après.
+- Cible : **dizaines de millions** d’utilisateurs africains, **petits paiements quotidiens**, sans ralentir, crasher ni doubler les opérations.
+- Référence d’expérience : WhatsApp / TikTok (réactivité perçue), pas Railway pour la prod à l’échelle.
+
+## Stack cible (greenfield AWS)
+
+- **Région** : `af-south-1` (Afrique) en priorité.
+- **Entrée** : API Gateway (HTTP) → **Lambda** (ou containers AWS), pas monolithe Express/Railway en prod cible.
+- **Données** : **DynamoDB** (ledger, users, transactions) ; **ElastiCache Redis** (OTP, rate limit, cache applicatif chaud).
+- **Async** : **SQS** (+ DLQ) pour SMS, webhooks, travail lourd — rien de lent en synchrone HTTP.
+- **Assets** : **S3** + **CloudFront**.
+- **Secrets** : **Secrets Manager** / SSM + **KMS** — jamais secrets en clair dans le code ou les logs.
+- **Observabilité** : CloudWatch, alarmes, tests de charge avant montée en charge.
+
+## Caches multi-niveaux (ordre)
+
+1. **Téléphone** (SQLite/MMKV) — solde, profil, historique récent.
+2. **CDN** (CloudFront) — assets statiques.
+3. **Redis** — partagé, court terme, OTP/limites.
+4. **DAX** — **plus tard**, si lectures DynamoDB explosent (pas au jour 1).
+5. **DynamoDB** — source de vérité ; invalider caches après écriture wallet.
+
+## Sécurité ultra (non négociable)
+
+- **HTTPS** partout (app → API).
+- **PIN transaction** : hash + pepper (Secrets Manager), jamais en clair.
+- **OTP** : TTL DynamoDB, pas dans les logs.
+- **Chiffrement au repos** : DynamoDB (KMS), S3 (SSE-KMS), Redis TLS + encryption en prod.
+- **Sauvegarde** : **PITR DynamoDB** activé ; backups on-demand avant grosses migrations.
+- **Wallet** : `TransactWrite` + **idempotence** sur chaque crédit/débit et webhook (PawaPay, etc.).
+
+## Hors scope jour 1
+
+- **Railway**, **EBS**, **RDS** comme cœur métier — option RDS plus tard pour reporting/SQL uniquement.
+- **DAX** au démarrage (coût/complexité sans gain tant que peu de trafic).
+
+## Travail agent
+
+- Lire `docs/ARCHITECTURE-CIBLE.md` pour le détail (phases, checklist, anti-patterns).
+- Ne pas proposer Railway comme hébergement prod pour l’échelle visée.
+- Prioriser : app perçue instantanée → API légère région Afrique → wallet fiable → scale infra.

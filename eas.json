@@ -12,6 +12,9 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://nma68tjr78.execute-api.af-south-1.amazonaws.com/dev"
       }
     },
     "production": {

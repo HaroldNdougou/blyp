@@ -60,6 +60,13 @@ export function formatCameroonPhoneDisplay(digits: string): string {
 
 export { formatFcfa } from "./formatFcfa";
 
+import i18n, { getNumberLocale, type AppLanguage } from "@/lib/i18n";
+
+function currentNumberLocale(): string {
+  const lang: AppLanguage = i18n.language === "fr" ? "fr" : "en";
+  return getNumberLocale(lang);
+}
+
 export function formatTransactionDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
@@ -73,13 +80,14 @@ export function formatTransactionDate(iso: string): string {
     d.getDate() === yesterday.getDate() &&
     d.getMonth() === yesterday.getMonth() &&
     d.getFullYear() === yesterday.getFullYear();
-  const time = d.toLocaleTimeString("fr-FR", {
+  const locale = currentNumberLocale();
+  const time = d.toLocaleTimeString(locale, {
     hour: "2-digit",
     minute: "2-digit",
   });
-  if (sameDay) return `Aujourd'hui, ${time}`;
-  if (isYesterday) return `Hier, ${time}`;
-  return d.toLocaleDateString("fr-FR", {
+  if (sameDay) return i18n.t("dates.todayAt", { time });
+  if (isYesterday) return i18n.t("dates.yesterdayAt", { time });
+  return d.toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,

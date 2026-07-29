@@ -1,13 +1,16 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
 import {
   deposit as apiDeposit,
   ApiError,
   getDepositIntentStatus,
 } from "@/lib/api/client";
 import { setPendingDepositAmountForPayHome } from "@/lib/pendingDepositForPayHome";
+import { digitsOnlyAmount, isValidAmountFcfa, MAX_AMOUNT_DIGITS } from "@/lib/amountLimits";
+import type { ThemeColors } from "@/lib/theme/colors";
 import { Ionicons } from "@expo/vector-icons";
 import { router, Stack } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,14 +25,156 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-
-const GREEN = "#5dc705";
+import { useTranslation } from "react-i18next";
 
 /** Part de la hauteur d’écran occupée par la feuille modale (depuis le bas). */
 const SHEET_HEIGHT_RATIO = 0.85;
 
 const POLL_MS = 2500;
 const POLL_MAX = 24;
+
+function createDepositStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    root: {
+      flex: 1,
+      backgroundColor: "transparent",
+    },
+    backdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: c.overlay,
+    },
+    sheetShell: {
+      position: "absolute",
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: c.modal,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      overflow: "hidden",
+    },
+    sheet: {
+      flex: 1,
+    },
+    safe: { flex: 1 },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      borderBottomWidth: 1,
+      borderBottomColor: c.borderLight,
+    },
+    closeBtn: {
+      width: 44,
+      height: 44,
+      justifyContent: "center",
+      alignItems: "flex-start",
+    },
+    closeBtnPressed: { opacity: 0.6 },
+    headerTitle: {
+      fontSize: 17,
+      fontWeight: "700",
+      color: c.text,
+    },
+    headerSpacer: { width: 44 },
+    scroll: {
+      flex: 1,
+    },
+    scrollContent: {
+      paddingHorizontal: 25,
+      paddingTop: 10,
+      paddingBottom: 24,
+      flexGrow: 1,
+    },
+    label: {
+      fontSize: 12,
+      fontWeight: "600",
+      color: c.textMuted,
+      marginBottom: 10,
+      letterSpacing: 0.8,
+      textAlign: "center",
+    },
+    labelOption: {
+      fontSize: 11,
+      fontWeight: "600",
+      color: c.textFaint,
+      marginBottom: 8,
+      textAlign: "center",
+    },
+    optionInput: {
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      fontSize: 12,
+      color: c.text,
+      borderWidth: 1,
+      borderColor: c.inputBorder,
+      marginBottom: 8,
+    },
+    optionInputSecond: {
+      marginBottom: 12,
+    },
+    inputWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: c.inputBackground,
+      borderRadius: 20,
+      paddingHorizontal: 20,
+      borderWidth: 1,
+      borderColor: c.inputBorder,
+      marginBottom: 16,
+    },
+    input: {
+      flex: 1,
+      height: 72,
+      fontSize: 28,
+      fontWeight: "700",
+      color: c.text,
+    },
+    currency: {
+      fontSize: 18,
+      fontWeight: "800",
+      color: c.textFaint,
+      marginLeft: 8,
+    },
+    waitingBox: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 14,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      backgroundColor: c.depositHighlightBackground,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.depositHighlightBorder,
+    },
+    waitingSpinner: { marginRight: 12 },
+    waitingText: {
+      flex: 1,
+      fontSize: 13,
+      color: c.textSecondary,
+      lineHeight: 18,
+    },
+    primaryBtn: {
+      marginTop: 8,
+      backgroundColor: c.accent,
+      height: 56,
+      borderRadius: 28,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    primaryBtnPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
+    primaryBtnDisabled: { backgroundColor: c.disabledButton },
+    primaryBtnText: {
+      color: c.accentOn,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+  });
+}
 
 function newIdempotencyKey(): string {
   const c = globalThis.crypto;
@@ -66,6 +211,9 @@ async function pollDepositCompleted(
 
 export default function DepositScreen() {
   const { token, refreshUser } = useAuth();
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const styles = useMemo(() => createDepositStyles(colors), [colors]);
   const [amount, setAmount] = useState("");
   /** Optionnel : numéro facturé par PawaPay (ex. MSISDN sandbox 237653456789). */
   const [sandboxPayerPhone, setSandboxPayerPhone] = useState("");
@@ -79,7 +227,7 @@ export default function DepositScreen() {
   const sheetHeight = windowHeight * SHEET_HEIGHT_RATIO;
 
   const n = parseInt(amount, 10);
-  const amountOk = Number.isFinite(n) && n > 0;
+  const amountOk = isValidAmountFcfa(amount);
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -92,8 +240,8 @@ export default function DepositScreen() {
     if (!Number.isFinite(n) || n <= 0 || !token) {
       if (!token) {
         Alert.alert(
-          "Connexion",
-          "Vous devez être connecté pour recharger.",
+          t("deposit.signInRequiredTitle"),
+          t("deposit.signInRequiredMessage"),
         );
       }
       return;
@@ -127,10 +275,10 @@ export default function DepositScreen() {
       router.back();
     } catch (e) {
       Alert.alert(
-        "Rechargement",
+        t("deposit.topUpTitle"),
         e instanceof ApiError
           ? e.message
-          : "Impossible de créditer le compte.",
+          : t("deposit.creditFailed"),
       );
     } finally {
       setSubmitting(false);
@@ -143,7 +291,7 @@ export default function DepositScreen() {
       <Pressable
         style={styles.backdrop}
         onPress={() => router.back()}
-        accessibilityLabel="Fermer"
+        accessibilityLabel={t("common.close")}
         accessibilityRole="button"
       />
       <View style={[styles.sheetShell, { height: sheetHeight }]}>
@@ -159,9 +307,9 @@ export default function DepositScreen() {
                 style={({ pressed }) => [styles.closeBtn, pressed && styles.closeBtnPressed]}
                 hitSlop={12}
               >
-                <Ionicons name="close" size={28} color="#333" />
+                <Ionicons name="close" size={28} color={colors.text} />
               </Pressable>
-              <Text style={styles.headerTitle}>Recharger</Text>
+              <Text style={styles.headerTitle}>{t("deposit.title")}</Text>
               <View style={styles.headerSpacer} />
             </View>
 
@@ -171,34 +319,34 @@ export default function DepositScreen() {
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator
             >
-              <Text style={styles.label}>Montant du dépôt</Text>
+              <Text style={styles.label}>{t("deposit.amountLabel")}</Text>
               <View style={styles.inputWrap}>
                 <TextInput
                   ref={amountInputRef}
                   style={styles.input}
-                  placeholder="0"
-                  placeholderTextColor="#DDD"
+                  placeholder={t("deposit.amountPlaceholder")}
+                  placeholderTextColor={colors.placeholder}
                   keyboardType="numeric"
                   returnKeyType="done"
                   autoFocus
                   value={amount}
                   onChangeText={(t) => {
                     idempotencyKeyRef.current = null;
-                    setAmount(t);
+                    setAmount(digitsOnlyAmount(t, MAX_AMOUNT_DIGITS));
                   }}
                   onSubmitEditing={() => {
                     void submitDeposit();
                   }}
-                  maxLength={8}
+                  maxLength={MAX_AMOUNT_DIGITS}
                 />
-                <Text style={styles.currency}>FCFA</Text>
+                <Text style={styles.currency}>{t("common.fcfa")}</Text>
               </View>
 
-              <Text style={styles.labelOption}>PawaPay — numéro à débiter (optionnel)</Text>
+              <Text style={styles.labelOption}>{t("deposit.pawapayPhoneLabel")}</Text>
               <TextInput
                 style={styles.optionInput}
-                placeholder="Laisser vide = numéro du compte Blyp"
-                placeholderTextColor="#BBB"
+                placeholder={t("deposit.pawapayPhonePlaceholder")}
+                placeholderTextColor={colors.placeholder}
                 keyboardType="phone-pad"
                 returnKeyType="done"
                 value={sandboxPayerPhone}
@@ -209,8 +357,8 @@ export default function DepositScreen() {
               />
               <TextInput
                 style={[styles.optionInput, styles.optionInputSecond]}
-                placeholder="Fournisseur : MTN_MOMO_CMR ou ORANGE_CMR (optionnel)"
-                placeholderTextColor="#BBB"
+                placeholder={t("deposit.pawapayProviderPlaceholder")}
+                placeholderTextColor={colors.placeholder}
                 autoCapitalize="characters"
                 returnKeyType="done"
                 value={sandboxMmProvider}
@@ -223,13 +371,12 @@ export default function DepositScreen() {
               {waitingProvider ? (
                 <View style={styles.waitingBox}>
                   <ActivityIndicator
-                    color={GREEN}
+                    color={colors.accent}
                     size="small"
                     style={styles.waitingSpinner}
                   />
                   <Text style={styles.waitingText}>
-                    En attente de confirmation Mobile Money… Le solde se mettra à jour
-                    automatiquement.
+                    {t("deposit.waitingProvider")}
                   </Text>
                 </View>
               ) : null}
@@ -252,9 +399,9 @@ export default function DepositScreen() {
                 }}
               >
                 {submitting || waitingProvider ? (
-                  <ActivityIndicator color="#fff" size="small" />
+                  <ActivityIndicator color={colors.accentOn} size="small" />
                 ) : (
-                  <Text style={styles.primaryBtnText}>Valider</Text>
+                  <Text style={styles.primaryBtnText}>{t("common.validate")}</Text>
                 )}
               </Pressable>
             </ScrollView>
@@ -264,144 +411,3 @@ export default function DepositScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: "transparent",
-  },
-  backdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  sheetShell: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: "#fff",
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
-    overflow: "hidden",
-  },
-  sheet: {
-    flex: 1,
-  },
-  safe: { flex: 1 },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-  },
-  closeBtn: {
-    width: 44,
-    height: 44,
-    justifyContent: "center",
-    alignItems: "flex-start",
-  },
-  closeBtnPressed: { opacity: 0.6 },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    color: "#333",
-  },
-  headerSpacer: { width: 44 },
-  scroll: {
-    flex: 1,
-  },
-  scrollContent: {
-    paddingHorizontal: 25,
-    paddingTop: 10,
-    paddingBottom: 24,
-    flexGrow: 1,
-  },
-  label: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#888",
-    marginBottom: 10,
-    letterSpacing: 0.8,
-    textAlign: "center",
-  },
-  labelOption: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#AAA",
-    marginBottom: 8,
-    textAlign: "center",
-  },
-  optionInput: {
-    backgroundColor: "#FAFAFA",
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 12,
-    color: "#333",
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 8,
-  },
-  optionInputSecond: {
-    marginBottom: 12,
-  },
-  inputWrap: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#F8F8F8",
-    borderRadius: 20,
-    paddingHorizontal: 20,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 16,
-  },
-  input: {
-    flex: 1,
-    height: 72,
-    fontSize: 28,
-    fontWeight: "700",
-    color: "#222",
-  },
-  currency: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#AAA",
-    marginLeft: 8,
-  },
-  waitingBox: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 14,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    backgroundColor: "#F4FFF0",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E0F5D5",
-  },
-  waitingSpinner: { marginRight: 12 },
-  waitingText: {
-    flex: 1,
-    fontSize: 13,
-    color: "#444",
-    lineHeight: 18,
-  },
-  primaryBtn: {
-    marginTop: 8,
-    backgroundColor: GREEN,
-    height: 56,
-    borderRadius: 28,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  primaryBtnPressed: { opacity: 0.92, transform: [{ scale: 0.99 }] },
-  primaryBtnDisabled: { backgroundColor: "#CCC" },
-  primaryBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "700",
-  },
-});

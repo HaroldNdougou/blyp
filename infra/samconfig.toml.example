@@ -1,0 +1,31 @@
+# Copier vers samconfig.toml et adapter (samconfig.toml est gitignored).
+# sam deploy lit ce fichier par défaut.
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "blyp-api-dev"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+region = "af-south-1"
+parameter_overrides = "Stage=dev JwtSecret=dev-insecure-change-me OtpPepper=pepper DepositMode=sync"
+
+[staging.deploy.parameters]
+stack_name = "blyp-api-staging"
+region = "af-south-1"
+parameter_overrides = "Stage=staging"
+
+[prod.deploy.parameters]
+stack_name = "blyp-api-prod"
+region = "af-south-1"
+parameter_overrides = "Stage=prod"

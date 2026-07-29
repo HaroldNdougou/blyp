@@ -1,4 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
+import { useTheme } from "@/contexts/ThemeContext";
+import { MAX_AMOUNT_DIGITS, parseAmountFcfa } from "@/lib/amountLimits";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { consumePendingDepositAmountForPayHome } from "@/lib/pendingDepositForPayHome";
@@ -11,6 +13,7 @@ import React, {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -24,14 +27,15 @@ import {
   Modal,
   Platform,
   Pressable,
-  StyleSheet,
   Text,
   TextInput,
   View,
 } from "react-native";
 
 import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
+import { createPayHomeStyles } from "@/components/pay/payHomeStyles";
 import { useFocusEffect } from "@react-navigation/native";
+import { useTranslation } from "react-i18next";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -40,10 +44,6 @@ import {
 /** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
 const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
 const PayRegisterOverlay = lazy(importPayRegisterOverlay);
-
-/** Vert identité Blyp */
-const BLYP_GREEN = "#5dc705";
-const ACCENT = BLYP_GREEN;
 
 const ONBOARDING_PIN_LEN = 4;
 
@@ -67,6 +67,9 @@ const DEMO_DRIVER = {
 
 export default function PayHomeScreen() {
   useMarkRootShellReady();
+  const { t } = useTranslation();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
   const [amount, setAmount] = useState("");
@@ -260,14 +263,15 @@ export default function PayHomeScreen() {
     };
   }, [payPinModalVisible, schedulePayPinFieldFocus]);
 
-  const AMOUNT_MAX_LEN = 7;
+  const AMOUNT_MAX_LEN = MAX_AMOUNT_DIGITS;
 
   const onAmountDigit = useCallback((digit: string) => {
     setAmount((prev) => {
       const d = digit.replace(/\D/g, "");
       if (!d) return prev;
       if (prev.length >= AMOUNT_MAX_LEN) return prev;
-      if (prev === "0") return d === "0" ? "0" : d;
+      if (prev === "" && d === "0") return prev;
+      if (prev === "0") return d;
       return prev + d;
     });
   }, []);
@@ -277,9 +281,8 @@ export default function PayHomeScreen() {
   }, []);
 
   const handlePay = () => {
-    const n = parseInt(amount, 10);
-    if (!amount || !Number.isFinite(n) || n <= 0 || paymentStatus === "SENDING")
-      return;
+    const n = parseAmountFcfa(amount);
+    if (n == null || paymentStatus === "SENDING") return;
     if (!token) {
       Keyboard.dismiss();
       setConnexionPromptKind("pay");
@@ -287,8 +290,8 @@ export default function PayHomeScreen() {
     }
     if (user?.needsOnboarding) {
       Alert.alert(
-        "Inscription",
-        "Terminez la création de votre compte (PIN et profil) avant de payer.",
+        t("pay.onboardingRequiredTitle"),
+        t("pay.onboardingRequiredMessage"),
       );
       return;
     }
@@ -312,10 +315,10 @@ export default function PayHomeScreen() {
       const min = Math.floor(sec / 60);
       const s = sec % 60;
       Alert.alert(
-        "Paiement sécurisé",
+        t("pay.securePaymentTitle"),
         min > 0
-          ? `Réessayez dans ${min} min ${s} s.`
-          : `Réessayez dans ${s} s.`,
+          ? t("pay.retryInMinSec", { min, sec: s })
+          : t("pay.retryInSec", { sec: s }),
       );
       return;
     }
@@ -388,15 +391,15 @@ export default function PayHomeScreen() {
           setPayPinLockoutUntil(Date.now() + PAY_PIN_LOCKOUT_MS);
           const lockMin = Math.max(1, Math.round(PAY_PIN_LOCKOUT_MS / 60000));
           Alert.alert(
-            "Sécurité",
-            `Trop de codes PIN erronés. Nouvelle tentative possible dans environ ${lockMin} minute${lockMin > 1 ? "s" : ""}.`,
+            t("pay.securityTitle"),
+            t("pay.lockoutMinutes", { count: lockMin }),
           );
         } else {
           const left = PAY_PIN_MAX_ATTEMPTS - fails;
           setPayPinErrorLine(
             left === 1
-              ? "Code PIN incorrect. Dernière tentative autorisée."
-              : `Code PIN incorrect. ${left} tentative${left > 1 ? "s" : ""} restante${left > 1 ? "s" : ""}.`,
+              ? t("pay.pinWrongLast")
+              : t("pay.pinWrongRemaining", { count: left }),
           );
           schedulePayPinFieldFocus({ afterWrongPin: true });
         }
@@ -413,36 +416,42 @@ export default function PayHomeScreen() {
         setPayPinErrorLine(null);
         setPayPinSelection(undefined);
         Alert.alert(
-          "Paiement",
-          e instanceof ApiError ? e.message : "Une erreur est survenue.",
+          t("pay.paymentTitle"),
+          e instanceof ApiError ? e.message : t("common.genericError"),
         );
       }
     }
-  }, [payPinDraft, token, payPendingAmount, refreshUser, schedulePayPinFieldFocus]);
+  }, [payPinDraft, token, payPendingAmount, refreshUser, schedulePayPinFieldFocus, t]);
+
+  const payAmountFcfa = parseAmountFcfa(amount);
+  const canPayAmount = payAmountFcfa != null;
 
   const payAmountDisplayText =
-    amount === "" ? "0" : formatFcfa(parseInt(amount, 10) || 0);
+    amount === "" ? "0" : formatFcfa(payAmountFcfa ?? 0);
 
   if (paymentStatus === 'SUCCESS') {
     return (
       <View style={styles.successContainer}>
         <Text style={styles.successEmoji}>✅</Text>
-        <Text style={styles.successText}>Payé !</Text>
+        <Text style={styles.successText}>{t("pay.paid")}</Text>
         <Text style={styles.successSub}>
-          {formatFcfa(parseInt(amount, 10) || 0)} FCFA versé à {DEMO_DRIVER.name}
+          {t("pay.paidTo", {
+            amount: formatFcfa(parseInt(amount, 10) || 0),
+            name: DEMO_DRIVER.name,
+          })}
         </Text>
         <Pressable
           style={styles.resetButton}
           onPress={() => setPaymentStatus("IDLE")}
         >
-          <Text style={styles.resetButtonText}>Nouvelle transaction</Text>
+          <Text style={styles.resetButtonText}>{t("pay.newTransaction")}</Text>
         </Pressable>
       </View>
     );
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "#ffffff" }}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       <View style={{ flex: 1 }}>
         <Stack.Screen options={{ headerShown: false }} />
           <SafeAreaView
@@ -480,7 +489,7 @@ export default function PayHomeScreen() {
                     <Text style={styles.balanceAmountNum}>
                       {formatFcfa(balance)}
                     </Text>
-                    <Text style={styles.balanceCurrency}>FCFA</Text>
+                    <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
                     <Pressable
                       style={({ pressed }) => [
                         styles.balanceAddBtn,
@@ -495,28 +504,30 @@ export default function PayHomeScreen() {
                         router.push("/deposit");
                       }}
                       accessibilityRole="button"
-                      accessibilityLabel="Recharger le compte"
+                      accessibilityLabel={t("common.topUpAccount")}
                       hitSlop={10}
                     >
-                      <Ionicons name="add" size={21} color={ACCENT} />
+                      <Ionicons name="add" size={21} color={colors.accent} />
                     </Pressable>
                   </View>
                 </View>
 
                 <View style={styles.inputSection}>
-                  <Text style={styles.inputLabel}>Entrer montant à payer</Text>
+                  <Text style={styles.inputLabel}>{t("pay.amountLabel")}</Text>
                   <View style={styles.inputWrapper}>
                     <View style={styles.amountDisplayWrap}>
                       <Text
                         style={styles.amountDisplay}
                         numberOfLines={1}
                         accessibilityRole="text"
-                        accessibilityLabel={`Montant ${payAmountDisplayText} F C F A`}
+                        accessibilityLabel={t("a11y.amountLabel", {
+                          amount: payAmountDisplayText,
+                        })}
                       >
                         {payAmountDisplayText}
                       </Text>
                     </View>
-                    <Text style={styles.currency}>FCFA</Text>
+                    <Text style={styles.currency}>{t("common.fcfa")}</Text>
                   </View>
                 </View>
               </View>
@@ -536,15 +547,15 @@ export default function PayHomeScreen() {
                     style={({ pressed }) => [
                       styles.payButton,
                       (pressed || paymentStatus === 'SENDING') && styles.payButtonPressed,
-                      (!amount || paymentStatus === 'SENDING') && styles.payButtonDisabled,
+                      (!canPayAmount || paymentStatus === 'SENDING') && styles.payButtonDisabled,
                     ]}
                     onPress={handlePay}
-                    disabled={!amount || paymentStatus === 'SENDING'}
+                    disabled={!canPayAmount || paymentStatus === 'SENDING'}
                   >
                     {paymentStatus === 'SENDING' ? (
-                      <ActivityIndicator color="#ffffff" size="small" />
+                      <ActivityIndicator color={colors.accentOn} size="small" />
                     ) : (
-                      <Text style={styles.payButtonText}>Payer maintenant</Text>
+                      <Text style={styles.payButtonText}>{t("pay.payNow")}</Text>
                     )}
                   </Pressable>
                 </View>
@@ -570,14 +581,14 @@ export default function PayHomeScreen() {
               <Pressable
                 style={styles.connexionModalBackdrop}
                 onPress={() => setConnexionPromptKind(null)}
-                accessibilityLabel="Fermer"
+                accessibilityLabel={t("common.close")}
               />
               <View style={styles.connexionModalCard}>
-                <Text style={styles.connexionModalTitle}>Connexion</Text>
+                <Text style={styles.connexionModalTitle}>{t("common.connection")}</Text>
                 <Text style={styles.connexionModalMessage}>
                   {connexionPromptKind === "recharge"
-                    ? "Créez un compte ou connectez-vous pour recharger votre solde."
-                    : "Créez un compte ou connectez-vous pour payer."}
+                    ? t("pay.signInToTopUp")
+                    : t("pay.signInToPay")}
                 </Text>
                 <View style={styles.connexionModalActions}>
                   <Pressable
@@ -587,9 +598,9 @@ export default function PayHomeScreen() {
                     ]}
                     onPress={() => setConnexionPromptKind(null)}
                     accessibilityRole="button"
-                    accessibilityLabel="Annuler"
+                    accessibilityLabel={t("common.cancel")}
                   >
-                    <Text style={styles.connexionModalBtnAnnuler}>Annuler</Text>
+                    <Text style={styles.connexionModalBtnAnnuler}>{t("common.cancel")}</Text>
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [
@@ -601,10 +612,10 @@ export default function PayHomeScreen() {
                       setRegisterInviteVisible(true);
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel="Connexion rapide"
+                    accessibilityLabel={t("common.quickSignIn")}
                   >
                     <Text style={styles.connexionModalBtnConnexion}>
-                      Connexion rapide
+                      {t("common.quickSignIn")}
                     </Text>
                   </Pressable>
                 </View>
@@ -622,15 +633,17 @@ export default function PayHomeScreen() {
               <Pressable
                 style={styles.connexionModalBackdrop}
                 onPress={() => setInsufficientBalanceVisible(false)}
-                accessibilityLabel="Fermer"
+                accessibilityLabel={t("common.close")}
               />
               <View style={styles.connexionModalCard}>
-                <Text style={styles.connexionModalTitle}>Solde insuffisant</Text>
+                <Text style={styles.connexionModalTitle}>
+                  {t("pay.insufficientBalanceTitle")}
+                </Text>
                 <Text style={styles.connexionModalMessage}>
-                  Votre solde ({formatFcfa(balance)} FCFA) ne couvre pas ce
-                  paiement de{" "}
-                  {formatFcfa(parseInt(amount, 10) || 0)} FCFA. Rechargez votre
-                  compte pour continuer.
+                  {t("pay.insufficientBalanceMessage", {
+                    balance: formatFcfa(balance),
+                    amount: formatFcfa(parseInt(amount, 10) || 0),
+                  })}
                 </Text>
                 <View style={styles.connexionModalActions}>
                   <Pressable
@@ -640,9 +653,9 @@ export default function PayHomeScreen() {
                     ]}
                     onPress={() => setInsufficientBalanceVisible(false)}
                     accessibilityRole="button"
-                    accessibilityLabel="Annuler"
+                    accessibilityLabel={t("common.cancel")}
                   >
-                    <Text style={styles.connexionModalBtnAnnuler}>Annuler</Text>
+                    <Text style={styles.connexionModalBtnAnnuler}>{t("common.cancel")}</Text>
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [
@@ -654,10 +667,10 @@ export default function PayHomeScreen() {
                       router.push("/deposit");
                     }}
                     accessibilityRole="button"
-                    accessibilityLabel="Recharger le compte"
+                    accessibilityLabel={t("common.topUpAccount")}
                   >
                     <Text style={styles.connexionModalBtnConnexion}>
-                      Recharger
+                      {t("common.topUp")}
                     </Text>
                   </Pressable>
                 </View>
@@ -688,13 +701,15 @@ export default function PayHomeScreen() {
                   style={styles.payPinModalBackdrop}
                   onPress={cancelPayPin}
                   disabled={paymentStatus === "SENDING"}
-                  accessibilityLabel="Fermer"
+                  accessibilityLabel={t("common.close")}
                 />
                 <View style={styles.payPinModalCard}>
-                  <Text style={styles.payPinModalTitle}>Code PIN</Text>
+                  <Text style={styles.payPinModalTitle}>{t("pay.pinTitle")}</Text>
                   <Text style={styles.payPinModalSub}>
-                    Saisissez votre PIN à 4 chiffres pour confirmer le paiement de{" "}
-                    {formatFcfa(payPendingAmount)} FCFA à {DEMO_DRIVER.name}.
+                    {t("pay.pinConfirmPayment", {
+                      amount: formatFcfa(payPendingAmount),
+                      name: DEMO_DRIVER.name,
+                    })}
                   </Text>
                   {payPinErrorLine ? (
                     <Text
@@ -710,8 +725,8 @@ export default function PayHomeScreen() {
                       styles.payPinModalInput,
                       payPinErrorLine ? styles.payPinModalInputError : null,
                     ]}
-                    placeholder="• • • •"
-                    placeholderTextColor="#CCC"
+                    placeholder={t("common.pinPlaceholder")}
+                    placeholderTextColor={colors.placeholder}
                     keyboardType="number-pad"
                     secureTextEntry
                     maxLength={ONBOARDING_PIN_LEN}
@@ -738,7 +753,7 @@ export default function PayHomeScreen() {
                       onPress={cancelPayPin}
                       disabled={paymentStatus === "SENDING"}
                     >
-                      <Text style={styles.payPinModalCancelText}>Annuler</Text>
+                      <Text style={styles.payPinModalCancelText}>{t("common.cancel")}</Text>
                     </Pressable>
                     <Pressable
                       style={({ pressed }) => [
@@ -758,9 +773,9 @@ export default function PayHomeScreen() {
                       onPress={() => void confirmPayWithPin()}
                     >
                       {paymentStatus === "SENDING" ? (
-                        <ActivityIndicator color="#fff" size="small" />
+                        <ActivityIndicator color={colors.accentOn} size="small" />
                       ) : (
-                        <Text style={styles.payPinModalOkText}>Payer</Text>
+                        <Text style={styles.payPinModalOkText}>{t("common.pay")}</Text>
                       )}
                     </Pressable>
                   </View>
@@ -772,369 +787,3 @@ export default function PayHomeScreen() {
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-  },
-  payScreenBody: {
-    flex: 1,
-    flexDirection: "column",
-    paddingHorizontal: 22,
-    paddingBottom: 8,
-  },
-  payContentSpacer: {
-    flex: 1,
-    minHeight: 0,
-  },
-  payTopBlock: {
-    width: "100%",
-    paddingTop: 28,
-  },
-  payBottomBlock: {
-    width: "100%",
-    flexShrink: 0,
-  },
-  topBarRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    width: "100%",
-    marginTop: 0,
-    marginBottom: 20,
-    gap: 8,
-  },
-  balanceValueGroup: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexShrink: 0,
-    flexWrap: "wrap",
-    justifyContent: "flex-end",
-  },
-  balanceAmountNum: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: ACCENT,
-  },
-  balanceCurrency: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#AAA",
-    marginLeft: 5,
-  },
-  balanceAddBtn: {
-    marginLeft: 6,
-    marginTop: 0,
-    padding: 2,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  balanceAddBtnPressed: {
-    opacity: 0.55,
-    transform: [{ scale: 0.94 }],
-  },
-  connexionModalRoot: {
-    flex: 1,
-    justifyContent: "center",
-  },
-  connexionModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-  connexionModalCard: {
-    marginHorizontal: 28,
-    backgroundColor: "#fff",
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingTop: 20,
-    paddingBottom: 16,
-    zIndex: 1,
-  },
-  connexionModalTitle: {
-    fontSize: 17,
-    fontWeight: "800",
-    color: "#222",
-    marginBottom: 8,
-  },
-  connexionModalMessage: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-  },
-  connexionModalActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 18,
-    paddingTop: 14,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: "#E8E8E8",
-  },
-  connexionModalBtnHit: {
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-    minWidth: 44,
-    minHeight: 36,
-    justifyContent: "center",
-  },
-  connexionModalBtnPressed: {
-    opacity: 0.65,
-  },
-  connexionModalBtnAnnuler: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#888",
-  },
-  connexionModalBtnConnexion: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: ACCENT,
-  },
-  payPinModalKeyboardWrap: {
-    flex: 1,
-  },
-  payPinModalRoot: {
-    flex: 1,
-    justifyContent: "flex-start",
-  },
-  payPinModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.5)",
-  },
-  payPinModalCard: {
-    marginHorizontal: 24,
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 22,
-    zIndex: 1,
-  },
-  payPinModalTitle: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#222",
-    marginBottom: 8,
-  },
-  payPinModalSub: {
-    fontSize: 14,
-    color: "#666",
-    lineHeight: 20,
-    marginBottom: 10,
-  },
-  payPinModalError: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#C62828",
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  payPinModalInput: {
-    height: 52,
-    fontSize: 22,
-    fontWeight: "700",
-    letterSpacing: 8,
-    textAlign: "center",
-    color: "#222",
-    backgroundColor: "#F8F8F8",
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    marginBottom: 20,
-    ...Platform.select({
-      android: {
-        includeFontPadding: false,
-        textAlignVertical: "center",
-      },
-      default: {},
-    }),
-  },
-  payPinModalInputError: {
-    borderColor: "rgba(198, 40, 40, 0.45)",
-    backgroundColor: "#FFF5F5",
-  },
-  payPinModalActions: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  },
-  payPinModalCancelBtn: {
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-  },
-  payPinModalCancelText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: "#666",
-  },
-  payPinModalOkBtn: {
-    flex: 1,
-    backgroundColor: ACCENT,
-    paddingVertical: 14,
-    borderRadius: 24,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 48,
-  },
-  payPinModalOkBtnDisabled: {
-    backgroundColor: "#CCC",
-  },
-  payPinModalOkBtnPressed: {
-    opacity: 0.92,
-  },
-  payPinModalOkText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  recipientRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-    minWidth: 0,
-    marginRight: 4,
-  },
-  recipientThumb: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E0E0E0",
-    backgroundColor: "#F5F5F5",
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 12,
-  },
-  recipientThumbImage: {
-    width: 52,
-    height: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E0E0E0",
-    marginRight: 12,
-  },
-  recipientThumbLetter: {
-    fontSize: 20,
-    fontWeight: "800",
-    color: ACCENT,
-  },
-  recipientTexts: {
-    flex: 1,
-    minWidth: 0,
-    justifyContent: "center",
-    minHeight: 52,
-    paddingTop: 0,
-  },
-  driverName: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#333",
-  },
-  driverPhone: {
-    fontSize: 11,
-    color: "#888",
-  },
-  inputSection: {
-    marginBottom: 0,
-  },
-  inputLabel: {
-    fontSize: 13,
-    color: "#888",
-    fontWeight: "600",
-    marginBottom: 10,
-    letterSpacing: 0.8,
-    textAlign: 'center'
-  },
-  inputWrapper: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    width: "100%",
-    paddingHorizontal: 18,
-    paddingVertical: 4,
-    minHeight: 80,
-  },
-  amountDisplayWrap: {
-    minHeight: 72,
-    minWidth: 0,
-    flexShrink: 1,
-    justifyContent: "center",
-  },
-  amountDisplay: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#222",
-    fontVariant: ["tabular-nums"],
-    ...Platform.select({
-      android: { textAlignVertical: "center" as const },
-      default: {},
-    }),
-  },
-  currency: {
-    fontSize: 19,
-    fontWeight: "800",
-    color: "#AAA",
-    marginLeft: 10,
-  },
-  actionSection: {
-    marginTop: 18,
-  },
-  payButton: {
-    backgroundColor: ACCENT,
-    height: 60,
-    borderRadius: 30,
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-  },
-  payButtonPressed: {
-    backgroundColor: "#4bb004",
-    transform: [{ scale: 0.98 }],
-  },
-  payButtonDisabled: {
-    backgroundColor: "#CCCCCC",
-    elevation: 0,
-  },
-  payButtonText: {
-    color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "bold",
-    letterSpacing: 0.2,
-  },
-  successContainer: {
-    flex: 1,
-    backgroundColor: ACCENT,
-    justifyContent: "center",
-    alignItems: "center",
-    padding: 18,
-  },
-  successEmoji: { fontSize: 76 },
-  successText: {
-    color: "#ffffff",
-    fontSize: 32,
-    fontWeight: "900",
-    marginTop: 8,
-  },
-  successSub: {
-    color: "#ffffff",
-    fontSize: 14,
-    opacity: 0.9,
-    marginTop: 8,
-    textAlign: "center",
-  },
-  resetButton: {
-    marginTop: 44,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 16
-  },
-  resetButtonText: {
-    color: "#ffffff",
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-});

@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Blyp API — phase 3 (health + auth + wallet + webhooks PawaPay)
+
+Parameters:
+  Stage:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Nom du stage HTTP API (dev / staging / prod)
+
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    Default: dev-insecure-change-me
+    Description: Secret HS256 pour les JWT (Secrets Manager en prod cible)
+
+  OtpPepper:
+    Type: String
+    NoEcho: true
+    Default: pepper
+    Description: Pepper pour hash OTP
+
+  TransactionPinPepper:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Pepper PIN transaction (vide = même valeur que OtpPepper)
+
+  SmsProvider:
+    Type: String
+    Default: ""
+    Description: obitsms | africastalking | webhook | twilio (optionnel)
+
+  ObitSmsKeyApi:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+  ObitSmsSender:
+    Type: String
+    Default: ""
+
+  AndroidSmsOtpAppHash:
+    Type: String
+    Default: ""
+    Description: Hash SMS Retriever Android (11 car.)
+
+  DepositMode:
+    Type: String
+    Default: sync
+    AllowedValues:
+      - sync
+      - async
+    Description: sync = crédit interne immédiat ; async = PawaPay Mobile Money
+
+  PawapayApiToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+  PawapayWebhookSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+
+Conditions:
+  IsProd: !Equals [!Ref Stage, prod]
+  HasPinPepper: !Not [!Equals [!Ref TransactionPinPepper, ""]]
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures:
+      - arm64
+    Timeout: 10
+    MemorySize: 256
+    Tags:
+      Project: BlypPay
+      Environment: !Ref Stage
+    Environment:
+      Variables:
+        STAGE: !Ref Stage
+        TABLE_NAME: !Ref BlypTable
+        JWT_SECRET: !Ref JwtSecret
+        OTP_PEPPER: !Ref OtpPepper
+        NODE_ENV: !If [IsProd, production, development]
+
+Resources:
+  BlypApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+          - OPTIONS
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - Idempotency-Key
+          - X-Request-Id
+
+  BlypTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub "blyp-${Stage}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: BlypPay
+        - Key: Environment
+          Value: !Ref Stage
+
+  HealthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-health-${Stage}"
+      Description: GET /health — vérifie Lambda + DynamoDB
+      CodeUri: ../aws/
+      Handler: handlers/health/index.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /health
+            Method: GET
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-auth-${Stage}"
+      Description: Auth OTP, JWT, onboarding, GET /me
+      CodeUri: ../aws/
+      Handler: handlers/auth/index.handler
+      Timeout: 15
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JwtSecret
+          OTP_PEPPER: !Ref OtpPepper
+          TRANSACTION_PIN_PEPPER: !If
+            - HasPinPepper
+            - !Ref TransactionPinPepper
+            - !Ref OtpPepper
+          SMS_PROVIDER: !Ref SmsProvider
+          OBIT_SMS_KEY_API: !Ref ObitSmsKeyApi
+          OBIT_SMS_SENDER: !Ref ObitSmsSender
+          ANDROID_SMS_OTP_APP_HASH: !Ref AndroidSmsOtpAppHash
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        RequestOtp:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/request-otp
+            Method: POST
+        VerifyOtp:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/verify-otp
+            Method: POST
+        SetPin:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/onboarding/transaction-pin
+            Method: POST
+        SetProfile:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/onboarding/profile
+            Method: POST
+        Me:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me
+            Method: GET
+
+  WalletFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-wallet-${Stage}"
+      Description: Wallet dépôts, paiements, historique
+      CodeUri: ../aws/
+      Handler: handlers/wallet/index.handler
+      Timeout: 20
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JwtSecret
+          OTP_PEPPER: !Ref OtpPepper
+          TRANSACTION_PIN_PEPPER: !If
+            - HasPinPepper
+            - !Ref TransactionPinPepper
+            - !Ref OtpPepper
+          DEPOSIT_MODE: !Ref DepositMode
+          PAWAPAY_API_TOKEN: !Ref PawapayApiToken
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        WalletDeposit:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /wallet/deposit
+            Method: POST
+        WalletDepositStatus:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /wallet/deposits/{id}
+            Method: GET
+        PaymentPay:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /payments/pay
+            Method: POST
+        Transactions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /transactions
+            Method: GET
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-webhook-${Stage}"
+      Description: Webhooks PawaPay (dépôts async)
+      CodeUri: ../aws/
+      Handler: handlers/webhook/index.handler
+      Timeout: 15
+      Environment:
+        Variables:
+          DEPOSIT_MODE: !Ref DepositMode
+          PAWAPAY_WEBHOOK_SECRET: !Ref PawapayWebhookSecret
+          PAWAPAY_WEBHOOK_VERIFY: none
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        PawapayDeposit:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /webhooks/pawapay/deposit
+            Method: POST
+
+Outputs:
+  ApiUrl:
+    Description: URL de base de l'API (EXPO_PUBLIC_API_URL)
+    Value: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+    Export:
+      Name: !Sub "blyp-api-url-${Stage}"
+
+  TableName:
+    Description: Table DynamoDB single-table
+    Value: !Ref BlypTable
+    Export:
+      Name: !Sub "blyp-table-name-${Stage}"
+
+  HealthFunctionArn:
+    Description: ARN de la Lambda health
+    Value: !GetAtt HealthFunction.Arn
+
+  AuthFunctionArn:
+    Description: ARN de la Lambda auth
+    Value: !GetAtt AuthFunction.Arn
+
+  WalletFunctionArn:
+    Description: ARN de la Lambda wallet
+    Value: !GetAtt WalletFunction.Arn
+
+  WebhookFunctionArn:
+    Description: ARN de la Lambda webhooks
+    Value: !GetAtt WebhookFunction.Arn

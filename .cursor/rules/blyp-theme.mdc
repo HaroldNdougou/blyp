@@ -1,0 +1,51 @@
+---
+description: Thème Blyp — clair/sombre système, tokens ThemeColors (pas de couleurs en dur)
+alwaysApply: true
+---
+
+# Blyp — thème clair / sombre
+
+## Comportement
+
+- Suit le **réglage système** du téléphone (`useColorScheme` via `ThemeProvider`).
+- Pas de toggle manuel dans l’app pour l’instant.
+- **Accent Blyp** (`#5dc705`) : uniquement dans `lib/theme/colors.ts`, jamais recopié en dur ailleurs.
+
+## Stack (déjà en place)
+
+- Tokens : `lib/theme/colors.ts` → `ThemeColors`, `lightColors`, `darkColors`.
+- Contexte : `contexts/ThemeContext.tsx` → `useTheme()` (`colors`, `isDark`, `statusBarStyle`).
+- Racine : `app/_layout.tsx` — `ThemeProvider`, fond `colors.background`, `StatusBar` dynamique.
+- Helper styles : `hooks/useThemedStyles.ts` ou factory `createXStyles(c: ThemeColors)`.
+
+## À faire pour chaque écran, modal ou composant UI
+
+1. **`const { colors } = useTheme()`** (ou `useThemedStyles`).
+2. Styles via **`createXStyles(colors)`** + `useMemo`, ou fichier `*Styles.ts` dédié (ex. `payHomeStyles.ts`).
+3. Couleurs JSX : **`colors.text`**, `colors.accent`, `colors.placeholder`, etc. — pas de `#FFFFFF`, `#333`, `#5dc705` dans `app/` / `components/`.
+4. Icônes / `ActivityIndicator` : couleur depuis `colors.*`, pas en dur.
+5. Modales / feuilles : `colors.modal`, `colors.overlay`, `colors.borderLight`.
+6. **Token manquant** → l’ajouter dans `ThemeColors` + `lightColors` + `darkColors` (les deux modes), puis l’utiliser.
+
+## Interdit
+
+- `StyleSheet.create` avec hex/rgb figés dans les composants (sauf `transparent`).
+- Dupliquer l’ancien pattern `const ACCENT = "#5dc705"` ou `backgroundColor: "#fff"`.
+- Ignorer le thème sur un nouvel écran « temporaire ».
+
+## Hors scope (sauf demande explicite)
+
+- Skins accent (rose, gold, événements).
+- DAX / infra — voir `blyp-architecture-cible.mdc`.
+
+## Exemple
+
+```tsx
+const { colors } = useTheme();
+const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
+
+<View style={{ backgroundColor: colors.background }}>
+  <Text style={styles.title}>…</Text>
+  <Ionicons name="add" size={21} color={colors.accent} />
+</View>
+```

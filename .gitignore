@@ -43,3 +43,12 @@ app-example
 # generated native folders
 /ios
 /android
+
+# AWS SAM
+.aws-sam/
+infra/.aws-sam/
+infra/samconfig.toml
+aws/node_modules/
+
+# local scratch / secrets dumps
+.tmp-env-pairs.txt

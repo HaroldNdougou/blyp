@@ -1,4 +1,9 @@
+import "@/lib/i18n";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { NetworkProvider } from "@/contexts/NetworkContext";
+import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
+import { NetworkReconnectSync } from "@/components/network/NetworkReconnectSync";
+import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -71,35 +76,49 @@ function SplashGate({ children }: { children: ReactNode }) {
   );
 }
 
+function RootShell() {
+  const { colors, statusBarStyle } = useTheme();
+
+  return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <StatusBar style={statusBarStyle} translucent />
+      <OfflineBanner />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="register"
+          options={{
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
+        <Stack.Screen
+          name="deposit"
+          options={{
+            presentation: "transparentModal",
+            animation: "none",
+            contentStyle: { backgroundColor: "transparent" },
+          }}
+        />
+      </Stack>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <SplashGate>
-            <View style={{ flex: 1, backgroundColor: "#ffffff" }}>
-              <StatusBar style="dark" translucent />
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="(tabs)" />
-                <Stack.Screen
-                  name="register"
-                  options={{
-                    presentation: "modal",
-                    animation: "slide_from_bottom",
-                  }}
-                />
-                <Stack.Screen
-                  name="deposit"
-                  options={{
-                    presentation: "transparentModal",
-                    animation: "none",
-                    contentStyle: { backgroundColor: "transparent" },
-                  }}
-                />
-              </Stack>
-            </View>
-          </SplashGate>
-        </AuthProvider>
+        <ThemeProvider>
+          <NetworkProvider>
+            <AuthProvider>
+              <NetworkReconnectSync />
+              <SplashGate>
+                <RootShell />
+              </SplashGate>
+            </AuthProvider>
+          </NetworkProvider>
+        </ThemeProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
