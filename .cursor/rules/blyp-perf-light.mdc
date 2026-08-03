@@ -1,0 +1,68 @@
+---
+description: Blyp — ULTRA AGRESSIF vitesse/latence/réactivité (cœur business) — CHAQUE feature
+alwaysApply: true
+---
+
+# Blyp — vitesse & réactivité (CŒUR DU BUSINESS)
+
+La **valeur ajoutée** du produit = app **plus rapide / plus réactive** que les wallets classiques.  
+Référence : **WhatsApp** (feedback au clic, tout déjà en mémoire, réseau invisible).
+
+## Posture obligatoire (agents & code)
+
+- **ULTRA AGRESSIF** sur vitesse, latence, réactivité — **zéro concession**.
+- En cas de doute entre « code simple » et « clic instantané » → **toujours le clic instantané**.
+- **Mémoire RAM + préchargement agressif** : autorisés et **souhaités** (écrans, listes, modules, polices hors splash).
+- Ne jamais dire « on verra plus tard » / « assez bien pour l’instant » sur un lag perceptible.
+- Chaque nouveau lag = **bug bloquant**, pas un polish.
+
+## Splash = seule frontière
+
+- Splash / `hideAsync` : **uniquement** auth ready (+ shell layout en release).
+- **Jamais** bloquer le splash sur : polices, Ionicons, réseau, SQLite, lazy chunks, prefetch.
+- **Dès que Pay a peint** (après `InteractionManager` / 1er frame) : **flood prefetch** — Historique, Profil, dépôt, register overlay, hydrate cache, sync fond, `loadFont` si besoin. Pas de délais « prudents » de 1 s+.
+
+## Discipline mémoire / cache (non négociable — modèle WhatsApp)
+
+1. **Tout déjà en mémoire** dès que possible après le 1er frame Pay : modules écrans (`eagerRoutes`), snapshot tx RAM, **lignes UI préformatées** (`lib/history/historyUiCache.ts`).
+2. **Listes cache-first** — au clic : afficher la **dernière** liste RAM tout de suite ; sync réseau **après** la transition (`InteractionManager`).
+3. **Zéro travail lourd au focus** — si le snapshot RAM est la même référence : **aucun** `setState` / `toRows` / format. Interdit de bloquer l’onglet sur hydrate/réseau.
+4. **Onglets en mémoire** — `detachInactiveScreens={false}` ; coquilles si chunk pas prêt (`HistoryGate`, `DepositOpenChrome`).
+5. **Chemin Pay critique** — pas d’Ionicons / gros imports sync ; glyphes Views ; sync/offline en `import()`.
+
+## Règles clic
+
+1. **Clic = UI immédiate** — cache RAM/SQLite d’abord ; réseau confirme après.
+2. Prefetch modules **dès le parse** (`lib/perf/eagerRoutes.ts`) + warm données (`aggressiveWarm`).
+3. FlashList + rows `memo` ; skip setState si snapshot inchangé.
+
+## Checklist (chaque feature)
+
+1. Cold start Pay intact (splash sacré).
+2. Après 1er frame → prefetch agressif de tout le parcours probable.
+3. Cache-first + delta sync (`lib/sync/*`, SQLite).
+4. Realtime-like (`RealtimeSync`) sans voler le 1er frame.
+5. Offline queue ; **jamais** PIN en clair hors SecureStore.
+6. Scrollbars off ; images `expo-image` + CDN.
+7. `__DEV__` : `lib/perf/marks.ts` sur ouvertures critiques.
+8. Thème + i18n (`blyp-theme`, `blyp-i18n`).
+
+## Interdit
+
+- Bloquer splash pour fonts / réseau / SQLite / « éviter un pop d’icône ».
+- Ionicons sur la **tab bar** (`TabBarIcons` Views).
+- Refetch full à chaque focus si delta + cache suffisent.
+- Accepter un onglet / modal / keypad « un peu lent ».
+- Stocker PIN / secrets dans SQLite / AsyncStorage / logs.
+- Animations lourdes qui ajoutent de la latence perçue.
+
+## Stack cache-first (référence)
+
+1. Delta sync — `lib/sync/transactionsSync.ts`
+2. RealtimeSync — foreground / reconnect / poll
+3. SQLite + `transactionsCache` (RAM)
+4. Offline — `lib/offline/*`
+5. Prefetch — `preloadHistory` + warm routes tabs/deposit/register
+6. FlashList, expo-image, perf marks
+
+Complète `blyp-architecture-cible.mdc`. Ici = discipline **quotidienne** app.

@@ -1,8 +1,8 @@
-import { useTranslation } from "react-i18next";
+import { BackspaceGlyph } from "@/components/pay/PayGlyphs";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { ThemeColors } from "@/lib/theme/colors";
-import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 /** Délai avant rafale ; intervalle entre chaque effacement (ms). */
@@ -66,7 +66,7 @@ function KeypadBackspaceKey({
       accessibilityRole="button"
       accessibilityLabel={backspaceLabel}
     >
-      <Ionicons name="backspace-outline" size={26} color={iconColor} />
+      <BackspaceGlyph color={iconColor} />
     </Pressable>
   );
 }

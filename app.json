@@ -24,6 +24,7 @@
       },
       "backgroundColor": "#ffffff",
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.haroldndougou.blyp",
       "splash": {
         "image": "./assets/images/splash-blank.png",
@@ -34,6 +35,7 @@
     "plugins": [
       "expo-localization",
       "expo-secure-store",
+      "expo-sqlite",
       "expo-router",
       [
         "expo-splash-screen",

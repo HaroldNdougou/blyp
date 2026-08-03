@@ -10,6 +10,7 @@ alwaysApply: true
 - App **ultra rapide** : affichage **instantané au clic** (cache local + UI optimiste) ; le réseau confirme après.
 - Cible : **dizaines de millions** d’utilisateurs africains, **petits paiements quotidiens**, sans ralentir, crasher ni doubler les opérations.
 - Référence d’expérience : WhatsApp / TikTok (réactivité perçue), pas Railway pour la prod à l’échelle.
+- **Cœur business** : vitesse / latence / réactivité ULTRA agressives — voir `blyp-perf-light.mdc` (préchargement + mémoire OK, zéro concession lag).
 
 ## Stack cible (greenfield AWS)
 

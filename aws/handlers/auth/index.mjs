@@ -10,20 +10,23 @@ import {
   tooManyRequests,
   unauthorized,
 } from "../../lib/http.mjs";
-import { signAccessToken, verifyAccessToken } from "../../lib/jwt.mjs";
+import { verifyAccessToken } from "../../lib/jwt.mjs";
 import {
-  generateOtpCode,
   hashOtp,
   otpVerifyCacheKey,
+  TEMP_DEV_OTP_CODE,
 } from "../../lib/otp.mjs";
 import { normalizeCameroonPhone } from "../../lib/phone.mjs";
 import {
   getTransactionPinPepper,
   hashTransactionPin,
 } from "../../lib/pin.mjs";
+import {
+  issueAuthSession,
+  rotateAuthSession,
+} from "../../lib/refreshTokens.mjs";
 import { deliverOtpSms } from "../../lib/sms.mjs";
 import {
-  clearOtpCooldown,
   deleteOtpChallenge,
   findOrCreateUserByPhoneSafe,
   getOtpChallenge,
@@ -73,30 +76,24 @@ async function handleRequestOtp(body) {
     );
   }
 
-  const code = generateOtpCode();
+  /** TEMP : challenge toujours sur 1234 pour pouvoir se connecter sans SMS. */
+  const code = TEMP_DEV_OTP_CODE;
   const codeHash = hashOtp(phone, code);
   await putOtpChallenge(phone, codeHash);
+  await setOtpCooldown(phone);
 
-  const sent = await deliverOtpSms(phone, code);
-  if (!sent.ok) {
-    await deleteOtpChallenge(phone);
-    await clearOtpCooldown(phone);
-    if (sent.reason === "sms_not_configured") {
-      return serviceUnavailable(
-        "Envoi SMS non configuré côté serveur. Configure OBIT_SMS_* ou un autre fournisseur SMS sur la Lambda auth.",
+  /** SMS hors chemin critique — ne pas bloquer la réponse HTTP (Obit/Orange lent). */
+  void deliverOtpSms(phone, code).then((sent) => {
+    if (!sent.ok) {
+      console.warn(
+        "[auth/request-otp] SMS échoué — TEMP_DEV_OTP_CODE actif, challenge conservé",
+        sent.reason,
       );
     }
-    return badGateway(
-      "Impossible d’envoyer le SMS pour le moment. Réessaie dans un instant.",
-    );
-  }
-
-  await setOtpCooldown(phone);
-  try {
-    await logOtpSend(phone);
-  } catch (err) {
+  });
+  void logOtpSend(phone).catch((err) => {
     console.error("[auth/request-otp] logOtpSend", err);
-  }
+  });
 
   return ok({ ok: true });
 }
@@ -104,7 +101,8 @@ async function handleRequestOtp(body) {
 async function handleVerifyOtp(body) {
   const phone = normalizeCameroonPhone(body?.phone);
   const code = String(body?.code ?? "").replace(/\D/g, "");
-  if (!phone || code.length !== 6) {
+  const isTempDevOtp = code === TEMP_DEV_OTP_CODE;
+  if (!phone || (!isTempDevOtp && code.length !== 6) || (isTempDevOtp && code.length !== 4)) {
     return badRequest("Téléphone ou code invalide");
   }
 
@@ -123,10 +121,30 @@ async function handleVerifyOtp(body) {
 
   await deleteOtpChallenge(phone);
   const { userId, user, isNewAccount } = await findOrCreateUserByPhoneSafe(phone);
-  const token = await signAccessToken(userId);
-  const payload = { token, user, isNewAccount };
+  const session = await issueAuthSession(userId);
+  const payload = {
+    token: session.token,
+    refreshToken: session.refreshToken,
+    user,
+    isNewAccount,
+  };
   await putOtpVerifyCache(cacheKey, payload);
   return ok(payload);
+}
+
+async function handleRefresh(body) {
+  const refreshToken = String(body?.refreshToken ?? "").trim();
+  if (!refreshToken) {
+    return unauthorized("Session expirée. Reconnectez-vous.");
+  }
+  const session = await rotateAuthSession(refreshToken);
+  if (!session) {
+    return unauthorized("Session expirée. Reconnectez-vous.");
+  }
+  return ok({
+    token: session.token,
+    refreshToken: session.refreshToken,
+  });
 }
 
 async function handleSetPin(userId, body) {
@@ -195,7 +213,12 @@ async function handleMe(userId) {
   return ok(user);
 }
 
-export async function handler(event) {
+export async function handler(event, context) {
+  /** Ne pas attendre les promesses SMS en arrière-plan après la réponse. */
+  if (context && typeof context.callbackWaitsForEmptyEventLoop === "boolean") {
+    context.callbackWaitsForEmptyEventLoop = false;
+  }
+
   const method = event.requestContext?.http?.method ?? event.httpMethod;
   const path = normalizeApiPath(event);
 
@@ -210,6 +233,12 @@ export async function handler(event) {
       const body = parseJsonBody(event);
       if (body === null) return badRequest("Corps JSON invalide");
       return await handleVerifyOtp(body);
+    }
+
+    if (method === "POST" && path === "/auth/refresh") {
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleRefresh(body);
     }
 
     if (method === "POST" && path === "/auth/onboarding/transaction-pin") {

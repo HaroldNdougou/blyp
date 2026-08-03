@@ -55,10 +55,22 @@ export function createPayRegisterStyles(c: ThemeColors) {
       color: c.text,
     },
     regModalHeaderSpacer: { width: 44 },
+    regModalScrollView: {
+      flex: 1,
+      minHeight: 0,
+    },
     regModalScroll: {
       paddingHorizontal: 25,
       paddingTop: 10,
       paddingBottom: 28,
+      flexGrow: 1,
+    },
+    /** Espace sous le dernier lien (ex. Modifier le numéro) quand le clavier est ouvert. */
+    regModalScrollKeyboardPad: {
+      paddingBottom: 56,
+    },
+    regModalOtpFooterSpacer: {
+      height: 12,
     },
     regModalSlideClip: {
       width: "100%",

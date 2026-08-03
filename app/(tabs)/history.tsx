@@ -1,17 +1,7 @@
-import React, { lazy, Suspense } from "react";
-import { View } from "react-native";
-import { useTheme } from "@/contexts/ThemeContext";
+import HistoryGate from "@/components/history/HistoryGate";
+import React from "react";
 
-const HistoryScreen = lazy(
-  () => import("@/components/history/HistoryScreen"),
-);
-
+/** Gate = titre immédiat ; corps préchargé via eagerRoutes / aggressiveWarm. */
 export default function HistoryRoute() {
-  const { colors } = useTheme();
-
-  return (
-    <Suspense fallback={<View style={{ flex: 1, backgroundColor: colors.background }} />}>
-      <HistoryScreen />
-    </Suspense>
-  );
+  return <HistoryGate />;
 }

@@ -12,12 +12,19 @@ import {
   describeSmsSetup,
 } from "./sms.js";
 import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
+import { makeAccountId, resolveAccountId } from "./accountId.js";
+import { makeTxReference, resolveTxReference } from "./txReference.js";
+import { createRefreshSessionHelpers } from "./refreshSessions.js";
 import { createWalletDepositHandlers, MAX_TX_AMOUNT_FCFA } from "./walletDeposit.js";
 
 const prisma = new PrismaClient();
 const app = express();
 const PORT = Number(process.env.PORT) || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || "dev-insecure";
+const { issueAuthSession, rotateAuthSession } = createRefreshSessionHelpers(
+  prisma,
+  JWT_SECRET,
+);
 /** Trim : un espace en fin de ligne dans `.env` / Railway cassait tous les hash OTP. */
 const OTP_PEPPER =
   String(process.env.OTP_PEPPER ?? "pepper").trim() || "pepper";
@@ -106,6 +113,7 @@ function getOnboardingStep(u) {
 function userToApi(u) {
   const onboardingStep = getOnboardingStep(u);
   return {
+    id: resolveAccountId(u),
     phone: u.phone,
     balanceFcfa: u.balanceFcfa,
     needsOnboarding: onboardingStep != null,
@@ -113,6 +121,20 @@ function userToApi(u) {
     firstName: u.firstName ?? null,
     lastName: u.lastName ?? null,
   };
+}
+
+async function ensureExpressAccountId(user) {
+  if (user?.accountId) return user;
+  const accountId = makeAccountId();
+  try {
+    return await prisma.user.update({
+      where: { id: user.id },
+      data: { accountId },
+    });
+  } catch {
+    const fresh = await prisma.user.findUnique({ where: { id: user.id } });
+    return fresh ?? { ...user, accountId: resolveAccountId(user) };
+  }
 }
 
 app.post("/auth/request-otp", async (req, res) => {
@@ -137,7 +159,9 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
 
-    const code = String(Math.floor(100000 + Math.random() * 900000));
+    /** TEMP — Obit/Orange : OTP fixe 1234. Retirer dès SMS OK. */
+    const TEMP_DEV_OTP_CODE = "1234";
+    const code = TEMP_DEV_OTP_CODE;
     const codeHash = hashOtp(phone, code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await prisma.otpChallenge.deleteMany({ where: { phone } });
@@ -145,29 +169,21 @@ app.post("/auth/request-otp", async (req, res) => {
       data: { phone, codeHash, expiresAt },
     });
 
-    const sent = await deliverOtpSms(phone, code);
-    if (!sent.ok) {
-      await prisma.otpChallenge.deleteMany({ where: { phone } });
-      lastOtpRequestAtByPhone.delete(phone);
-      if (sent.reason === "sms_not_configured") {
-        return res.status(503).json({
-          error:
-            "Envoi SMS non configuré côté serveur. Voir server/.env.example (Obit SMS, Africa’s Talking, webhook, etc.).",
-        });
-      }
-      return res.status(502).json({
-        error:
-          "Impossible d’envoyer le SMS pour le moment. Réessaie dans un instant.",
-      });
-    }
-
     lastOtpRequestAtByPhone.set(phone, Date.now());
-    try {
-      await prisma.otpSendLog.create({ data: { phone } });
-    } catch (logErr) {
-      console.error("[auth/request-otp] OtpSendLog", logErr);
-    }
     res.json({ ok: true });
+
+    /** SMS + log hors chemin critique (réponse déjà envoyée). */
+    void deliverOtpSms(phone, code).then((sent) => {
+      if (!sent.ok) {
+        console.warn(
+          "[auth/request-otp] SMS échoué — TEMP OTP 1234 actif, challenge conservé",
+          sent.reason,
+        );
+      }
+    });
+    void prisma.otpSendLog.create({ data: { phone } }).catch((logErr) => {
+      console.error("[auth/request-otp] OtpSendLog", logErr);
+    });
   } catch (e) {
     console.error("[auth/request-otp]", e);
     const detail =
@@ -186,7 +202,13 @@ app.post("/auth/verify-otp", async (req, res) => {
   try {
     const phone = normalizeCameroonPhone(req.body?.phone);
     const code = String(req.body?.code ?? "").replace(/\D/g, "");
-    if (!phone || code.length !== 6) {
+    const TEMP_DEV_OTP_CODE = "1234";
+    const isTempDevOtp = code === TEMP_DEV_OTP_CODE;
+    if (
+      !phone ||
+      (!isTempDevOtp && code.length !== 6) ||
+      (isTempDevOtp && code.length !== 4)
+    ) {
       return res.status(400).json({ error: "Téléphone ou code invalide" });
     }
 
@@ -215,12 +237,15 @@ app.post("/auth/verify-otp", async (req, res) => {
     let user = existingBefore;
     if (!user) {
       user = await prisma.user.create({
-        data: { phone, balanceFcfa: 0 },
+        data: { phone, balanceFcfa: 0, accountId: makeAccountId() },
       });
+    } else {
+      user = await ensureExpressAccountId(user);
     }
-    const token = jwt.sign({ sub: user.id }, JWT_SECRET, { expiresIn: "30d" });
+    const session = await issueAuthSession(user.id);
     const payload = {
-      token,
+      token: session.token,
+      refreshToken: session.refreshToken,
       user: userToApi(user),
       isNewAccount: !existingBefore,
     };
@@ -232,9 +257,34 @@ app.post("/auth/verify-otp", async (req, res) => {
   }
 });
 
+app.post("/auth/refresh", async (req, res) => {
+  try {
+    const refreshToken = String(req.body?.refreshToken ?? "").trim();
+    if (!refreshToken) {
+      return res
+        .status(401)
+        .json({ error: "Session expirée. Reconnectez-vous." });
+    }
+    const session = await rotateAuthSession(refreshToken);
+    if (!session) {
+      return res
+        .status(401)
+        .json({ error: "Session expirée. Reconnectez-vous." });
+    }
+    res.json({
+      token: session.token,
+      refreshToken: session.refreshToken,
+    });
+  } catch (e) {
+    console.error("[auth/refresh]", e);
+    res.status(500).json({ error: "Rafraîchissement impossible" });
+  }
+});
+
 app.get("/me", authMiddleware, async (req, res) => {
-  const user = await prisma.user.findUnique({ where: { id: req.userId } });
+  let user = await prisma.user.findUnique({ where: { id: req.userId } });
   if (!user) return res.status(401).json({ error: "Utilisateur introuvable" });
+  user = await ensureExpressAccountId(user);
   res.json(userToApi(user));
 });
 
@@ -352,23 +402,29 @@ app.post("/payments/pay", authMiddleware, async (req, res) => {
     return res.status(400).json({ error: "Code PIN incorrect" });
   }
   try {
+    const reference = makeTxReference("PAYMENT");
     const result = await prisma.$transaction(async (tx) => {
       const u = await tx.user.update({
         where: { id: req.userId },
         data: { balanceFcfa: { decrement: amount } },
       });
-      await tx.transaction.create({
+      const row = await tx.transaction.create({
         data: {
           userId: req.userId,
           type: "PAYMENT",
           amountFcfa: amount,
           counterpartyName: recipientName,
           counterpartyPhone: recipientPhone,
+          reference,
         },
       });
-      return u;
+      return { balanceFcfa: u.balanceFcfa, transactionId: row.id, reference: row.reference };
     });
-    res.json({ balanceFcfa: result.balanceFcfa });
+    res.json({
+      balanceFcfa: result.balanceFcfa,
+      transactionId: result.transactionId,
+      reference: result.reference,
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Paiement impossible" });
@@ -384,6 +440,7 @@ app.get("/transactions", authMiddleware, async (req, res) => {
   res.json({
     items: rows.map((t) => ({
       id: t.id,
+      reference: resolveTxReference(t),
       type: t.type === "DEPOSIT" ? "received" : "sent",
       amountFcfa: t.amountFcfa,
       counterpartyName:
@@ -420,6 +477,30 @@ async function ensureOtpSendLogTableSql() {
   `);
   await prisma.$executeRawUnsafe(
     `CREATE INDEX IF NOT EXISTS "OtpSendLog_phone_createdAt_idx" ON "OtpSendLog"("phone", "createdAt");`,
+  );
+}
+
+async function ensureRefreshSessionTableSql() {
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE IF NOT EXISTS "RefreshSession" (
+      "id" TEXT NOT NULL,
+      "userId" TEXT NOT NULL,
+      "tokenHash" TEXT NOT NULL,
+      "familyId" TEXT NOT NULL,
+      "expiresAt" TIMESTAMP(3) NOT NULL,
+      "revokedAt" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      CONSTRAINT "RefreshSession_pkey" PRIMARY KEY ("id")
+    );
+  `);
+  await prisma.$executeRawUnsafe(
+    `CREATE UNIQUE INDEX IF NOT EXISTS "RefreshSession_tokenHash_key" ON "RefreshSession"("tokenHash");`,
+  );
+  await prisma.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "RefreshSession_userId_idx" ON "RefreshSession"("userId");`,
+  );
+  await prisma.$executeRawUnsafe(
+    `CREATE INDEX IF NOT EXISTS "RefreshSession_familyId_idx" ON "RefreshSession"("familyId");`,
   );
 }
 
@@ -536,6 +617,7 @@ async function ensureProductionDatabaseReady() {
       await prisma.$queryRaw`SELECT 1`;
       await ensureHelloLogTableSql();
       await ensureOtpSendLogTableSql();
+      await ensureRefreshSessionTableSql();
       console.log("[blyp] Postgres OK — schéma synchronisé (prisma db push).");
       return;
     } catch (e) {

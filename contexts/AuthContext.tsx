@@ -1,5 +1,4 @@
 import type { ApiUser } from "@/lib/api/types";
-import { clearAllTransactionsSnapshots } from "@/lib/transactionsCache";
 import {
   clearAuthSession,
   getAccessToken,
@@ -17,6 +16,17 @@ import React, {
   useMemo,
   useState,
 } from "react";
+
+function hydrateTxCache(phone: string) {
+  void import("@/lib/transactionsCache").then((m) => {
+    void m.hydrateTransactionsCache(phone);
+  });
+}
+
+async function clearTxCaches() {
+  const m = await import("@/lib/transactionsCache");
+  m.clearAllTransactionsSnapshots();
+}
 
 type AuthContextValue = {
   user: ApiUser | null;
@@ -75,30 +85,66 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setToken(tok);
-        if (snap) setUser(snap);
+        if (snap) {
+          setUser(snap);
+        }
         if (alive) setIsLoading(false);
 
-        void (async () => {
-          const api = await import("@/lib/api/client");
-          const current = getAccessToken();
-          if (!alive || !current || current !== tok) return;
-          try {
-            const me = await api.getMe(current);
-            if (!alive || getAccessToken() !== current) return;
-            setUser(me);
-            await setAuthSession(current, getRefreshToken(), me);
-          } catch {
-            await clearAuthSession();
-            clearAllTransactionsSnapshots();
-            if (alive) {
-              setToken(null);
-              setUser(null);
-            }
-          }
-        })();
+        /**
+         * Après levée splash : hydrate SQLite + /me en fond.
+         * Ne jamais voler le 1er frame Pay (InteractionManager + délai court).
+         */
+        const { InteractionManager } = await import("react-native");
+        InteractionManager.runAfterInteractions(() => {
+          setTimeout(() => {
+            if (!alive) return;
+            if (snap?.phone) hydrateTxCache(snap.phone);
+
+            void (async () => {
+              const api = await import("@/lib/api/client");
+              /** Access court + refresh long : renouvelle avant /me si besoin. */
+              await api.ensureSessionFresh();
+              if (!alive) return;
+              const current = getAccessToken();
+              if (!current) {
+                if (getRefreshToken() == null) {
+                  await clearAuthSession();
+                  await clearTxCaches();
+                  if (alive) {
+                    setToken(null);
+                    setUser(null);
+                  }
+                }
+                return;
+              }
+              try {
+                const me = await api.getMe(current);
+                if (!alive || getAccessToken() !== current) return;
+                setToken(current);
+                setUser(me);
+                await setAuthSession(current, getRefreshToken(), me);
+                hydrateTxCache(me.phone);
+              } catch (e) {
+                const { ApiError } = await import("@/lib/api/errors");
+                /** Soft-fail réseau : garder le snapshot local. Purge seulement si session morte. */
+                if (
+                  e instanceof ApiError &&
+                  (e.status === 401 || e.status === 403)
+                ) {
+                  await clearAuthSession();
+                  await clearTxCaches();
+                  if (alive) {
+                    setToken(null);
+                    setUser(null);
+                  }
+                }
+              }
+            })();
+          }, 80);
+        });
       } catch {
         await clearAuthSession();
-        clearAllTransactionsSnapshots();
+        await clearTxCaches();
         if (alive) {
           setToken(null);
           setUser(null);
@@ -126,6 +172,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await setAuthSession(newToken, refreshToken ?? null, u);
       setToken(newToken);
       setUser(u);
+      hydrateTxCache(u.phone);
       return u;
     },
     [],
@@ -133,7 +180,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(async () => {
     await clearAuthSession();
-    clearAllTransactionsSnapshots();
+    await clearTxCaches();
+    const { resetAggressiveWarm } = await import("@/lib/perf/aggressiveWarm");
+    resetAggressiveWarm();
     setToken(null);
     setUser(null);
   }, []);

@@ -109,12 +109,7 @@ async function handleDeposit(userId, event, body) {
       amount,
       idempotencyKey,
     );
-    return ok({
-      status: "completed",
-      balanceFcfa,
-      transactionId: intent.ledgerTransactionId,
-      depositIntentId: intent.depositIntentId,
-    });
+    return ok(depositIntentToStatusResponse(intent, balanceFcfa));
   }
 
   if (!getPawapayConfig().configured) {
@@ -261,12 +256,22 @@ async function handlePay(userId, body, event) {
     return badRequest(`Montant invalide (max ${MAX_TX_AMOUNT_FCFA.toLocaleString("fr-FR")} FCFA)`);
   }
 
-  return ok({ balanceFcfa: result.balanceFcfa });
+  return ok({
+    balanceFcfa: result.balanceFcfa,
+    transactionId: result.transactionId ?? null,
+    reference: result.reference ?? null,
+  });
 }
 
-async function handleTransactions(userId) {
-  const items = await listTransactions(userId);
-  return ok({ items });
+async function handleTransactions(userId, event) {
+  const q = event.queryStringParameters ?? {};
+  const since = q.since ? String(q.since) : null;
+  const items = await listTransactions(userId, { since });
+  const cursor =
+    items.length > 0
+      ? items.reduce((max, t) => (t.createdAt > max ? t.createdAt : max), items[0].createdAt)
+      : since;
+  return ok({ items, cursor: cursor ?? null, delta: Boolean(since) });
 }
 
 export async function handler(event) {
@@ -300,7 +305,7 @@ export async function handler(event) {
     if (method === "GET" && path === "/transactions") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
-      return await handleTransactions(auth.userId);
+      return await handleTransactions(auth.userId, event);
     }
 
     return badRequest("Route introuvable");

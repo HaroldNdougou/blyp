@@ -51,6 +51,22 @@ function shouldTryRefreshOn401(path: string): boolean {
   return true;
 }
 
+function readJwtExpMs(accessToken: string): number | null {
+  try {
+    const part = accessToken.split(".")[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const pad = b64 + "===".slice((b64.length + 3) % 4);
+    const atobFn = globalThis.atob;
+    if (typeof atobFn !== "function") return null;
+    const json = atobFn(pad);
+    const payload = JSON.parse(json) as { exp?: number };
+    return typeof payload.exp === "number" ? payload.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Rafraîchit access (+ refresh si rotation) ; met à jour le stockage sécurisé.
  * Appelé depuis `request` sur 401, sans repasser par `request` (évite boucle).
@@ -87,6 +103,23 @@ async function refreshSessionTokens(): Promise<boolean> {
     }
     return false;
   }
+}
+
+/**
+ * Au cold start : renouvelle l’access si bientôt expiré / absent (refresh 180 j).
+ * Ne déconnecte pas sur simple erreur réseau.
+ */
+export async function ensureSessionFresh(): Promise<boolean> {
+  const access = getAccessToken();
+  const refresh = getRefreshToken();
+  if (!access && !refresh) return false;
+  if (!refresh) return Boolean(access);
+  const expMs = access ? readJwtExpMs(access) : null;
+  const renewIfWithinMs = 2 * 60 * 1000;
+  if (!access || expMs == null || expMs <= Date.now() + renewIfWithinMs) {
+    return refreshSessionTokens();
+  }
+  return true;
 }
 
 function errorMessageFromResponse(res: Response, data: unknown): string {
@@ -360,7 +393,11 @@ export async function pay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
-): Promise<{ balanceFcfa: number }> {
+): Promise<{
+  balanceFcfa: number;
+  transactionId: string | null;
+  reference: string | null;
+}> {
   if (USE_MOCK_API) {
     const m = await loadMock();
     return m.mockPay(
@@ -385,7 +422,19 @@ export async function pay(
 
 export async function listTransactions(
   token: string,
-): Promise<{ items: TransactionItem[] }> {
-  if (USE_MOCK_API) return (await loadMock()).mockListTransactions(token);
-  return request("/transactions", { token });
+  opts?: { since?: string | null },
+): Promise<{
+  items: TransactionItem[];
+  cursor?: string | null;
+  delta?: boolean;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListTransactions(token, opts?.since);
+  }
+  const q =
+    opts?.since != null && opts.since !== ""
+      ? `?since=${encodeURIComponent(opts.since)}`
+      : "";
+  return request(`/transactions${q}`, { token });
 }
+

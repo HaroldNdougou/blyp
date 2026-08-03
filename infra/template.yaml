@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Blyp API — phase 3 (health + auth + wallet + webhooks PawaPay)
+Description: Blyp API — health + auth + wallet + webhooks PawaPay
 
 Parameters:
   Stage:
@@ -169,6 +169,8 @@ Resources:
       Environment:
         Variables:
           JWT_SECRET: !Ref JwtSecret
+          # Access JWT court ; session longue via refresh 180 j (DynamoDB)
+          JWT_ACCESS_EXPIRY: "1h"
           OTP_PEPPER: !Ref OtpPepper
           TRANSACTION_PIN_PEPPER: !If
             - HasPinPepper
@@ -193,6 +195,12 @@ Resources:
           Properties:
             ApiId: !Ref BlypApi
             Path: /auth/verify-otp
+            Method: POST
+        RefreshSession:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/refresh
             Method: POST
         SetPin:
           Type: HttpApi

@@ -1,3 +1,5 @@
+import { makeAccountId } from "@/lib/accountId";
+import { makeTxReference } from "@/lib/txReference";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
   ApiUser,
@@ -25,6 +27,8 @@ let sessionPhone: string | null = null;
 let mockTransactionPinPlain: string | null = null;
 let mockFirstName: string | null = null;
 let mockLastName: string | null = null;
+/** ID compte public mock (ex. BLYP-U-…). */
+let mockSessionUserId: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
 let mockHelloSeq = 0;
@@ -58,6 +62,7 @@ function mockUserFromState(): ApiUser {
       ? "profile"
       : null;
   return {
+    id: mockSessionUserId ?? makeAccountId(),
     phone,
     balanceFcfa,
     needsOnboarding,
@@ -100,7 +105,8 @@ export function mockVerifyOtp(
 } {
   const phone = normalizeCameroonPhone(phoneDigits);
   const clean = code.replace(/\D/g, "");
-  if (!phone || clean.length !== 6) {
+  /** TEMP : accepte 1234 (4 chiffres) en plus du format 6 chiffres. */
+  if (!phone || (clean !== "1234" && clean.length !== 6)) {
     throw new ApiError("Téléphone ou code invalide", 400);
   }
   if (!pendingOtpPhone || phone !== pendingOtpPhone) {
@@ -109,6 +115,9 @@ export function mockVerifyOtp(
   pendingOtpPhone = null;
   const isNewAccount = sessionPhone !== phone;
   sessionPhone = phone;
+  if (isNewAccount || !mockSessionUserId) {
+    mockSessionUserId = makeAccountId();
+  }
   const ts = Date.now();
   sessionToken = `blyp-mock-access-${ts}`;
   sessionRefreshToken = `blyp-mock-refresh-${ts}`;
@@ -197,9 +206,11 @@ export function mockDeposit(
   balanceFcfa += amount;
   const ts = Date.now();
   const transactionId = `mock-${ts}-d`;
+  const reference = makeTxReference("DEPOSIT");
   const depositIntentId = `mock-intent-${ts}`;
   const row: TransactionItem = {
     id: transactionId,
+    reference,
     type: "received",
     amountFcfa: amount,
     counterpartyName: "Rechargement",
@@ -211,6 +222,7 @@ export function mockDeposit(
     status: "completed",
     balanceFcfa,
     transactionId,
+    reference,
     depositIntentId,
   };
   mockDepositIdempotencyCache.set(cacheKey, res);
@@ -242,7 +254,11 @@ export function mockPay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
-): { balanceFcfa: number } {
+): {
+  balanceFcfa: number;
+  transactionId: string | null;
+  reference: string | null;
+} {
   assertSession(token);
   const pin = String(transactionPin ?? "").replace(/\D/g, "");
   if (pin.length !== 4) {
@@ -263,8 +279,11 @@ export function mockPay(
     throw new ApiError("Solde insuffisant", 400);
   }
   balanceFcfa -= amount;
+  const transactionId = `mock-${Date.now()}-p`;
+  const reference = makeTxReference("PAYMENT");
   const row: TransactionItem = {
-    id: `mock-${Date.now()}-p`,
+    id: transactionId,
+    reference,
     type: "sent",
     amountFcfa: amount,
     counterpartyName: recipientName,
@@ -272,12 +291,34 @@ export function mockPay(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
-  return { balanceFcfa };
+  return { balanceFcfa, transactionId, reference };
 }
 
-export function mockListTransactions(token: string): { items: TransactionItem[] } {
+export function mockListTransactions(
+  token: string,
+  since?: string | null,
+): {
+  items: TransactionItem[];
+  cursor: string | null;
+  delta: boolean;
+} {
   assertSession(token);
-  return { items: [...transactions] };
+  let items = [...transactions];
+  const delta = Boolean(since);
+  if (since) {
+    const ms = Date.parse(since);
+    if (Number.isFinite(ms)) {
+      items = items.filter((t) => Date.parse(t.createdAt) > ms);
+    }
+  }
+  const cursor =
+    items.length > 0
+      ? items.reduce(
+          (max, t) => (t.createdAt > max ? t.createdAt : max),
+          items[0].createdAt,
+        )
+      : since ?? null;
+  return { items, cursor, delta };
 }
 
 export function mockHealth(): boolean {
@@ -296,3 +337,4 @@ export function mockSayHello(): {
     createdAt: new Date().toISOString(),
   };
 }
+

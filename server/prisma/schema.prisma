@@ -9,6 +9,8 @@ datasource db {
 
 model User {
   id                  String           @id @default(cuid())
+  /// ID compte public (ex. BLYP-U-7KQ9XM2A4B)
+  accountId           String?          @unique
   phone               String           @unique
   balanceFcfa         Int              @default(0)
   /// Hash scrypt (jamais le PIN en clair) — null tant que l’onboarding n’a pas défini le PIN.
@@ -19,6 +21,22 @@ model User {
   updatedAt           DateTime         @updatedAt
   transactions        Transaction[]
   depositIntents      DepositIntent[]
+  refreshSessions     RefreshSession[]
+}
+
+/// Refresh token hashé (session longue durée, rotation à chaque /auth/refresh).
+model RefreshSession {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  familyId   String
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([familyId])
 }
 
 /// Intention de recharge (cash-in) — audit, idempotence, branchement agrégateur (ex. PawaPay).
@@ -90,6 +108,8 @@ model Transaction {
   amountFcfa        Int
   counterpartyName  String?
   counterpartyPhone String?
+  /** Référence publique ex. BLYP-P260802-7KQ9XM2A */
+  reference         String?  @unique
   createdAt         DateTime @default(now())
 
   @@index([userId, createdAt])

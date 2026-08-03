@@ -1,6 +1,10 @@
 import { SignJWT, jwtVerify } from "jose";
 
-const JWT_EXPIRY = "30d";
+/**
+ * Access court — le refresh (180 j) maintient la session type WhatsApp.
+ * Surcharge possible : JWT_ACCESS_EXPIRY=15m|1h|7d
+ */
+const ACCESS_EXPIRY = process.env.JWT_ACCESS_EXPIRY?.trim() || "1h";
 
 function getSecretKey() {
   const secret = process.env.JWT_SECRET?.trim() || "dev-insecure";
@@ -8,11 +12,11 @@ function getSecretKey() {
 }
 
 export async function signAccessToken(userId) {
-  return new SignJWT({})
+  return new SignJWT({ typ: "access" })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuedAt()
-    .setExpirationTime(JWT_EXPIRY)
+    .setExpirationTime(ACCESS_EXPIRY)
     .sign(getSecretKey());
 }
 

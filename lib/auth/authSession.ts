@@ -38,6 +38,13 @@ function parseUserSnapshot(raw: unknown): ApiUser | null {
   }
   if (u.firstName !== null && typeof u.firstName !== "string") return null;
   if (u.lastName !== null && typeof u.lastName !== "string") return null;
+  if (
+    u.id !== undefined &&
+    u.id !== null &&
+    typeof u.id !== "string"
+  ) {
+    return null;
+  }
   return u as ApiUser;
 }
 

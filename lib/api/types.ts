@@ -2,6 +2,8 @@
 export type OnboardingStep = "pin" | "profile";
 
 export type ApiUser = {
+  /** ID compte public (ex. BLYP-U-7KQ9XM2A4B). */
+  id: string | null;
   phone: string;
   balanceFcfa: number;
   needsOnboarding: boolean;
@@ -12,6 +14,8 @@ export type ApiUser = {
 
 export type TransactionItem = {
   id: string;
+  /** Référence publique (ex. BLYP-P260802-7KQ9XM2A). */
+  reference: string;
   type: "sent" | "received";
   amountFcfa: number;
   counterpartyName: string;
@@ -25,6 +29,7 @@ export type WalletDepositResponse =
       status: "completed";
       balanceFcfa: number;
       transactionId: string;
+      reference?: string | null;
       depositIntentId: string;
     }
   | {
@@ -44,6 +49,7 @@ export type WalletDepositStatusResponse =
       amountFcfa: number;
       balanceFcfa: number;
       transactionId: string | null;
+      reference?: string | null;
     }
   | {
       status: "pending_provider";

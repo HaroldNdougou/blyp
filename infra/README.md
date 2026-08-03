@@ -10,7 +10,8 @@ Région cible : **`af-south-1`**.
 |---------|--------|------|
 | GET | `/health` | Santé Lambda + DynamoDB |
 | POST | `/auth/request-otp` | Envoi OTP SMS (cooldown 60s via DynamoDB TTL) |
-| POST | `/auth/verify-otp` | Vérification OTP → JWT + user |
+| POST | `/auth/verify-otp` | Vérification OTP → access + refresh (180 j) + user |
+| POST | `/auth/refresh` | Rotation refresh → nouvel access (+ refresh) |
 | POST | `/auth/onboarding/transaction-pin` | Définir PIN (auth) |
 | POST | `/auth/onboarding/profile` | Prénom / nom (auth) |
 | GET | `/me` | Profil + solde (auth) |

@@ -1,9 +1,10 @@
 import "@/lib/i18n";
+import "@/lib/ui/scrollDefaults";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { NetworkProvider } from "@/contexts/NetworkContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
-import { NetworkReconnectSync } from "@/components/network/NetworkReconnectSync";
 import { OfflineBanner } from "@/components/network/OfflineBanner";
+import { RealtimeSync } from "@/components/network/RealtimeSync";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
@@ -23,6 +24,7 @@ void SplashScreen.preventAutoHideAsync();
  * 3) **Dev** : on **n’attend pas** PayHome — Metro peut mettre 30 s à bundler ce chunk ; attendre
  *    `useMarkRootShellReady` = splash bloqué tout ce temps. Ici dès `!isLoading` + 2 rAF.
  * 4) Repli ~700 ms (release) si pas d’accueil (deep link).
+ * Sacré : ne jamais bloquer le hide splash sur polices, icônes, réseaux, lazy chunks.
  */
 function SplashGate({ children }: { children: ReactNode }) {
   const { isLoading } = useAuth();
@@ -112,7 +114,7 @@ export default function RootLayout() {
         <ThemeProvider>
           <NetworkProvider>
             <AuthProvider>
-              <NetworkReconnectSync />
+              <RealtimeSync />
               <SplashGate>
                 <RootShell />
               </SplashGate>

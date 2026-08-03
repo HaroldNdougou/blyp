@@ -1,4 +1,5 @@
 import { AndroidOtpSmsAutofill } from "@/components/AndroidOtpSmsAutofill";
+import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
 import { createPayRegisterStyles } from "@/components/pay/payRegisterStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -43,7 +44,8 @@ const OTP_RESEND_COOLDOWN_SEC = 60;
 /** Limite d’envois par ouverture du modal d’inscription. */
 const MAX_OTP_SENDS_PER_SESSION = 8;
 
-const OTP_LEN = 6;
+/** TEMP : 4 chiffres (OTP de secours 1234) — remettre à 6 quand Obit/Orange OK. */
+const OTP_LEN = 4;
 const ONBOARDING_PIN_LEN = 4;
 
 const REG_STEPS = [
@@ -84,6 +86,7 @@ export default function PayRegisterOverlay({
   const regPinConfirmInputRef = useRef<TextInput>(null);
   const regFirstNameInputRef = useRef<TextInput>(null);
   const regLastNameInputRef = useRef<TextInput>(null);
+  const phoneAutoSubmittedRef = useRef<string | null>(null);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
   const pinFirstAutoSubmittedRef = useRef<string | null>(null);
@@ -91,11 +94,38 @@ export default function PayRegisterOverlay({
   const pinConfirmVerifyInFlightRef = useRef(false);
   const railwayOtpHashAlertShownRef = useRef(false);
   const regSlideX = useRef(new Animated.Value(0)).current;
+  const regScrollRef = useRef<ScrollView>(null);
   const [regSlideWidth, setRegSlideWidth] = useState(0);
+  /** RN Modal Android n’applique pas adjustResize → on soulève la feuille. */
+  const [keyboardLift, setKeyboardLift] = useState(0);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const regSlidePanelW =
     regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
   const regSheetHeight = windowHeight * REG_SHEET_HEIGHT_RATIO;
+
+  const scrollRegSheetToFooter = useCallback((animated = true) => {
+    const run = () => regScrollRef.current?.scrollToEnd({ animated });
+    requestAnimationFrame(run);
+    setTimeout(run, 80);
+    setTimeout(run, 220);
+  }, []);
+
+  useEffect(() => {
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvt, (e) => {
+      const h = e.endCoordinates?.height ?? 0;
+      setKeyboardLift(h);
+      scrollRegSheetToFooter(true);
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => setKeyboardLift(0));
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [scrollRegSheetToFooter]);
 
   const phoneWalletBrand = inferCameroonMobileMoneyBrand(welcomePhone);
 
@@ -139,8 +169,12 @@ export default function PayRegisterOverlay({
     }).start();
   }, [welcomeStep, regSlideWidth, windowWidth, regSlideX]);
 
-  const requestOtpForRegistration = async (mode: "initial" | "resend") => {
-    if (welcomePhone.length !== 9) return;
+  const requestOtpForRegistration = async (
+    mode: "initial" | "resend",
+    phoneOverride?: string,
+  ) => {
+    const phone = phoneOverride ?? welcomePhone;
+    if (phone.length !== 9) return;
     if (otpSendCount >= MAX_OTP_SENDS_PER_SESSION) {
       Alert.alert(
         t("register.sendLimitTitle"),
@@ -149,12 +183,17 @@ export default function PayRegisterOverlay({
       return;
     }
     if (mode === "resend" && otpResendCooldown > 0) return;
+    if (mode === "initial" && authOtpSending) return;
     const setBusy = mode === "initial" ? setAuthOtpSending : setAuthResendSending;
     setBusy(true);
-    try {
-      await requestOtp(welcomePhone);
-      if (mode === "initial") setWelcomeStep("otp");
+    /** Instantané : passer à l’écran code sans attendre Obit/réseau. */
+    if (mode === "initial") {
+      setWelcomePhone(phone);
+      setWelcomeStep("otp");
       setWelcomeOtp("");
+    }
+    try {
+      await requestOtp(phone);
       setOtpSendCount((c) => c + 1);
       setOtpResendCooldown(OTP_RESEND_COOLDOWN_SEC);
     } catch (e) {
@@ -164,6 +203,10 @@ export default function PayRegisterOverlay({
         setOtpResendCooldown(e.retryAfterSeconds);
       }
       Alert.alert(t("register.smsCodeTitle"), msg);
+      if (mode === "initial") {
+        phoneAutoSubmittedRef.current = null;
+        setWelcomeStep("phone");
+      }
     } finally {
       setBusy(false);
     }
@@ -207,6 +250,7 @@ export default function PayRegisterOverlay({
 
   const goBackToRegistrationPhone = useCallback(() => {
     Keyboard.dismiss();
+    phoneAutoSubmittedRef.current = null;
     setWelcomeStep("phone");
     setOtpResendCooldown(0);
   }, []);
@@ -411,7 +455,7 @@ export default function PayRegisterOverlay({
             animationType="none"
             statusBarTranslucent
             onRequestClose={() => {
-              if (welcomeStep === "phone") {
+              if (welcomeStep === "phone" || welcomeStep === "otp") {
                 closeRegistrationOverlay();
               } else {
                 Keyboard.dismiss();
@@ -423,22 +467,43 @@ export default function PayRegisterOverlay({
               <Pressable
                 style={styles.regModalBackdrop}
                 onPress={() => {
-                  if (welcomeStep === "phone") closeRegistrationOverlay();
-                  else Keyboard.dismiss();
+                  if (welcomeStep === "phone" || welcomeStep === "otp") {
+                    closeRegistrationOverlay();
+                  } else {
+                    Keyboard.dismiss();
+                  }
                 }}
                 accessibilityLabel={
-                  welcomeStep === "phone" ? t("common.close") : t("common.background")
+                  welcomeStep === "phone" || welcomeStep === "otp"
+                    ? t("common.close")
+                    : t("common.background")
                 }
                 accessibilityRole="button"
               />
-              <View style={[styles.regModalSheet, { height: regSheetHeight }]}>
+              <View
+                style={[
+                  styles.regModalSheet,
+                  {
+                    bottom: keyboardLift,
+                    maxHeight: Math.max(
+                      280,
+                      windowHeight - keyboardLift - 12,
+                    ),
+                    height: Math.min(
+                      regSheetHeight,
+                      Math.max(280, windowHeight - keyboardLift - 12),
+                    ),
+                  },
+                ]}
+              >
                 <KeyboardAvoidingView
                   style={styles.regModalKeyboard}
-                  behavior={Platform.OS === "ios" ? "padding" : "height"}
+                  behavior={Platform.OS === "ios" ? "padding" : undefined}
+                  enabled={Platform.OS === "ios" && keyboardLift === 0}
                 >
                   <SafeModalArea
                     style={styles.regModalSafe}
-                    edges={["bottom", "left", "right"]}
+                    edges={keyboardLift > 0 ? ["left", "right"] : ["bottom", "left", "right"]}
                   >
                     <View style={styles.regModalHeader}>
                       {welcomeStep === "phone" ? (
@@ -483,9 +548,15 @@ export default function PayRegisterOverlay({
                     </View>
 
                     <ScrollView
-                      contentContainerStyle={styles.regModalScroll}
+                      ref={regScrollRef}
+                      style={styles.regModalScrollView}
+                      contentContainerStyle={[
+                        styles.regModalScroll,
+                        keyboardLift > 0 && styles.regModalScrollKeyboardPad,
+                      ]}
                       keyboardShouldPersistTaps="handled"
                       showsVerticalScrollIndicator={false}
+                      keyboardDismissMode="interactive"
                     >
                       <View
                         style={styles.regModalSlideClip}
@@ -531,9 +602,27 @@ export default function PayRegisterOverlay({
                                 keyboardType="number-pad"
                                 maxLength={9}
                                 value={welcomePhone}
-                                onChangeText={(t) =>
-                                  setWelcomePhone(normalizeCameroonPhoneDigits(t))
-                                }
+                                editable={!authOtpSending}
+                                onChangeText={(t) => {
+                                  const next = normalizeCameroonPhoneDigits(t);
+                                  setWelcomePhone(next);
+                                  if (next.length < 9) {
+                                    phoneAutoSubmittedRef.current = null;
+                                    return;
+                                  }
+                                  if (
+                                    next.length === 9 &&
+                                    phoneAutoSubmittedRef.current !== next &&
+                                    otpSendCount < MAX_OTP_SENDS_PER_SESSION
+                                  ) {
+                                    phoneAutoSubmittedRef.current = next;
+                                    Keyboard.dismiss();
+                                    void requestOtpForRegistration(
+                                      "initial",
+                                      next,
+                                    );
+                                  }
+                                }}
                                 showSoftInputOnFocus
                               />
                               {phoneWalletBrand === "orange" && (
@@ -557,36 +646,13 @@ export default function PayRegisterOverlay({
                                 />
                               )}
                             </View>
-                            <Pressable
-                              style={({ pressed }) => [
-                                styles.regModalPrimaryBtn,
-                                pressed &&
-                                  welcomePhone.length === 9 &&
-                                  !authOtpSending &&
-                                  otpSendCount < MAX_OTP_SENDS_PER_SESSION &&
-                                  styles.regModalPrimaryBtnPressed,
-                                (welcomePhone.length !== 9 ||
-                                  authOtpSending ||
-                                  otpSendCount >= MAX_OTP_SENDS_PER_SESSION) &&
-                                  styles.regModalPrimaryBtnDisabled,
-                              ]}
-                              disabled={
-                                welcomePhone.length !== 9 ||
-                                authOtpSending ||
-                                otpSendCount >= MAX_OTP_SENDS_PER_SESSION
-                              }
-                              onPress={async () => {
-                                if (welcomePhone.length !== 9) return;
-                                Keyboard.dismiss();
-                                await requestOtpForRegistration("initial");
-                              }}
-                            >
-                              {authOtpSending ? (
-                                <ActivityIndicator color={colors.accentOn} size="small" />
-                              ) : (
-                                <Text style={styles.regModalPrimaryBtnText}>{t("common.continue")}</Text>
-                              )}
-                            </Pressable>
+                            {authOtpSending ? (
+                              <ActivityIndicator
+                                color={colors.accent}
+                                size="small"
+                                style={{ marginTop: 18 }}
+                              />
+                            ) : null}
                           </View>
                           <View
                             style={[
@@ -606,21 +672,14 @@ export default function PayRegisterOverlay({
                                 : "…"}
                             </Text>
                             <Text style={styles.regModalLabel}>{t("register.verificationCode")}</Text>
-                            <TextInput
+                            <MaskedPinInput
                               ref={regOtpInputRef}
                               style={styles.regModalOtpInput}
-                              placeholder={t("common.otpPlaceholder")}
                               placeholderTextColor={colors.placeholder}
-                              keyboardType="number-pad"
-                              value={welcomeOtp}
-                              onChangeText={(t) =>
-                                setWelcomeOtp(t.replace(/\D/g, "").slice(0, OTP_LEN))
-                              }
+                              digits={welcomeOtp}
                               maxLength={OTP_LEN}
+                              onDigitsChange={setWelcomeOtp}
                               textContentType="oneTimeCode"
-                              autoCapitalize="none"
-                              autoCorrect={false}
-                              spellCheck={false}
                               autoComplete={
                                 Platform.OS === "android" ? "sms-otp" : "one-time-code"
                               }
@@ -628,6 +687,9 @@ export default function PayRegisterOverlay({
                                 ? { importantForAutofill: "yes" as const }
                                 : {})}
                               showSoftInputOnFocus
+                              onFocus={() => {
+                                scrollRegSheetToFooter(true);
+                              }}
                             />
                             <Pressable
                               style={({ pressed }) => [
@@ -698,6 +760,7 @@ export default function PayRegisterOverlay({
                                 {t("register.editPhone")}
                               </Text>
                             </Pressable>
+                            <View style={styles.regModalOtpFooterSpacer} />
                           </View>
                           <View
                             style={[
@@ -709,22 +772,14 @@ export default function PayRegisterOverlay({
                               {t("register.pinChooseLead")}
                             </Text>
                             <Text style={styles.regModalLabel}>{t("register.newPin")}</Text>
-                            <TextInput
+                            <MaskedPinInput
                               ref={regPinInputRef}
                               style={styles.regModalOtpInput}
                               placeholder={t("common.pinPlaceholder")}
                               placeholderTextColor={colors.placeholder}
-                              keyboardType="number-pad"
-                              secureTextEntry
-                              value={onboardingPin}
-                              onChangeText={(t) =>
-                                setOnboardingPin(
-                                  t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN),
-                                )
-                              }
+                              digits={onboardingPin}
                               maxLength={ONBOARDING_PIN_LEN}
-                              autoCapitalize="none"
-                              autoCorrect={false}
+                              onDigitsChange={setOnboardingPin}
                               showSoftInputOnFocus
                             />
                             <Pressable
@@ -757,22 +812,14 @@ export default function PayRegisterOverlay({
                               {t("register.pinConfirmLead")}
                             </Text>
                             <Text style={styles.regModalLabel}>{t("common.confirm")}</Text>
-                            <TextInput
+                            <MaskedPinInput
                               ref={regPinConfirmInputRef}
                               style={styles.regModalOtpInput}
                               placeholder={t("common.pinPlaceholder")}
                               placeholderTextColor={colors.placeholder}
-                              keyboardType="number-pad"
-                              secureTextEntry
-                              value={onboardingPinConfirm}
-                              onChangeText={(t) =>
-                                setOnboardingPinConfirm(
-                                  t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN),
-                                )
-                              }
+                              digits={onboardingPinConfirm}
                               maxLength={ONBOARDING_PIN_LEN}
-                              autoCapitalize="none"
-                              autoCorrect={false}
+                              onDigitsChange={setOnboardingPinConfirm}
                               showSoftInputOnFocus
                             />
                             <Pressable

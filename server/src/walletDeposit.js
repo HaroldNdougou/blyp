@@ -8,6 +8,7 @@ import {
   inferCameroonMomoProvider,
   normalizeMmProvider,
 } from "./pawapayClient.js";
+import { makeTxReference, resolveTxReference } from "./txReference.js";
 
 const DEPOSIT_MODE = (process.env.DEPOSIT_MODE || "sync").toLowerCase();
 /** Plafond transaction FCFA — 6 chiffres (COBAC/BEAC, sans agrément au démarrage). */
@@ -70,6 +71,7 @@ async function finalizeCompletedByPawapayDepositId(prisma, pawapayDepositId) {
           amountFcfa: intent.amountFcfa,
           counterpartyName: "Rechargement",
           counterpartyPhone: null,
+          reference: makeTxReference("DEPOSIT"),
         },
       });
       await tx.user.update({
@@ -147,10 +149,19 @@ export function createWalletDepositHandlers(
         where: { id: intent.userId },
         select: { balanceFcfa: true },
       });
+      let reference = null;
+      if (intent.ledgerTransactionId) {
+        const txRow = await prisma.transaction.findUnique({
+          where: { id: intent.ledgerTransactionId },
+          select: { id: true, reference: true },
+        });
+        if (txRow) reference = resolveTxReference(txRow);
+      }
       return res.status(200).json({
         status: "completed",
         balanceFcfa: user?.balanceFcfa ?? 0,
         transactionId: intent.ledgerTransactionId,
+        reference,
         depositIntentId: intent.id,
       });
     }
@@ -212,6 +223,7 @@ export function createWalletDepositHandlers(
               amountFcfa: amount,
               counterpartyName: "Rechargement",
               counterpartyPhone: null,
+              reference: makeTxReference("DEPOSIT"),
             },
           });
           const u = await tx.user.update({
@@ -231,6 +243,7 @@ export function createWalletDepositHandlers(
           return {
             balanceFcfa: u.balanceFcfa,
             transactionId: row.id,
+            reference: row.reference,
             depositIntentId: intent.id,
           };
         });
@@ -243,6 +256,7 @@ export function createWalletDepositHandlers(
           status: "completed",
           balanceFcfa: out.balanceFcfa,
           transactionId: out.transactionId,
+          reference: out.reference,
           depositIntentId: out.depositIntentId,
         });
       }

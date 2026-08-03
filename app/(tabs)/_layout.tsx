@@ -1,50 +1,44 @@
+import "@/lib/perf/eagerRoutes";
+import { preloadHistoryScreen } from "@/components/history/preloadHistory";
+import {
+  NineDotKeypadIcon,
+  PersonTabIcon,
+  SwapTabIcon,
+} from "@/components/tabs/TabBarIcons";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
-import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { View } from "react-native";
+import { useEffect } from "react";
+import { InteractionManager } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-
-function NineDotKeypadIcon({ color }: { color: string }) {
-  const row = [0, 1, 2];
-  return (
-    <View style={{ width: 24, height: 24, justifyContent: "space-between" }}>
-      {row.map((r) => (
-        <View
-          key={r}
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            width: 24,
-          }}
-        >
-          {row.map((c) => (
-            <View
-              key={c}
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 2.5,
-                backgroundColor: color,
-              }}
-            />
-          ))}
-        </View>
-      ))}
-    </View>
-  );
-}
 
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
   const { token } = useAuth();
   const { colors } = useTheme();
 
+  /** Flood modules dès le mount tabs — sans attendre 1 s. */
+  useEffect(() => {
+    void import("./history");
+    void preloadHistoryScreen();
+    void import("@/app/deposit");
+    if (token) void import("./profile");
+    const task = InteractionManager.runAfterInteractions(() => {
+      void import("@expo/vector-icons").then((m) => {
+        void m.Ionicons.loadFont().catch(() => {});
+      });
+    });
+    return () => task.cancel();
+  }, [token]);
+
   return (
     <Tabs
+      detachInactiveScreens={false}
+      sceneContainerStyle={{ backgroundColor: colors.background }}
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
+        freezeOnBlur: true,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.tabInactive,
         tabBarStyle: {
@@ -57,41 +51,25 @@ export default function TabLayout() {
         },
       }}
     >
-        <Tabs.Screen
-          name="index"
-          options={{
-            tabBarIcon: ({ color }) => <NineDotKeypadIcon color={color} />,
-          }}
-        />
-        <Tabs.Screen
-          name="history"
-          options={{
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "swap-vertical" : "swap-vertical-outline"}
-                size={24}
-                color={color}
-              />
-            ),
-          }}
-        />
-        <Tabs.Screen
-          name="profile"
-          options={{
-            /**
-             * Ne pas utiliser `href: null` quand déconnecté : le passage 2 → 3 onglets
-             * remontait les écrans et réinitialisait l’état (ex. montant saisi sur l’accueil).
-             */
-            tabBarButton: token ? undefined : () => null,
-            tabBarIcon: ({ color, focused }) => (
-              <Ionicons
-                name={focused ? "person" : "person-outline"}
-                size={24}
-                color={color}
-              />
-            ),
-          }}
-        />
-      </Tabs>
+      <Tabs.Screen
+        name="index"
+        options={{
+          tabBarIcon: ({ color }) => <NineDotKeypadIcon color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="history"
+        options={{
+          tabBarIcon: ({ color }) => <SwapTabIcon color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          tabBarButton: token ? undefined : () => null,
+          tabBarIcon: ({ color }) => <PersonTabIcon color={color} />,
+        }}
+      />
+    </Tabs>
   );
 }

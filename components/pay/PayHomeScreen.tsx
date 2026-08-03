@@ -1,18 +1,25 @@
+import "@/lib/perf/eagerRoutes";
+import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { MAX_AMOUNT_DIGITS, parseAmountFcfa } from "@/lib/amountLimits";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
+import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
-import { consumePendingDepositAmountForPayHome } from "@/lib/pendingDepositForPayHome";
+import i18n, { getNumberLocale, type AppLanguage } from "@/lib/i18n";
+import { openDepositRoute } from "@/lib/nav/openDeposit";
+import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
+import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
-import { setTransactionsSnapshot } from "@/lib/transactionsCache";
-import { Ionicons } from "@expo/vector-icons";
+import { fallbackTxReference } from "@/lib/txReference";
+import { useFocusEffect } from "@react-navigation/native";
 import { router, Stack } from "expo-router";
 import React, {
   lazy,
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -20,21 +27,26 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  BackHandler,
   Image,
   InteractionManager,
   Keyboard,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 
 import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
+import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
+import { CheckGlyph } from "@/components/pay/PayGlyphs";
 import { createPayHomeStyles } from "@/components/pay/payHomeStyles";
-import { useFocusEffect } from "@react-navigation/native";
+import { PayRegisterOverlayFallback } from "@/components/pay/PayRegisterOverlayFallback";
 import { useTranslation } from "react-i18next";
 import {
   SafeAreaView,
@@ -65,15 +77,64 @@ const DEMO_DRIVER = {
   avatar: null,
 };
 
+type PaymentReceipt = {
+  amountFcfa: number;
+  recipientName: string;
+  recipientPhone: string;
+  paidAt: string;
+  balanceFcfa: number;
+  reference: string;
+};
+
+function formatReceiptDateTime(iso: string): string {
+  const d = new Date(iso);
+  const lang: AppLanguage = i18n.language === "fr" ? "fr" : "en";
+  const locale = getNumberLocale(lang);
+  const date = d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const time = d.toLocaleTimeString(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${date} · ${time}`;
+}
+
 export default function PayHomeScreen() {
   useMarkRootShellReady();
+  useEffect(() => {
+    perfMarkStart("pay_home_open");
+    const id = requestAnimationFrame(() => {
+      perfMarkEnd("pay_home_open");
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+  const [depositChrome, setDepositChrome] = useState(false);
+  const openDepositInstant = useCallback(() => {
+    setDepositChrome(true);
+    openDepositRoute();
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      setDepositChrome(false);
+    }, []),
+  );
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
+  const { width: windowWidth } = useWindowDimensions();
+  const successSlideX = useRef(new Animated.Value(0)).current;
   const { user, token, isLoading: authLoading, refreshUser } = useAuth();
+  const userPhone = user?.phone ?? "";
   const [amount, setAmount] = useState("");
   const [paymentStatus, setPaymentStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS'>('IDLE');
+  /** Feedback PIN : spinner → coche succès → écran Payé. */
+  const [payPinUi, setPayPinUi] = useState<"idle" | "sending" | "success">(
+    "idle",
+  );
   const [payPinModalVisible, setPayPinModalVisible] = useState(false);
   const [payPinDraft, setPayPinDraft] = useState("");
   /** Contrôle ponctuel du curseur après refocus (Android + secureTextEntry). */
@@ -85,6 +146,9 @@ export default function PayHomeScreen() {
     null,
   );
   const [payPendingAmount, setPayPendingAmount] = useState(0);
+  const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceipt | null>(
+    null,
+  );
   const payPinFailedRef = useRef(0);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
@@ -98,6 +162,12 @@ export default function PayHomeScreen() {
   const prevUserRef = useRef(user);
   const payPinInputRef = useRef<TextInput>(null);
   const payPinFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Une seule rafale de focus auto par ouverture du sheet. */
+  const payPinOpenFocusGenRef = useRef(0);
+  /** Remount TextInput → autoFocus fiable (Modal RN cassait le clavier). */
+  const [payPinInputKey, setPayPinInputKey] = useState(0);
+  /** Soulève le sheet PIN au-dessus du clavier (Android overlay). */
+  const [payPinKeyboardLift, setPayPinKeyboardLift] = useState(0);
 
   const showRegisterOverlay =
     registerInviteVisible && (!user || Boolean(user.needsOnboarding));
@@ -132,62 +202,14 @@ export default function PayHomeScreen() {
   }, [token]);
 
   /**
-   * Release : après l’accueil, précharge espacé (temps morts).
-   * Dev : **aucun** préchargement — sinon Metro enchaîne 4–5 gros bundles et le log
-   * ressemble à un cold start de 10 s alors que l’UI peut déjà être là.
+   * Splash sacré → puis flood prefetch (mémoire) : onglets, dépôt, register, cache.
+   * Zéro concession latence clic.
    */
   useEffect(() => {
     if (authLoading) return;
-    if (__DEV__) return;
-    let cancelled = false;
-    const gap = (ms: number) =>
-      new Promise<void>((r) => setTimeout(r, ms));
-
-    void (async () => {
-      await new Promise<void>((r) =>
-        InteractionManager.runAfterInteractions(() => r()),
-      );
-      if (cancelled) return;
-      await gap(400);
-      if (cancelled) return;
-
-      void import("@/app/deposit");
-      await gap(120);
-      if (cancelled) return;
-      void import("@/components/history/HistoryScreen");
-      await gap(120);
-      if (cancelled) return;
-      void import("@/app/(tabs)/profile");
-      await gap(120);
-      if (cancelled) return;
-      void importPayRegisterOverlay();
-
-      if (!token) return;
-      await gap(200);
-      if (cancelled) return;
-      try {
-        const { listTransactions } = await import("@/lib/api/client");
-        if (cancelled) return;
-        const { items } = await listTransactions(token);
-        if (!cancelled) setTransactionsSnapshot(token, items);
-      } catch {
-        /* best effort */
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authLoading, token]);
-
-  useFocusEffect(
-    useCallback(() => {
-      const deposited = consumePendingDepositAmountForPayHome();
-      if (deposited != null) {
-        setAmount(String(deposited));
-      }
-    }, []),
-  );
+    runAggressiveWarm({ token, phone: user?.phone });
+    if (!token) void importPayRegisterOverlay();
+  }, [authLoading, token, user?.phone]);
 
   /**
    * Ne pas lier le cleanup du timer à payPinModalVisible : au passage false→true,
@@ -203,51 +225,62 @@ export default function PayHomeScreen() {
     };
   }, []);
 
-  /** Après un PIN incorrect, Android garde souvent le clavier sans caret : reset IME + sélection explicite. */
+  /**
+   * Clavier PIN : overlay in-tree + remount TextInput (autoFocus).
+   * Les retries couvrent MIUI / IME lent.
+   */
   const schedulePayPinFieldFocus = useCallback(
     (opts?: { afterWrongPin?: boolean }) => {
       const afterWrong = opts?.afterWrongPin ?? false;
+      const gen = payPinOpenFocusGenRef.current;
       if (payPinFocusTimerRef.current) {
         clearTimeout(payPinFocusTimerRef.current);
         payPinFocusTimerRef.current = null;
       }
-      const lead =
-        afterWrong && Platform.OS === "android"
-          ? 0
-          : Platform.OS === "android"
-            ? 220
-            : 80;
-      payPinFocusTimerRef.current = setTimeout(() => {
-        payPinFocusTimerRef.current = null;
+
+      const tryFocus = (attempt: number) => {
+        if (gen !== payPinOpenFocusGenRef.current) return;
         const input = payPinInputRef.current;
-        if (!input) return;
-        /** Ouverture normale : pas de selection contrôlée (évite curseur à droite avec textAlign center + secure). */
-        const focusOpen = () => {
-          setPayPinSelection(undefined);
-          input.focus();
-        };
-        if (afterWrong && Platform.OS === "android") {
-          setPayPinSelection(undefined);
-          input.blur();
-          Keyboard.dismiss();
-          setTimeout(() => {
-            InteractionManager.runAfterInteractions(() => {
-              requestAnimationFrame(() => {
-                input.focus();
-                setPayPinSelection({ start: 0, end: 0 });
-                setTimeout(() => {
-                  payPinInputRef.current?.focus();
-                  setPayPinSelection({ start: 0, end: 0 });
-                }, 140);
-              });
-            });
-          }, 200);
-        } else {
-          InteractionManager.runAfterInteractions(() => {
-            requestAnimationFrame(focusOpen);
-          });
+        if (!input) {
+          if (attempt < 20) {
+            payPinFocusTimerRef.current = setTimeout(
+              () => tryFocus(attempt + 1),
+              40,
+            );
+          }
+          return;
         }
-      }, lead);
+        setPayPinSelection(undefined);
+        input.focus();
+        if (Platform.OS === "android" && attempt < 6) {
+          payPinFocusTimerRef.current = setTimeout(
+            () => tryFocus(attempt + 1),
+            80,
+          );
+        } else {
+          payPinFocusTimerRef.current = null;
+        }
+      };
+
+      if (afterWrong && Platform.OS === "android") {
+        setPayPinSelection(undefined);
+        payPinInputRef.current?.blur();
+        payPinFocusTimerRef.current = setTimeout(() => {
+          InteractionManager.runAfterInteractions(() => {
+            requestAnimationFrame(() => {
+              setPayPinInputKey((k) => k + 1);
+              payPinFocusTimerRef.current = setTimeout(() => tryFocus(0), 50);
+            });
+          });
+        }, 120);
+        return;
+      }
+
+      payPinFocusTimerRef.current = setTimeout(() => {
+        InteractionManager.runAfterInteractions(() => {
+          requestAnimationFrame(() => tryFocus(0));
+        });
+      }, Platform.OS === "android" ? 50 : 16);
     },
     [],
   );
@@ -261,7 +294,7 @@ export default function PayHomeScreen() {
         payPinFocusTimerRef.current = null;
       }
     };
-  }, [payPinModalVisible, schedulePayPinFieldFocus]);
+  }, [payPinModalVisible, schedulePayPinFieldFocus, payPinInputKey]);
 
   const AMOUNT_MAX_LEN = MAX_AMOUNT_DIGITS;
 
@@ -285,6 +318,7 @@ export default function PayHomeScreen() {
     if (n == null || paymentStatus === "SENDING") return;
     if (!token) {
       Keyboard.dismiss();
+      void importPayRegisterOverlay();
       setConnexionPromptKind("pay");
       return;
     }
@@ -322,16 +356,21 @@ export default function PayHomeScreen() {
       );
       return;
     }
-    Keyboard.dismiss();
+    // Ne pas Keyboard.dismiss() ici : ça empêche souvent l’IME de se rouvrir juste après.
     payPinFailedRef.current = 0;
     setPayPinErrorLine(null);
     setPayPinSelection(undefined);
+    setPayPinUi("idle");
     setPayPendingAmount(n);
     setPayPinDraft("");
+    payPinOpenFocusGenRef.current += 1;
+    setPayPinInputKey((k) => k + 1);
     setPayPinModalVisible(true);
   };
 
   const cancelPayPin = useCallback(() => {
+    if (payPinUi === "sending" || payPinUi === "success") return;
+    payPinOpenFocusGenRef.current += 1;
     if (payPinFocusTimerRef.current) {
       clearTimeout(payPinFocusTimerRef.current);
       payPinFocusTimerRef.current = null;
@@ -342,17 +381,51 @@ export default function PayHomeScreen() {
     setPayPinDraft("");
     setPayPinErrorLine(null);
     setPayPinSelection(undefined);
+    setPayPinUi("idle");
     payPinFailedRef.current = 0;
-  }, []);
+  }, [payPinUi]);
 
-  const confirmPayWithPin = useCallback(async () => {
-    const pin = payPinDraft.replace(/\D/g, "");
+  useEffect(() => {
+    if (!payPinModalVisible) return;
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (paymentStatus === "SENDING") return true;
+      cancelPayPin();
+      return true;
+    });
+    return () => back.remove();
+  }, [payPinModalVisible, paymentStatus, cancelPayPin]);
+
+  useEffect(() => {
+    if (!payPinModalVisible) {
+      setPayPinKeyboardLift(0);
+      return;
+    }
+    const showEvt =
+      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
+    const hideEvt =
+      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
+    const onShow = Keyboard.addListener(showEvt, (e) => {
+      setPayPinKeyboardLift(e.endCoordinates?.height ?? 0);
+    });
+    const onHide = Keyboard.addListener(hideEvt, () => {
+      setPayPinKeyboardLift(0);
+    });
+    return () => {
+      onShow.remove();
+      onHide.remove();
+    };
+  }, [payPinModalVisible]);
+
+  const confirmPayWithPin = useCallback(async (pinRaw?: string) => {
+    const pin = (pinRaw ?? payPinDraft).replace(/\D/g, "");
     if (pin.length !== ONBOARDING_PIN_LEN || !token) return;
+    if (paymentStatus === "SENDING" || payPinUi !== "idle") return;
     setPayPinErrorLine(null);
     setPaymentStatus("SENDING");
+    setPayPinUi("sending");
     try {
       const { pay } = await import("@/lib/api/client");
-      await pay(
+      const payRes = await pay(
         token,
         payPendingAmount,
         DEMO_DRIVER.name,
@@ -365,14 +438,35 @@ export default function PayHomeScreen() {
       }
       payPinInputRef.current?.blur();
       Keyboard.dismiss();
+      payPinFailedRef.current = 0;
+      setPaymentReceipt({
+        amountFcfa: payPendingAmount,
+        recipientName: DEMO_DRIVER.name,
+        recipientPhone: DEMO_DRIVER.phone.replace(/\s/g, ""),
+        paidAt: new Date().toISOString(),
+        balanceFcfa: payRes.balanceFcfa,
+        reference:
+          payRes.reference?.trim() ||
+          (payRes.transactionId
+            ? fallbackTxReference(payRes.transactionId)
+            : fallbackTxReference(`pay-${Date.now()}`)),
+      });
+      setPayPinUi("success");
+      await new Promise<void>((r) => setTimeout(r, 500));
       setPayPinModalVisible(false);
       setPayPinDraft("");
       setPayPinSelection(undefined);
-      payPinFailedRef.current = 0;
-      await refreshUser();
+      setPayPinUi("idle");
+      void refreshUser();
+      if (userPhone) {
+        void import("@/lib/sync/transactionsSync").then((m) => {
+          void m.syncTransactionsFromNetwork(token, userPhone);
+        });
+      }
       setPaymentStatus("SUCCESS");
     } catch (e) {
       setPaymentStatus("IDLE");
+      setPayPinUi("idle");
       if (isTransactionPinInvalidError(e)) {
         payPinFailedRef.current += 1;
         const fails = payPinFailedRef.current;
@@ -415,13 +509,34 @@ export default function PayHomeScreen() {
         payPinFailedRef.current = 0;
         setPayPinErrorLine(null);
         setPayPinSelection(undefined);
+        // Réseau down → file offline (rejeu au reconnect)
+        if (e instanceof ApiError && e.status === 0) {
+          void import("@/lib/offline/queue").then((m) => {
+            void m.enqueueOfflineOp("pay", {
+              amountFcfa: payPendingAmount,
+              recipientName: DEMO_DRIVER.name,
+              recipientPhone: DEMO_DRIVER.phone.replace(/\s/g, "") || null,
+              transactionPin: pin,
+            });
+          });
+        }
         Alert.alert(
           t("pay.paymentTitle"),
           e instanceof ApiError ? e.message : t("common.genericError"),
         );
       }
     }
-  }, [payPinDraft, token, payPendingAmount, refreshUser, schedulePayPinFieldFocus, t]);
+  }, [
+    payPinDraft,
+    payPinUi,
+    paymentStatus,
+    token,
+    payPendingAmount,
+    refreshUser,
+    schedulePayPinFieldFocus,
+    t,
+    userPhone,
+  ]);
 
   const payAmountFcfa = parseAmountFcfa(amount);
   const canPayAmount = payAmountFcfa != null;
@@ -429,23 +544,147 @@ export default function PayHomeScreen() {
   const payAmountDisplayText =
     amount === "" ? "0" : formatFcfa(payAmountFcfa ?? 0);
 
-  if (paymentStatus === 'SUCCESS') {
+  useLayoutEffect(() => {
+    if (paymentStatus !== "SUCCESS") return;
+    successSlideX.setValue(windowWidth);
+    Animated.timing(successSlideX, {
+      toValue: 0,
+      duration: 280,
+      useNativeDriver: true,
+    }).start();
+  }, [paymentStatus, windowWidth, successSlideX]);
+
+  if (paymentStatus === "SUCCESS" && paymentReceipt) {
+    const phoneDisplay = formatCameroonPhoneDisplay(
+      paymentReceipt.recipientPhone,
+    );
     return (
-      <View style={styles.successContainer}>
-        <Text style={styles.successEmoji}>✅</Text>
-        <Text style={styles.successText}>{t("pay.paid")}</Text>
-        <Text style={styles.successSub}>
-          {t("pay.paidTo", {
-            amount: formatFcfa(parseInt(amount, 10) || 0),
-            name: DEMO_DRIVER.name,
-          })}
-        </Text>
-        <Pressable
-          style={styles.resetButton}
-          onPress={() => setPaymentStatus("IDLE")}
+      <View style={styles.successSafe}>
+      <Animated.View
+        style={[
+          styles.successSafe,
+          { transform: [{ translateX: successSlideX }] },
+        ]}
+      >
+      <SafeAreaView style={styles.successSafe} edges={["top", "left", "right"]}>
+        <ScrollView
+          style={styles.successScroll}
+          contentContainerStyle={styles.successScrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces
         >
-          <Text style={styles.resetButtonText}>{t("pay.newTransaction")}</Text>
-        </Pressable>
+          <View style={styles.successTop}>
+            <View
+              style={styles.successIconWrap}
+              accessibilityLabel={t("pay.receiptStatusOk")}
+            >
+              <CheckGlyph color={colors.accent} size={40} />
+            </View>
+            <Text style={styles.successTitle}>{t("pay.paid")}</Text>
+            <Text style={styles.successSubtitle}>{t("pay.successSubtitle")}</Text>
+            <Text style={styles.successAmount}>
+              −{formatFcfa(paymentReceipt.amountFcfa)}
+            </Text>
+            <Text style={styles.successAmountCurrency}>{t("common.fcfa")}</Text>
+
+            <View style={styles.successReceipt}>
+              <View style={[styles.successRow, styles.successRowBorder]}>
+                <Text style={styles.successRowLabel}>{t("pay.receiptTo")}</Text>
+                <Text style={styles.successRowValue}>
+                  {paymentReceipt.recipientName}
+                </Text>
+              </View>
+              {phoneDisplay ? (
+                <View style={[styles.successRow, styles.successRowBorder]}>
+                  <Text style={styles.successRowLabel}>
+                    {t("pay.receiptPhone")}
+                  </Text>
+                  <Text
+                    style={[styles.successRowValue, styles.successRowValueMuted]}
+                  >
+                    +237 {phoneDisplay}
+                  </Text>
+                </View>
+              ) : null}
+              <View style={[styles.successRow, styles.successRowBorder]}>
+                <Text style={styles.successRowLabel}>{t("pay.receiptDate")}</Text>
+                <Text
+                  style={[styles.successRowValue, styles.successRowValueMuted]}
+                >
+                  {formatReceiptDateTime(paymentReceipt.paidAt)}
+                </Text>
+              </View>
+              <View style={[styles.successRow, styles.successRowBorder]}>
+                <Text style={styles.successRowLabel}>
+                  {t("pay.receiptStatus")}
+                </Text>
+                <Text style={[styles.successRowValue, styles.successStatusOk]}>
+                  {t("pay.receiptStatusOk")}
+                </Text>
+              </View>
+              <View style={[styles.successRow, styles.successRowBorder]}>
+                <Text style={styles.successRowLabel}>
+                  {t("pay.receiptBalance")}
+                </Text>
+                <Text style={styles.successRowValue}>
+                  {formatFcfa(paymentReceipt.balanceFcfa)} {t("common.fcfa")}
+                </Text>
+              </View>
+              <View style={styles.successRow}>
+                <Text style={styles.successRowLabel}>{t("pay.receiptRef")}</Text>
+                <Text
+                  style={[styles.successRowValue, styles.successRowValueMuted]}
+                  numberOfLines={1}
+                >
+                  {paymentReceipt.reference}
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              style={({ pressed }) => [
+                styles.successSecondaryBtn,
+                styles.successHistoryInScroll,
+                pressed && styles.successSecondaryBtnPressed,
+              ]}
+              onPress={() => {
+                setAmount("");
+                setPaymentReceipt(null);
+                setPaymentStatus("IDLE");
+                router.push("/(tabs)/history");
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t("pay.viewHistory")}
+            >
+              <Text style={styles.successSecondaryBtnText}>
+                {t("pay.viewHistory")}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+
+        <View style={styles.successActions}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.successPrimaryBtn,
+              pressed && styles.successPrimaryBtnPressed,
+            ]}
+            onPress={() => {
+              setAmount("");
+              setPaymentReceipt(null);
+              setPaymentStatus("IDLE");
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t("pay.newTransaction")}
+          >
+            <Text style={styles.successPrimaryBtnText}>
+              {t("pay.newTransaction")}
+            </Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+      </Animated.View>
       </View>
     );
   }
@@ -485,31 +724,29 @@ export default function PayHomeScreen() {
                       <Text style={styles.driverPhone}>{DEMO_DRIVER.phone}</Text>
                     </View>
                   </View>
-                  <View style={styles.balanceValueGroup}>
-                    <Text style={styles.balanceAmountNum}>
-                      {formatFcfa(balance)}
-                    </Text>
-                    <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.balanceAddBtn,
-                        pressed && styles.balanceAddBtnPressed,
-                      ]}
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.balanceAddBtn,
+                      pressed && styles.balanceAddBtnPressed,
+                    ]}
+                      onPressIn={() => {
+                        if (token) void import("@/app/deposit");
+                      }}
                       onPress={() => {
                         if (!token) {
                           Keyboard.dismiss();
+                          void importPayRegisterOverlay();
                           setConnexionPromptKind("recharge");
                           return;
                         }
-                        router.push("/deposit");
+                        openDepositInstant();
                       }}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("common.topUpAccount")}
-                      hitSlop={10}
-                    >
-                      <Ionicons name="add" size={21} color={colors.accent} />
-                    </Pressable>
-                  </View>
+                    accessibilityRole="button"
+                    accessibilityLabel={t("common.topUpAccount")}
+                    hitSlop={10}
+                  >
+                    <Text style={styles.balanceAddIcon}>+</Text>
+                  </Pressable>
                 </View>
 
                 <View style={styles.inputSection}>
@@ -564,225 +801,235 @@ export default function PayHomeScreen() {
           </SafeAreaView>
 
           {showRegisterOverlay ? (
-            <Suspense fallback={null}>
+            <Suspense
+              fallback={
+                <PayRegisterOverlayFallback
+                  onClose={() => setRegisterInviteVisible(false)}
+                />
+              }
+            >
               <PayRegisterOverlay
                 onComplete={() => setRegisterInviteVisible(false)}
               />
             </Suspense>
           ) : null}
 
-          <Modal
-            visible={connexionPromptKind != null}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setConnexionPromptKind(null)}
-          >
-            <View style={styles.connexionModalRoot} pointerEvents="box-none">
-              <Pressable
-                style={styles.connexionModalBackdrop}
-                onPress={() => setConnexionPromptKind(null)}
-                accessibilityLabel={t("common.close")}
-              />
-              <View style={styles.connexionModalCard}>
-                <Text style={styles.connexionModalTitle}>{t("common.connection")}</Text>
-                <Text style={styles.connexionModalMessage}>
-                  {connexionPromptKind === "recharge"
-                    ? t("pay.signInToTopUp")
-                    : t("pay.signInToPay")}
-                </Text>
-                <View style={styles.connexionModalActions}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.connexionModalBtnHit,
-                      pressed && styles.connexionModalBtnPressed,
-                    ]}
-                    onPress={() => setConnexionPromptKind(null)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("common.cancel")}
-                  >
-                    <Text style={styles.connexionModalBtnAnnuler}>{t("common.cancel")}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.connexionModalBtnHit,
-                      pressed && styles.connexionModalBtnPressed,
-                    ]}
-                    onPress={() => {
-                      setConnexionPromptKind(null);
-                      setRegisterInviteVisible(true);
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("common.quickSignIn")}
-                  >
-                    <Text style={styles.connexionModalBtnConnexion}>
-                      {t("common.quickSignIn")}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal
-            visible={insufficientBalanceVisible}
-            transparent
-            animationType="fade"
-            onRequestClose={() => setInsufficientBalanceVisible(false)}
-          >
-            <View style={styles.connexionModalRoot} pointerEvents="box-none">
-              <Pressable
-                style={styles.connexionModalBackdrop}
-                onPress={() => setInsufficientBalanceVisible(false)}
-                accessibilityLabel={t("common.close")}
-              />
-              <View style={styles.connexionModalCard}>
-                <Text style={styles.connexionModalTitle}>
-                  {t("pay.insufficientBalanceTitle")}
-                </Text>
-                <Text style={styles.connexionModalMessage}>
-                  {t("pay.insufficientBalanceMessage", {
-                    balance: formatFcfa(balance),
-                    amount: formatFcfa(parseInt(amount, 10) || 0),
-                  })}
-                </Text>
-                <View style={styles.connexionModalActions}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.connexionModalBtnHit,
-                      pressed && styles.connexionModalBtnPressed,
-                    ]}
-                    onPress={() => setInsufficientBalanceVisible(false)}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("common.cancel")}
-                  >
-                    <Text style={styles.connexionModalBtnAnnuler}>{t("common.cancel")}</Text>
-                  </Pressable>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.connexionModalBtnHit,
-                      pressed && styles.connexionModalBtnPressed,
-                    ]}
-                    onPress={() => {
-                      setInsufficientBalanceVisible(false);
-                      router.push("/deposit");
-                    }}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("common.topUpAccount")}
-                  >
-                    <Text style={styles.connexionModalBtnConnexion}>
-                      {t("common.topUp")}
-                    </Text>
-                  </Pressable>
-                </View>
-              </View>
-            </View>
-          </Modal>
-
-          <Modal
-            visible={payPinModalVisible}
-            transparent
-            animationType="fade"
-            onRequestClose={() => {
-              if (paymentStatus !== "SENDING") cancelPayPin();
-            }}
-          >
-            <KeyboardAvoidingView
-              style={styles.payPinModalKeyboardWrap}
-              behavior={Platform.OS === "ios" ? "padding" : "height"}
+          {connexionPromptKind != null ? (
+            <Modal
+              visible
+              transparent
+              animationType="fade"
+              onRequestClose={() => setConnexionPromptKind(null)}
             >
-              <View
-                style={[
-                  styles.payPinModalRoot,
-                  { paddingTop: insets.top + 28 },
-                ]}
-                pointerEvents="box-none"
-              >
+              <View style={styles.connexionModalRoot} pointerEvents="box-none">
                 <Pressable
-                  style={styles.payPinModalBackdrop}
-                  onPress={cancelPayPin}
-                  disabled={paymentStatus === "SENDING"}
+                  style={styles.connexionModalBackdrop}
+                  onPress={() => setConnexionPromptKind(null)}
                   accessibilityLabel={t("common.close")}
                 />
-                <View style={styles.payPinModalCard}>
-                  <Text style={styles.payPinModalTitle}>{t("pay.pinTitle")}</Text>
-                  <Text style={styles.payPinModalSub}>
-                    {t("pay.pinConfirmPayment", {
-                      amount: formatFcfa(payPendingAmount),
-                      name: DEMO_DRIVER.name,
-                    })}
+                <View style={styles.connexionModalCard}>
+                  <Text style={styles.connexionModalTitle}>
+                    {t("common.connection")}
                   </Text>
-                  {payPinErrorLine ? (
-                    <Text
-                      style={styles.payPinModalError}
-                      accessibilityLiveRegion="polite"
-                    >
-                      {payPinErrorLine}
-                    </Text>
-                  ) : null}
-                  <TextInput
-                    ref={payPinInputRef}
-                    style={[
-                      styles.payPinModalInput,
-                      payPinErrorLine ? styles.payPinModalInputError : null,
-                    ]}
-                    placeholder={t("common.pinPlaceholder")}
-                    placeholderTextColor={colors.placeholder}
-                    keyboardType="number-pad"
-                    secureTextEntry
-                    maxLength={ONBOARDING_PIN_LEN}
-                    value={payPinDraft}
-                    selection={payPinSelection}
-                    onSelectionChange={() => {
-                      setPayPinSelection((prev) =>
-                        prev !== undefined ? undefined : prev,
-                      );
-                    }}
-                    onChangeText={(t) => {
-                      setPayPinErrorLine(null);
-                      setPayPinDraft(
-                        t.replace(/\D/g, "").slice(0, ONBOARDING_PIN_LEN),
-                      );
-                    }}
-                    autoFocus
-                    showSoftInputOnFocus
-                    editable={paymentStatus !== "SENDING"}
-                  />
-                  <View style={styles.payPinModalActions}>
+                  <Text style={styles.connexionModalMessage}>
+                    {connexionPromptKind === "recharge"
+                      ? t("pay.signInToTopUp")
+                      : t("pay.signInToPay")}
+                  </Text>
+                  <View style={styles.connexionModalActions}>
                     <Pressable
-                      style={styles.payPinModalCancelBtn}
-                      onPress={cancelPayPin}
-                      disabled={paymentStatus === "SENDING"}
+                      style={({ pressed }) => [
+                        styles.connexionModalBtnHit,
+                        pressed && styles.connexionModalBtnPressed,
+                      ]}
+                      onPress={() => setConnexionPromptKind(null)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("common.cancel")}
                     >
-                      <Text style={styles.payPinModalCancelText}>{t("common.cancel")}</Text>
+                      <Text style={styles.connexionModalBtnAnnuler}>
+                        {t("common.cancel")}
+                      </Text>
                     </Pressable>
                     <Pressable
                       style={({ pressed }) => [
-                        styles.payPinModalOkBtn,
-                        (payPinDraft.replace(/\D/g, "").length !== ONBOARDING_PIN_LEN ||
-                          paymentStatus === "SENDING") &&
-                          styles.payPinModalOkBtnDisabled,
-                        pressed &&
-                          payPinDraft.replace(/\D/g, "").length === ONBOARDING_PIN_LEN &&
-                          paymentStatus !== "SENDING" &&
-                          styles.payPinModalOkBtnPressed,
+                        styles.connexionModalBtnHit,
+                        pressed && styles.connexionModalBtnPressed,
                       ]}
-                      disabled={
-                        payPinDraft.replace(/\D/g, "").length !== ONBOARDING_PIN_LEN ||
-                        paymentStatus === "SENDING"
-                      }
-                      onPress={() => void confirmPayWithPin()}
+                      onPress={() => {
+                        void importPayRegisterOverlay();
+                        setConnexionPromptKind(null);
+                        setRegisterInviteVisible(true);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("common.quickSignIn")}
                     >
-                      {paymentStatus === "SENDING" ? (
-                        <ActivityIndicator color={colors.accentOn} size="small" />
-                      ) : (
-                        <Text style={styles.payPinModalOkText}>{t("common.pay")}</Text>
-                      )}
+                      <Text style={styles.connexionModalBtnConnexion}>
+                        {t("common.quickSignIn")}
+                      </Text>
                     </Pressable>
                   </View>
                 </View>
               </View>
-            </KeyboardAvoidingView>
-          </Modal>
+            </Modal>
+          ) : null}
+
+          {insufficientBalanceVisible ? (
+            <Modal
+              visible
+              transparent
+              animationType="fade"
+              onRequestClose={() => setInsufficientBalanceVisible(false)}
+            >
+              <View style={styles.connexionModalRoot} pointerEvents="box-none">
+                <Pressable
+                  style={styles.connexionModalBackdrop}
+                  onPress={() => setInsufficientBalanceVisible(false)}
+                  accessibilityLabel={t("common.close")}
+                />
+                <View style={styles.connexionModalCard}>
+                  <Text style={styles.connexionModalTitle}>
+                    {t("pay.insufficientBalanceTitle")}
+                  </Text>
+                  <Text style={styles.connexionModalMessage}>
+                    {t("pay.insufficientBalanceMessage", {
+                      balance: formatFcfa(balance),
+                      amount: formatFcfa(parseInt(amount, 10) || 0),
+                    })}
+                  </Text>
+                  <View style={styles.connexionModalActions}>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.connexionModalBtnHit,
+                        pressed && styles.connexionModalBtnPressed,
+                      ]}
+                      onPress={() => setInsufficientBalanceVisible(false)}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("common.cancel")}
+                    >
+                      <Text style={styles.connexionModalBtnAnnuler}>
+                        {t("common.cancel")}
+                      </Text>
+                    </Pressable>
+                    <Pressable
+                      style={({ pressed }) => [
+                        styles.connexionModalBtnHit,
+                        pressed && styles.connexionModalBtnPressed,
+                      ]}
+                      onPress={() => {
+                        setInsufficientBalanceVisible(false);
+                        openDepositInstant();
+                      }}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("common.topUpAccount")}
+                    >
+                      <Text style={styles.connexionModalBtnConnexion}>
+                        {t("common.topUp")}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              </View>
+            </Modal>
+          ) : null}
+
+          {payPinModalVisible ? (
+            <View style={styles.payPinOverlay} accessibilityViewIsModal>
+              <Pressable
+                style={styles.payPinModalBackdrop}
+                onPress={() => {
+                  if (payPinUi === "idle") cancelPayPin();
+                }}
+                disabled={payPinUi !== "idle"}
+                accessibilityLabel={t("common.close")}
+              />
+              <View
+                style={[
+                  styles.payPinSheet,
+                  payPinKeyboardLift > 0 && styles.payPinSheetKeyboardFlush,
+                  {
+                    /** Collage exact : bas du sheet = haut du clavier. */
+                    bottom:
+                      payPinKeyboardLift > 0
+                        ? Math.max(
+                            0,
+                            payPinKeyboardLift -
+                              (Platform.OS === "android" ? insets.bottom : 0),
+                          )
+                        : 0,
+                    paddingBottom:
+                      payPinKeyboardLift > 0
+                        ? 12
+                        : Math.max(insets.bottom, 16) + 8,
+                  },
+                ]}
+              >
+                <View style={styles.payPinSheetHandle} />
+                <Text style={styles.payPinModalTitle}>{t("pay.pinTitle")}</Text>
+                <Text style={styles.payPinModalSub}>
+                  {t("pay.pinConfirmPayment", {
+                    amount: formatFcfa(payPendingAmount),
+                    name: DEMO_DRIVER.name,
+                  })}
+                </Text>
+                {payPinErrorLine ? (
+                  <Text
+                    style={styles.payPinModalError}
+                    accessibilityLiveRegion="polite"
+                  >
+                    {payPinErrorLine}
+                  </Text>
+                ) : null}
+                <MaskedPinInput
+                  key={payPinInputKey}
+                  ref={payPinInputRef}
+                  variant="circles"
+                  error={Boolean(payPinErrorLine)}
+                  style={styles.payPinModalInput}
+                  accessibilityLabel={t("pay.pinTitle")}
+                  digits={payPinDraft}
+                  maxLength={ONBOARDING_PIN_LEN}
+                  selection={payPinSelection}
+                  onSelectionChange={() => {
+                    setPayPinSelection((prev) =>
+                      prev !== undefined ? undefined : prev,
+                    );
+                  }}
+                  onDigitsChange={(next) => {
+                    setPayPinErrorLine(null);
+                    setPayPinDraft(next);
+                    if (next.length === ONBOARDING_PIN_LEN) {
+                      void confirmPayWithPin(next);
+                    }
+                  }}
+                  autoFocus
+                  showSoftInputOnFocus
+                  blurOnSubmit={false}
+                  editable={payPinUi === "idle"}
+                />
+                {payPinUi === "sending" ? (
+                  <View style={styles.payPinFeedback}>
+                    <ActivityIndicator color={colors.accent} size="small" />
+                  </View>
+                ) : payPinUi === "success" ? (
+                  <View
+                    style={styles.payPinFeedback}
+                    accessibilityLabel={t("pay.paid")}
+                  >
+                    <CheckGlyph color={colors.accent} size={36} />
+                  </View>
+                ) : null}
+              </View>
+            </View>
+          ) : null}
+
+          {depositChrome ? (
+            <DepositOpenChrome
+              onClose={() => {
+                setDepositChrome(false);
+                if (router.canGoBack()) router.back();
+              }}
+            />
+          ) : null}
       </View>
     </View>
   );

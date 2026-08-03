@@ -6,6 +6,12 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
+import {
+  accountPk,
+  fallbackAccountId,
+  makeAccountId,
+  resolveAccountId,
+} from "./accountId.mjs";
 import { getDocClient, getTableName, ttlFromNowMs } from "./dynamodb.mjs";
 
 const doc = getDocClient();
@@ -37,6 +43,8 @@ function getOnboardingStep(profile) {
 export function userToApi(profile, balanceFcfa = 0) {
   const onboardingStep = getOnboardingStep(profile);
   return {
+    /** ID compte public (ex. BLYP-U-…) — pas l’UUID interne. */
+    id: resolveAccountId(profile),
     phone: profile.phone,
     balanceFcfa,
     needsOnboarding: onboardingStep != null,
@@ -44,6 +52,59 @@ export function userToApi(profile, balanceFcfa = 0) {
     firstName: profile.firstName ?? null,
     lastName: profile.lastName ?? null,
   };
+}
+
+/**
+ * Assigne un `accountId` public unique si absent (backfill anciens comptes).
+ * @param {string} userId
+ * @param {Record<string, unknown> | null} profile
+ */
+export async function ensureAccountId(userId, profile) {
+  if (profile?.accountId) return String(profile.accountId);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const accountId = makeAccountId();
+    const now = new Date().toISOString();
+    try {
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Update: {
+                TableName: getTableName(),
+                Key: { PK: userPk(userId), SK: "PROFILE" },
+                UpdateExpression: "SET accountId = :a, updatedAt = :now",
+                ConditionExpression:
+                  "attribute_exists(PK) AND attribute_not_exists(accountId)",
+                ExpressionAttributeValues: {
+                  ":a": accountId,
+                  ":now": now,
+                },
+              },
+            },
+            {
+              Put: {
+                TableName: getTableName(),
+                Item: {
+                  PK: accountPk(accountId),
+                  SK: "META",
+                  userId,
+                  accountId,
+                  createdAt: now,
+                },
+                ConditionExpression: "attribute_not_exists(PK)",
+              },
+            },
+          ],
+        }),
+      );
+      return accountId;
+    } catch (err) {
+      if (err?.name !== "TransactionCanceledException") throw err;
+      const fresh = await getUserProfile(userId);
+      if (fresh?.accountId) return String(fresh.accountId);
+    }
+  }
+  return fallbackAccountId(userId);
 }
 
 export async function getUserIdByPhone(phone) {
@@ -82,6 +143,10 @@ export async function getUserApiPayload(userId) {
     getUserBalance(userId),
   ]);
   if (!profile) return null;
+  if (!profile.userId) profile.userId = userId;
+  if (!profile.accountId) {
+    profile.accountId = await ensureAccountId(userId, profile);
+  }
   return userToApi(profile, balanceFcfa);
 }
 
@@ -202,58 +267,86 @@ export async function findOrCreateUserByPhone(phone) {
     return { userId: existingId, user, isNewAccount: false };
   }
 
-  const userId = randomUUID();
-  const now = new Date().toISOString();
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const userId = randomUUID();
+    const accountId = makeAccountId();
+    const now = new Date().toISOString();
 
-  await doc.send(
-    new TransactWriteCommand({
-      TransactItems: [
-        {
-          Put: {
-            TableName: getTableName(),
-            Item: {
-              PK: phonePk(phone),
-              SK: "META",
-              userId,
-              phone,
-              createdAt: now,
+    try {
+      await doc.send(
+        new TransactWriteCommand({
+          TransactItems: [
+            {
+              Put: {
+                TableName: getTableName(),
+                Item: {
+                  PK: phonePk(phone),
+                  SK: "META",
+                  userId,
+                  phone,
+                  createdAt: now,
+                },
+                ConditionExpression: "attribute_not_exists(PK)",
+              },
             },
-            ConditionExpression: "attribute_not_exists(PK)",
-          },
-        },
-        {
-          Put: {
-            TableName: getTableName(),
-            Item: {
-              PK: userPk(userId),
-              SK: "PROFILE",
-              userId,
-              phone,
-              firstName: null,
-              lastName: null,
-              createdAt: now,
-              updatedAt: now,
+            {
+              Put: {
+                TableName: getTableName(),
+                Item: {
+                  PK: userPk(userId),
+                  SK: "PROFILE",
+                  userId,
+                  accountId,
+                  phone,
+                  firstName: null,
+                  lastName: null,
+                  createdAt: now,
+                  updatedAt: now,
+                },
+              },
             },
-          },
-        },
-        {
-          Put: {
-            TableName: getTableName(),
-            Item: {
-              PK: userPk(userId),
-              SK: "BALANCE",
-              userId,
-              balanceFcfa: 0,
-              updatedAt: now,
+            {
+              Put: {
+                TableName: getTableName(),
+                Item: {
+                  PK: userPk(userId),
+                  SK: "BALANCE",
+                  userId,
+                  balanceFcfa: 0,
+                  updatedAt: now,
+                },
+              },
             },
-          },
-        },
-      ],
-    }),
-  );
+            {
+              Put: {
+                TableName: getTableName(),
+                Item: {
+                  PK: accountPk(accountId),
+                  SK: "META",
+                  userId,
+                  accountId,
+                  createdAt: now,
+                },
+                ConditionExpression: "attribute_not_exists(PK)",
+              },
+            },
+          ],
+        }),
+      );
 
-  const user = await getUserApiPayload(userId);
-  return { userId, user, isNewAccount: true };
+      const user = await getUserApiPayload(userId);
+      return { userId, user, isNewAccount: true };
+    } catch (err) {
+      if (err?.name !== "TransactionCanceledException") throw err;
+      const raced = await getUserIdByPhone(phone);
+      if (raced) {
+        const user = await getUserApiPayload(raced);
+        return { userId: raced, user, isNewAccount: false };
+      }
+      /* collision accountId rare → nouvel essai */
+    }
+  }
+  throw new Error("Unable to create user account");
 }
 
 export async function findOrCreateUserByPhoneSafe(phone) {

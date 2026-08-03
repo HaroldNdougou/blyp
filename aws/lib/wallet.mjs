@@ -7,6 +7,7 @@ import {
 } from "@aws-sdk/lib-dynamodb";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { getDocClient, getTableName } from "./dynamodb.mjs";
+import { makeTxReference, resolveTxReference } from "./txReference.mjs";
 import { getUserBalance, getUserProfile, userPk } from "./user.mjs";
 
 const doc = getDocClient();
@@ -88,7 +89,19 @@ export async function getPayIdempotencyResult(userId, idempotencyKey) {
     }),
   );
   if (!res.Item?.balanceFcfa && res.Item?.balanceFcfa !== 0) return null;
-  return { balanceFcfa: Number(res.Item.balanceFcfa) };
+  const transactionId = res.Item.transactionId
+    ? String(res.Item.transactionId)
+    : null;
+  const reference = res.Item.reference
+    ? String(res.Item.reference)
+    : transactionId
+      ? resolveTxReference({ transactionId })
+      : null;
+  return {
+    balanceFcfa: Number(res.Item.balanceFcfa),
+    transactionId,
+    reference,
+  };
 }
 
 export function depositIntentToStatusResponse(intent, balanceFcfa) {
@@ -97,6 +110,11 @@ export function depositIntentToStatusResponse(intent, balanceFcfa) {
       status: "completed",
       balanceFcfa,
       transactionId: intent.ledgerTransactionId,
+      reference:
+        intent.ledgerReference ||
+        (intent.ledgerTransactionId
+          ? resolveTxReference({ transactionId: intent.ledgerTransactionId })
+          : null),
       depositIntentId: intent.depositIntentId,
       amountFcfa: intent.amountFcfa,
     };
@@ -132,6 +150,7 @@ export async function executeSyncDeposit(userId, amount, idempotencyKey) {
   const nowMs = Date.now();
   const depositIntentId = randomUUID();
   const txId = randomUUID();
+  const reference = makeTxReference("DEPOSIT");
 
   const transactItems = [];
 
@@ -163,6 +182,7 @@ export async function executeSyncDeposit(userId, amount, idempotencyKey) {
           status: "COMPLETED",
           idempotencyKey: idempotencyKey ?? null,
           ledgerTransactionId: txId,
+          ledgerReference: reference,
           providerRef: "sync:internal",
           createdAt: now,
           updatedAt: now,
@@ -176,6 +196,7 @@ export async function executeSyncDeposit(userId, amount, idempotencyKey) {
           PK: userPk(userId),
           SK: txSk(nowMs, txId),
           transactionId: txId,
+          reference,
           userId,
           type: "DEPOSIT",
           amountFcfa: amount,
@@ -332,6 +353,7 @@ export async function finalizePawapayDeposit(pawapayDepositId) {
   const now = new Date().toISOString();
   const nowMs = Date.now();
   const txId = randomUUID();
+  const reference = makeTxReference("DEPOSIT");
   const amount = intent.amountFcfa;
 
   await doc.send(
@@ -353,13 +375,14 @@ export async function finalizePawapayDeposit(pawapayDepositId) {
             TableName: getTableName(),
             Key: { PK: userPk(userId), SK: depositSk(depositIntentId) },
             UpdateExpression:
-              "SET #st = :completed, ledgerTransactionId = :tx, providerRef = :ref, updatedAt = :now",
+              "SET #st = :completed, ledgerTransactionId = :tx, ledgerReference = :lref, providerRef = :ref, updatedAt = :now",
             ConditionExpression: "#st = :pending",
             ExpressionAttributeNames: { "#st": "status" },
             ExpressionAttributeValues: {
               ":completed": "COMPLETED",
               ":pending": "PENDING_PROVIDER",
               ":tx": txId,
+              ":lref": reference,
               ":ref": `pawapay:${pawapayDepositId}`,
               ":now": now,
             },
@@ -372,6 +395,7 @@ export async function finalizePawapayDeposit(pawapayDepositId) {
               PK: userPk(userId),
               SK: txSk(nowMs, txId),
               transactionId: txId,
+              reference,
               userId,
               type: "DEPOSIT",
               amountFcfa: amount,
@@ -453,6 +477,7 @@ export async function executePayment(
   const now = new Date().toISOString();
   const nowMs = Date.now();
   const txId = randomUUID();
+  const reference = makeTxReference("PAYMENT");
   const transactItems = [];
 
   if (idempotencyKey) {
@@ -490,6 +515,7 @@ export async function executePayment(
           PK: userPk(userId),
           SK: txSk(nowMs, txId),
           transactionId: txId,
+          reference,
           userId,
           type: "PAYMENT",
           amountFcfa: amount,
@@ -524,30 +550,53 @@ export async function executePayment(
           PK: userPk(userId),
           SK: payIdemSk(idempotencyKey),
           balanceFcfa,
+          transactionId: txId,
+          reference,
           createdAt: now,
         },
       }),
     );
   }
 
-  return { balanceFcfa, reused: false };
+  return { balanceFcfa, transactionId: txId, reference, reused: false };
 }
 
-export async function listTransactions(userId, limit = 100) {
+/**
+ * @param {string} userId
+ * @param {{ limit?: number, since?: string | null }} [opts]
+ * `since` = ISO — ne renvoie que les TX strictement plus récentes (delta sync).
+ */
+export async function listTransactions(userId, opts = {}) {
+  const limit = opts.limit ?? 100;
+  const since = opts.since ? String(opts.since) : null;
+  const sinceMs = since ? Date.parse(since) : NaN;
+
+  const exprValues = {
+    ":pk": userPk(userId),
+  };
+  let keyCond;
+
+  if (Number.isFinite(sinceMs)) {
+    // SK = TX#{ms 13}#{id} — bornes exclusives après `since`
+    keyCond = "PK = :pk AND SK > :after";
+    exprValues[":after"] = `TX#${String(sinceMs).padStart(13, "0")}#\uffff`;
+  } else {
+    keyCond = "PK = :pk AND begins_with(SK, :tx)";
+    exprValues[":tx"] = "TX#";
+  }
+
   const res = await doc.send(
     new QueryCommand({
       TableName: getTableName(),
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :tx)",
-      ExpressionAttributeValues: {
-        ":pk": userPk(userId),
-        ":tx": "TX#",
-      },
+      KeyConditionExpression: keyCond,
+      ExpressionAttributeValues: exprValues,
       ScanIndexForward: false,
       Limit: limit,
     }),
   );
-  const items = (res.Items ?? []).map((t) => ({
+  let items = (res.Items ?? []).map((t) => ({
     id: t.transactionId,
+    reference: resolveTxReference(t),
     type: t.type === "DEPOSIT" ? "received" : "sent",
     amountFcfa: t.amountFcfa,
     counterpartyName:
@@ -556,6 +605,9 @@ export async function listTransactions(userId, limit = 100) {
     counterpartyPhone: t.counterpartyPhone ?? null,
     createdAt: t.createdAt,
   }));
+  if (Number.isFinite(sinceMs)) {
+    items = items.filter((t) => Date.parse(t.createdAt) > sinceMs);
+  }
   return items;
 }
 
