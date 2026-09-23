@@ -77,8 +77,8 @@ const DEMO_DRIVER = {
   avatar: null,
 };
 
-/** Montant rapide (FCFA) — un tap remplace le champ, comme Wave / OM. */
-const PAY_QUICK_AMOUNT_FCFA = 500;
+/** Montants rapides (FCFA) — un tap remplace le champ, comme Wave / OM. */
+const PAY_QUICK_AMOUNTS_FCFA = [500, 600] as const;
 
 type PaymentReceipt = {
   amountFcfa: number;
@@ -550,8 +550,15 @@ export default function PayHomeScreen() {
   const canPayAmount = payAmountFcfa != null;
   const quickAmountsDisabled =
     paymentStatus === "SENDING" || showRegisterOverlay;
-  const quickAmount500Selected = amount === String(PAY_QUICK_AMOUNT_FCFA);
-  const quickAmount500Label = formatFcfa(PAY_QUICK_AMOUNT_FCFA);
+  const quickAmountItems = useMemo(
+    () =>
+      PAY_QUICK_AMOUNTS_FCFA.map((value) => ({
+        value,
+        label: formatFcfa(value),
+        selected: amount === String(value),
+      })),
+    [amount],
+  );
 
   const payAmountDisplayText =
     amount === "" ? "0" : formatFcfa(payAmountFcfa ?? 0);
@@ -785,40 +792,42 @@ export default function PayHomeScreen() {
 
               <View style={styles.payBottomBlock}>
                 <View style={styles.quickAmountsRow}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.quickAmountBtn,
-                      quickAmount500Selected && styles.quickAmountBtnSelected,
-                      pressed &&
-                        !quickAmountsDisabled &&
-                        styles.quickAmountBtnPressed,
-                      quickAmountsDisabled && styles.quickAmountBtnDisabled,
-                    ]}
-                    onPressIn={() => {
-                      if (!quickAmountsDisabled) {
-                        onQuickAmount(PAY_QUICK_AMOUNT_FCFA);
-                      }
-                    }}
-                    disabled={quickAmountsDisabled}
-                    accessibilityRole="button"
-                    accessibilityLabel={t("pay.quickAmount", {
-                      amount: quickAmount500Label,
-                    })}
-                    accessibilityState={{
-                      selected: quickAmount500Selected,
-                      disabled: quickAmountsDisabled,
-                    }}
-                  >
-                    <Text
-                      style={[
-                        styles.quickAmountBtnText,
-                        quickAmount500Selected &&
-                          styles.quickAmountBtnTextSelected,
+                  {quickAmountItems.map((item) => (
+                    <Pressable
+                      key={item.value}
+                      style={({ pressed }) => [
+                        styles.quickAmountBtn,
+                        item.selected && styles.quickAmountBtnSelected,
+                        pressed &&
+                          !quickAmountsDisabled &&
+                          styles.quickAmountBtnPressed,
+                        quickAmountsDisabled && styles.quickAmountBtnDisabled,
                       ]}
+                      onPressIn={() => {
+                        if (!quickAmountsDisabled) {
+                          onQuickAmount(item.value);
+                        }
+                      }}
+                      disabled={quickAmountsDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("pay.quickAmount", {
+                        amount: item.label,
+                      })}
+                      accessibilityState={{
+                        selected: item.selected,
+                        disabled: quickAmountsDisabled,
+                      }}
                     >
-                      {quickAmount500Label}
-                    </Text>
-                  </Pressable>
+                      <Text
+                        style={[
+                          styles.quickAmountBtnText,
+                          item.selected && styles.quickAmountBtnTextSelected,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </Pressable>
+                  ))}
                 </View>
                 <AmountNumericKeypad
                   onDigit={onAmountDigit}
