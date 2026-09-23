@@ -77,6 +77,9 @@ const DEMO_DRIVER = {
   avatar: null,
 };
 
+/** Montants rapides (FCFA) — un tap remplace le champ, comme Wave / OM. */
+const PAY_QUICK_AMOUNTS_FCFA = [500, 600] as const;
+
 type PaymentReceipt = {
   amountFcfa: number;
   recipientName: string;
@@ -313,6 +316,11 @@ export default function PayHomeScreen() {
     setAmount((prev) => prev.slice(0, -1));
   }, []);
 
+  const onQuickAmount = useCallback((value: number) => {
+    const next = String(value);
+    setAmount((prev) => (prev === next ? prev : next));
+  }, []);
+
   const handlePay = () => {
     const n = parseAmountFcfa(amount);
     if (n == null || paymentStatus === "SENDING") return;
@@ -540,6 +548,17 @@ export default function PayHomeScreen() {
 
   const payAmountFcfa = parseAmountFcfa(amount);
   const canPayAmount = payAmountFcfa != null;
+  const quickAmountsDisabled =
+    paymentStatus === "SENDING" || showRegisterOverlay;
+  const quickAmountItems = useMemo(
+    () =>
+      PAY_QUICK_AMOUNTS_FCFA.map((value) => ({
+        value,
+        label: formatFcfa(value),
+        selected: amount === String(value),
+      })),
+    [amount],
+  );
 
   const payAmountDisplayText =
     amount === "" ? "0" : formatFcfa(payAmountFcfa ?? 0);
@@ -772,12 +791,48 @@ export default function PayHomeScreen() {
               <View style={styles.payContentSpacer} />
 
               <View style={styles.payBottomBlock}>
+                <View style={styles.quickAmountsRow}>
+                  {quickAmountItems.map((item) => (
+                    <Pressable
+                      key={item.value}
+                      style={({ pressed }) => [
+                        styles.quickAmountBtn,
+                        item.selected && styles.quickAmountBtnSelected,
+                        pressed &&
+                          !quickAmountsDisabled &&
+                          styles.quickAmountBtnPressed,
+                        quickAmountsDisabled && styles.quickAmountBtnDisabled,
+                      ]}
+                      onPressIn={() => {
+                        if (!quickAmountsDisabled) {
+                          onQuickAmount(item.value);
+                        }
+                      }}
+                      disabled={quickAmountsDisabled}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("pay.quickAmount", {
+                        amount: item.label,
+                      })}
+                      accessibilityState={{
+                        selected: item.selected,
+                        disabled: quickAmountsDisabled,
+                      }}
+                    >
+                      <Text
+                        style={[
+                          styles.quickAmountBtnText,
+                          item.selected && styles.quickAmountBtnTextSelected,
+                        ]}
+                      >
+                        {item.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
                 <AmountNumericKeypad
                   onDigit={onAmountDigit}
                   onBackspace={onAmountBackspace}
-                  disabled={
-                    paymentStatus === "SENDING" || showRegisterOverlay
-                  }
+                  disabled={quickAmountsDisabled}
                 />
                 <View style={styles.actionSection}>
                   <Pressable

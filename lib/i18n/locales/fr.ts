@@ -37,6 +37,7 @@ export default {
   },
   pay: {
     amountLabel: "Entrer montant à payer",
+    quickAmount: "Montant rapide {{amount}} FCFA",
     payNow: "Payer maintenant",
     paid: "Paiement réussi",
     paidTo: "{{amount}} FCFA versé à {{name}}",
