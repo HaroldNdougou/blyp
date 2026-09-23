@@ -284,6 +284,44 @@ export function createPayHomeStyles(c: ThemeColors) {
       color: c.textFaint,
       marginLeft: 10,
     },
+    quickAmountsRow: {
+      flexDirection: "row",
+      justifyContent: "center",
+      alignItems: "center",
+      marginBottom: 10,
+      gap: 10,
+    },
+    quickAmountBtn: {
+      minHeight: 36,
+      paddingHorizontal: 18,
+      paddingVertical: 8,
+      borderRadius: 18,
+      backgroundColor: c.surfaceMuted,
+      borderWidth: 1,
+      borderColor: c.border,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    quickAmountBtnSelected: {
+      backgroundColor: c.depositHighlightBackground,
+      borderColor: c.accent,
+    },
+    quickAmountBtnPressed: {
+      opacity: 0.75,
+      transform: [{ scale: 0.96 }],
+    },
+    quickAmountBtnDisabled: {
+      opacity: 0.45,
+    },
+    quickAmountBtnText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.text,
+      fontVariant: ["tabular-nums"],
+    },
+    quickAmountBtnTextSelected: {
+      color: c.accent,
+    },
     actionSection: {
       marginTop: 18,
     },

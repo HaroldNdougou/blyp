@@ -37,6 +37,7 @@ export default {
   },
   pay: {
     amountLabel: "Enter amount to pay",
+    quickAmount: "Quick amount {{amount}} FCFA",
     payNow: "Pay now",
     paid: "Payment successful",
     paidTo: "{{amount}} FCFA sent to {{name}}",
