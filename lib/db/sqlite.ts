@@ -1,13 +1,16 @@
 /**
  * SQLite local (point 3) — source de vérité téléphone pour TX / queue / curseur sync.
  * Ouverture lazy : n’impacte pas le cold start Pay.
+ * Écritures sérialisées : expo-sqlite refuse les transactions imbriquées / concurrentes.
  */
 import { Platform } from "react-native";
 
 type SqliteMod = typeof import("expo-sqlite");
-type Db = Awaited<ReturnType<SqliteMod["openDatabaseAsync"]>>;
+export type Db = Awaited<ReturnType<SqliteMod["openDatabaseAsync"]>>;
 
 let dbPromise: Promise<Db | null> | null = null;
+/** File d’écritures — une seule withTransactionAsync à la fois. */
+let writeChain: Promise<void> = Promise.resolve();
 
 async function openDb(): Promise<Db | null> {
   if (Platform.OS === "web") return null;
@@ -57,4 +60,21 @@ async function openDb(): Promise<Db | null> {
 export function getDb(): Promise<Db | null> {
   if (!dbPromise) dbPromise = openDb();
   return dbPromise;
+}
+
+/**
+ * Exécute `fn` hors concurrence avec les autres écritures DB.
+ * À utiliser pour toute mutation (transaction ou runAsync).
+ */
+export function runDbWrite<T>(fn: (db: Db) => Promise<T>): Promise<T | null> {
+  const task = writeChain.then(async () => {
+    const db = await getDb();
+    if (!db) return null;
+    return fn(db);
+  });
+  writeChain = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
 }

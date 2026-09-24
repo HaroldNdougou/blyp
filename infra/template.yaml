@@ -61,6 +61,12 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ""
+    Description: Jeton API PawaPay (sandbox ou live)
+
+  PawapayApiBaseUrl:
+    Type: String
+    Default: "https://api.sandbox.pawapay.io"
+    Description: "Sandbox = https://api.sandbox.pawapay.io — Live MoMo = https://api.pawapay.io"
 
   PawapayWebhookSecret:
     Type: String
@@ -214,11 +220,53 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /auth/onboarding/profile
             Method: POST
+        EnableMerchant:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/merchant/enable
+            Method: POST
         Me:
           Type: HttpApi
           Properties:
             ApiId: !Ref BlypApi
             Path: /me
+            Method: GET
+        MeContext:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/context
+            Method: PUT
+        MeDeviceTokenPut:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/device-token
+            Method: PUT
+        MeDeviceTokenDelete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/device-token
+            Method: DELETE
+        CommercesCreate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces
+            Method: POST
+        CommercesList:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces
+            Method: GET
+        AccountPublic:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /accounts/{accountId}/public
             Method: GET
 
   WalletFunction:
@@ -239,9 +287,14 @@ Resources:
             - !Ref OtpPepper
           DEPOSIT_MODE: !Ref DepositMode
           PAWAPAY_API_TOKEN: !Ref PawapayApiToken
+          PAWAPAY_API_BASE_URL: !Ref PawapayApiBaseUrl
+          PAWAPAY_DEPOSIT_CURRENCY: XAF
+          PUSH_QUEUE_URL: !Ref PushQueue
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt PushQueue.QueueName
       Events:
         WalletDeposit:
           Type: HttpApi
@@ -279,6 +332,8 @@ Resources:
       Environment:
         Variables:
           DEPOSIT_MODE: !Ref DepositMode
+          PAWAPAY_API_TOKEN: !Ref PawapayApiToken
+          PAWAPAY_API_BASE_URL: !Ref PawapayApiBaseUrl
           PAWAPAY_WEBHOOK_SECRET: !Ref PawapayWebhookSecret
           PAWAPAY_WEBHOOK_VERIFY: none
       Policies:
@@ -292,12 +347,107 @@ Resources:
             Path: /webhooks/pawapay/deposit
             Method: POST
 
+  PushQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "blyp-push-dlq-${Stage}"
+      MessageRetentionPeriod: 1209600
+
+  PushQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "blyp-push-${Stage}"
+      VisibilityTimeout: 60
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt PushQueueDLQ.Arn
+        maxReceiveCount: 3
+
+  PushWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-push-${Stage}"
+      Description: Worker SQS — push Expo (paiement reçu)
+      CodeUri: ../aws/
+      Handler: handlers/push/index.handler
+      Timeout: 30
+      MemorySize: 256
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        PushQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt PushQueue.Arn
+            BatchSize: 5
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  MessagingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-messaging-${Stage}"
+      Description: Message Money V1 — conversations, messages, escrow claim
+      CodeUri: ../aws/
+      Handler: handlers/messaging/index.handler
+      Timeout: 15
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JwtSecret
+          OTP_PEPPER: !Ref OtpPepper
+          TRANSACTION_PIN_PEPPER: !If
+            - HasPinPepper
+            - !Ref TransactionPinPepper
+            - !Ref OtpPepper
+          PUSH_QUEUE_URL: !Ref PushQueue
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt PushQueue.QueueName
+      Events:
+        ListConversations:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations
+            Method: GET
+        OpenConversation:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations
+            Method: POST
+        ListMessages:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations/{id}/messages
+            Method: GET
+        SendMessage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations/{id}/messages
+            Method: POST
+        ClaimMoney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /money-transfers/{id}/claim
+            Method: POST
+
 Outputs:
   ApiUrl:
     Description: URL de base de l'API (EXPO_PUBLIC_API_URL)
     Value: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
     Export:
       Name: !Sub "blyp-api-url-${Stage}"
+
+  PawapayWebhookUrl:
+    Description: URL callback à enregistrer chez PawaPay (dépôts async)
+    Value: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/webhooks/pawapay/deposit"
 
   TableName:
     Description: Table DynamoDB single-table
@@ -320,3 +470,15 @@ Outputs:
   WebhookFunctionArn:
     Description: ARN de la Lambda webhooks
     Value: !GetAtt WebhookFunction.Arn
+
+  PushQueueUrl:
+    Description: File SQS push notifications
+    Value: !Ref PushQueue
+
+  PushWorkerFunctionArn:
+    Description: ARN du worker push
+    Value: !GetAtt PushWorkerFunction.Arn
+
+  MessagingFunctionArn:
+    Description: ARN de la Lambda messaging
+    Value: !GetAtt MessagingFunction.Arn

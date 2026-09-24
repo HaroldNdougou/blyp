@@ -88,7 +88,11 @@ function emit() {
   listeners.forEach((l) => l(snap));
 }
 
-async function readRaw(): Promise<string | null> {
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function readRawOnce(): Promise<string | null> {
   if (Platform.OS === "web") {
     try {
       if (typeof localStorage === "undefined") return null;
@@ -120,6 +124,17 @@ async function readRaw(): Promise<string | null> {
   return nativeMemorySessionJson;
 }
 
+/** SecureStore peut échouer transient au cold start — retry court avant « déconnecté ». */
+async function readRaw(): Promise<string | null> {
+  const attempts = Platform.OS === "web" ? 1 : 3;
+  for (let i = 0; i < attempts; i += 1) {
+    const raw = await readRawOnce();
+    if (raw) return raw;
+    if (i < attempts - 1) await sleep(40 * (i + 1));
+  }
+  return null;
+}
+
 async function writeRaw(json: string | null): Promise<void> {
   if (Platform.OS === "web") {
     try {
@@ -133,11 +148,14 @@ async function writeRaw(json: string | null): Promise<void> {
   }
   const SS = getSecureStore();
   if (SS) {
-    try {
-      if (json) await SS.setItemAsync(STORAGE_KEY, json);
-      else await SS.deleteItemAsync(STORAGE_KEY);
-    } catch {
-      /* ignore */
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        if (json) await SS.setItemAsync(STORAGE_KEY, json);
+        else await SS.deleteItemAsync(STORAGE_KEY);
+        return;
+      } catch {
+        if (attempt === 0) await sleep(30);
+      }
     }
     return;
   }

@@ -17,6 +17,8 @@ model User {
   transactionPinHash  String?
   firstName           String?
   lastName            String?
+  /// Commerçant / chauffeur — autorisé à diffuser BLE.
+  isMerchant          Boolean          @default(false)
   createdAt           DateTime         @default(now())
   updatedAt           DateTime         @updatedAt
   transactions        Transaction[]

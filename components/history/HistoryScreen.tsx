@@ -1,13 +1,11 @@
 import { createHistoryStyles } from "@/components/history/historyStyles";
+import { PaymentReceiptScreen } from "@/components/pay/PaymentReceiptScreen";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api/errors";
 import type { TransactionItem } from "@/lib/api/types";
 import { assetUrl } from "@/lib/assets/cdn";
-import {
-  formatCameroonPhoneDisplay,
-  formatFcfa,
-} from "@/lib/format";
+import { formatFcfa } from "@/lib/format";
 import {
   ensureHistoryUiRows,
   getHistoryUiRows,
@@ -19,6 +17,8 @@ import { syncTransactionsFromNetwork } from "@/lib/sync/transactionsSync";
 import {
   getTransactionsSnapshot,
   hydrateTransactionsCache,
+  subscribeTransactionsCache,
+  transactionSnapshotsEqual,
 } from "@/lib/transactionsCache";
 import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
@@ -37,7 +37,7 @@ import {
   ActivityIndicator,
   InteractionManager,
   Pressable,
-  ScrollView,
+  StyleSheet,
   Text,
   View,
 } from "react-native";
@@ -51,6 +51,9 @@ type HistoryRow = HistoryUiRow;
 type ListRow =
   | { kind: "header"; id: string; title: string }
   | { kind: "tx"; id: string; tx: HistoryRow };
+
+/** Fenêtre UI : 10 au départ, +10 à chaque « Voir plus ». */
+const HISTORY_PAGE_SIZE = 10;
 
 function dayKey(iso: string): string {
   const d = new Date(iso);
@@ -82,22 +85,6 @@ function formatSectionTitle(iso: string): string {
     month: "short",
     year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
   });
-}
-
-function formatDetailDateTime(iso: string): string {
-  const d = new Date(iso);
-  const lang: AppLanguage = i18n.language === "fr" ? "fr" : "en";
-  const locale = getNumberLocale(lang);
-  const date = d.toLocaleDateString(locale, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString(locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return `${date} · ${time}`;
 }
 
 function buildListRows(rows: HistoryRow[]): ListRow[] {
@@ -153,7 +140,7 @@ const HistoryRowItem = memo(function HistoryRowItem({
           <View style={styles.avatarSmall}>
             <Image
               source={{ uri }}
-              style={{ width: 44, height: 44, borderRadius: 22 }}
+              style={{ width: 36, height: 36, borderRadius: 18 }}
               cachePolicy="memory-disk"
               recyclingKey={item.id}
               transition={0}
@@ -167,11 +154,15 @@ const HistoryRowItem = memo(function HistoryRowItem({
             ]}
           >
             {isReceived ? (
-              <Ionicons name="arrow-down" size={20} color={colors.accent} />
+              <Text style={[styles.avatarText, { color: colors.accent }]}>↓</Text>
             ) : initial !== "?" ? (
               <Text style={styles.avatarText}>{initial}</Text>
             ) : (
-              <Ionicons name="arrow-up" size={20} color={colors.textSecondary} />
+              <Text
+                style={[styles.avatarText, { color: colors.textSecondary }]}
+              >
+                ↑
+              </Text>
             )}
           </View>
         )}
@@ -224,6 +215,7 @@ export default function HistoryScreen() {
       []
     );
   });
+  const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE_SIZE);
   const [loading, setLoading] = useState(() => {
     if (!phone) return false;
     return getHistoryUiRows(phone) == null && getTransactionsSnapshot(phone) == null;
@@ -234,6 +226,7 @@ export default function HistoryScreen() {
   const snapshotRef = useRef<TransactionItem[] | null>(
     phone ? getTransactionsSnapshot(phone) : null,
   );
+  const phoneRef = useRef(phone);
 
   useEffect(() => {
     perfMarkStart("history_open");
@@ -245,15 +238,40 @@ export default function HistoryScreen() {
   const applySnapshot = useCallback((items: TransactionItem[] | null) => {
     if (!items) return;
     if (items === snapshotRef.current) return;
+    const prev = snapshotRef.current;
+    if (prev && transactionSnapshotsEqual(prev, items)) {
+      /** Même contenu, nouvelle ref (sync) → pas de re-render liste. */
+      snapshotRef.current = items;
+      return;
+    }
     snapshotRef.current = items;
     setRows(ensureHistoryUiRows(phone, items) ?? []);
   }, [phone]);
+
+  useEffect(() => {
+    if (phoneRef.current !== phone) {
+      phoneRef.current = phone;
+      setVisibleCount(HISTORY_PAGE_SIZE);
+    }
+  }, [phone]);
+
+  /** Pay merge → liste déjà à jour avant le clic onglet (1 flash). */
+  useEffect(() => {
+    if (!phone) return;
+    return subscribeTransactionsCache((p, items) => {
+      if (p !== phone) return;
+      applySnapshot(items);
+      setLoading(false);
+      setError(null);
+    });
+  }, [phone, applySnapshot]);
 
   useFocusEffect(
     useCallback(() => {
       if (!token || !phone) {
         snapshotRef.current = null;
         setRows([]);
+        setVisibleCount(HISTORY_PAGE_SIZE);
         setError(null);
         setLoading(false);
         setSelected(null);
@@ -262,29 +280,31 @@ export default function HistoryScreen() {
       let cancelled = false;
 
       /**
-       * Discipline WhatsApp : au focus, si RAM déjà affichée → aucun setState.
-       * Sinon peindre le cache UI sync (déjà préformaté), sync réseau en fond.
+       * WhatsApp : peindre RAM tout de suite.
+       * Sync réseau en fond — jamais de spinner si le cache a déjà des lignes.
        */
       const ram = getTransactionsSnapshot(phone);
       if (ram) {
-        if (ram !== snapshotRef.current) {
-          applySnapshot(ram);
-        }
+        applySnapshot(ram);
+        setLoading(false);
+        setError(null);
         perfMarkEnd("history_open");
       }
 
       const task = InteractionManager.runAfterInteractions(() => {
         void (async () => {
-          await hydrateTransactionsCache(phone);
-          if (cancelled) return;
-          const cached = getTransactionsSnapshot(phone);
-          if (cached) {
-            applySnapshot(cached);
-            setLoading(false);
-            setError(null);
-            perfMarkEnd("history_open");
-          } else if (!ram) {
-            setLoading(true);
+          if (!ram) {
+            await hydrateTransactionsCache(phone);
+            if (cancelled) return;
+            const cached = getTransactionsSnapshot(phone);
+            if (cached) {
+              applySnapshot(cached);
+              setLoading(false);
+              setError(null);
+              perfMarkEnd("history_open");
+            } else {
+              setLoading(true);
+            }
           }
 
           try {
@@ -293,7 +313,11 @@ export default function HistoryScreen() {
             applySnapshot(items);
             setError(null);
           } catch (e) {
-            if (!cancelled && !cached && !ram) {
+            if (
+              !cancelled &&
+              !getTransactionsSnapshot(phone) &&
+              !ram
+            ) {
               setError(
                 e instanceof ApiError ? e.message : t("history.loadFailed"),
               );
@@ -316,7 +340,12 @@ export default function HistoryScreen() {
     }, [token, phone, t, applySnapshot]),
   );
 
-  const listData = useMemo(() => buildListRows(rows), [rows]);
+  const visibleRows = useMemo(
+    () => rows.slice(0, visibleCount),
+    [rows, visibleCount],
+  );
+  const hasMore = visibleCount < rows.length;
+  const listData = useMemo(() => buildListRows(visibleRows), [visibleRows]);
 
   const totals = useMemo(() => {
     let sent = 0;
@@ -334,6 +363,10 @@ export default function HistoryScreen() {
 
   const closeDetail = useCallback(() => {
     setSelected(null);
+  }, []);
+
+  const onSeeMore = useCallback(() => {
+    setVisibleCount((n) => n + HISTORY_PAGE_SIZE);
   }, []);
 
   const renderItem = useCallback(
@@ -361,6 +394,25 @@ export default function HistoryScreen() {
     },
     [styles, colors, openDetail, t],
   );
+
+  const ListFooter = useMemo(() => {
+    if (!hasMore) return null;
+    return (
+      <View style={styles.seeMoreWrap}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.seeMoreBtn,
+            pressed && styles.seeMoreBtnPressed,
+          ]}
+          onPress={onSeeMore}
+          accessibilityRole="button"
+          accessibilityLabel={t("history.seeMore")}
+        >
+          <Text style={styles.seeMoreText}>{t("history.seeMore")}</Text>
+        </Pressable>
+      </View>
+    );
+  }, [hasMore, styles, onSeeMore, t]);
 
   const ListEmpty = useMemo(() => {
     if (error) {
@@ -414,17 +466,14 @@ export default function HistoryScreen() {
     );
   }, [error, loading, token, styles, colors, t]);
 
-  const selectedPhoneDisplay = selected?.phone
-    ? formatCameroonPhoneDisplay(selected.phone)
-    : "";
-
   return (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Text style={styles.title}>{t("history.title")}</Text>
         <Text style={styles.subtitle}>
           {rows.length > 0
-            ? t("history.subtitle", { count: rows.length })
+            ? t("history.subtitle", { count: visibleRows.length })
             : t("history.subtitleEmpty")}
         </Text>
         {rows.length > 0 ? (
@@ -432,8 +481,9 @@ export default function HistoryScreen() {
             <View style={styles.summaryCard}>
               <Text style={styles.summaryLabel}>{t("history.summarySent")}</Text>
               <Text style={styles.summaryValue} numberOfLines={1}>
-                {formatFcfa(totals.sent)} {t("common.fcfa")}
+                {formatFcfa(totals.sent)}
               </Text>
+              <Text style={styles.summaryCurrency}>{t("common.fcfa")}</Text>
             </View>
             <View style={styles.summaryCard}>
               <Text style={styles.summaryLabel}>
@@ -443,8 +493,9 @@ export default function HistoryScreen() {
                 style={[styles.summaryValue, styles.summaryValueReceived]}
                 numberOfLines={1}
               >
-                {formatFcfa(totals.received)} {t("common.fcfa")}
+                {formatFcfa(totals.received)}
               </Text>
+              <Text style={styles.summaryCurrency}>{t("common.fcfa")}</Text>
             </View>
           </View>
         ) : null}
@@ -459,159 +510,31 @@ export default function HistoryScreen() {
           showsVerticalScrollIndicator={false}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{
-            paddingHorizontal: 20,
-            paddingBottom: insets.bottom + 20,
+            paddingHorizontal: 12,
+            paddingBottom: insets.bottom + 16,
           }}
           ListEmptyComponent={ListEmpty}
+          ListFooterComponent={ListFooter}
           drawDistance={240}
         />
       </View>
+    </SafeAreaView>
 
       {selected ? (
-        <View style={styles.detailOverlay} pointerEvents="box-none">
-          <Pressable
-            style={styles.detailBackdrop}
-            onPress={closeDetail}
-            accessibilityRole="button"
-            accessibilityLabel={t("history.close")}
+        <View style={[StyleSheet.absoluteFillObject, { zIndex: 20 }]}>
+          <PaymentReceiptScreen
+            receipt={{
+              amountFcfa: selected.amountFcfa,
+              counterpartyName: selected.name,
+              counterpartyPhone: selected.phone,
+              paidAt: selected.createdAt,
+              reference: selected.reference,
+              direction: selected.type,
+            }}
+            onClose={closeDetail}
           />
-          <View
-            style={[
-              styles.detailSheet,
-              { paddingBottom: Math.max(insets.bottom, 12) + 8 },
-            ]}
-          >
-            <View style={styles.detailHandle} />
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-              keyboardShouldPersistTaps="handled"
-            >
-              <View style={styles.detailHeader}>
-                <View
-                  style={[
-                    styles.detailIconWrap,
-                    selected.type === "received"
-                      ? styles.iconWrapReceived
-                      : styles.iconWrapSent,
-                  ]}
-                >
-                  <Ionicons
-                    name={
-                      selected.type === "received" ? "arrow-down" : "arrow-up"
-                    }
-                    size={26}
-                    color={
-                      selected.type === "received"
-                        ? colors.accent
-                        : colors.textSecondary
-                    }
-                  />
-                </View>
-                <Text style={styles.detailTitle}>{t("history.detailTitle")}</Text>
-                <Text
-                  style={[
-                    styles.detailAmount,
-                    selected.type === "received"
-                      ? styles.greenText
-                      : styles.blackText,
-                  ]}
-                >
-                  {selected.type === "received" ? "+" : "−"}
-                  {selected.amountLabel}
-                </Text>
-                <Text style={styles.detailAmountCurrency}>
-                  {t("common.fcfa")}
-                </Text>
-              </View>
-
-              <View style={styles.detailReceipt}>
-                <View style={[styles.detailRow, styles.detailRowBorder]}>
-                  <Text style={styles.detailRowLabel}>
-                    {t("history.detailType")}
-                  </Text>
-                  <Text style={styles.detailRowValue}>
-                    {selected.type === "received"
-                      ? t("history.typeReceived")
-                      : t("history.typeSent")}
-                  </Text>
-                </View>
-                <View style={[styles.detailRow, styles.detailRowBorder]}>
-                  <Text style={styles.detailRowLabel}>
-                    {t("history.detailStatus")}
-                  </Text>
-                  <Text
-                    style={[styles.detailRowValue, styles.detailStatusOk]}
-                  >
-                    {t("history.statusOk")}
-                  </Text>
-                </View>
-                <View style={[styles.detailRow, styles.detailRowBorder]}>
-                  <Text style={styles.detailRowLabel}>
-                    {t("history.detailTo")}
-                  </Text>
-                  <Text style={styles.detailRowValue}>{selected.name}</Text>
-                </View>
-                {selectedPhoneDisplay ? (
-                  <View style={[styles.detailRow, styles.detailRowBorder]}>
-                    <Text style={styles.detailRowLabel}>
-                      {t("history.detailPhone")}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.detailRowValue,
-                        styles.detailRowValueMuted,
-                      ]}
-                    >
-                      +237 {selectedPhoneDisplay}
-                    </Text>
-                  </View>
-                ) : null}
-                <View style={[styles.detailRow, styles.detailRowBorder]}>
-                  <Text style={styles.detailRowLabel}>
-                    {t("history.detailDate")}
-                  </Text>
-                  <Text
-                    style={[styles.detailRowValue, styles.detailRowValueMuted]}
-                  >
-                    {formatDetailDateTime(selected.createdAt)}
-                  </Text>
-                </View>
-                {selected.reference ? (
-                  <View style={styles.detailRow}>
-                    <Text style={styles.detailRowLabel}>
-                      {t("history.detailRef")}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.detailRowValue,
-                        styles.detailRowValueMuted,
-                      ]}
-                      selectable
-                    >
-                      {selected.reference}
-                    </Text>
-                  </View>
-                ) : null}
-              </View>
-
-              <Pressable
-                style={({ pressed }) => [
-                  styles.detailCloseBtn,
-                  pressed && styles.detailCloseBtnPressed,
-                ]}
-                onPress={closeDetail}
-                accessibilityRole="button"
-                accessibilityLabel={t("history.close")}
-              >
-                <Text style={styles.detailCloseBtnText}>
-                  {t("history.close")}
-                </Text>
-              </Pressable>
-            </ScrollView>
-          </View>
         </View>
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }

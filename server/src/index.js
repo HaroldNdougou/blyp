@@ -120,6 +120,7 @@ function userToApi(u) {
     onboardingStep,
     firstName: u.firstName ?? null,
     lastName: u.lastName ?? null,
+    isMerchant: u.isMerchant === true,
   };
 }
 
@@ -351,6 +352,31 @@ app.post("/auth/onboarding/profile", authMiddleware, async (req, res) => {
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Enregistrement du profil impossible" });
+  }
+});
+
+app.post("/auth/merchant/enable", authMiddleware, async (req, res) => {
+  try {
+    const row = await prisma.user.findUnique({ where: { id: req.userId } });
+    if (!row) return res.status(401).json({ error: "Non autorisé" });
+    if (!row.transactionPinHash) {
+      return res
+        .status(400)
+        .json({ error: "Terminez l’inscription (PIN) avant de devenir commerçant" });
+    }
+    if (!trimStr(row.firstName) || !trimStr(row.lastName)) {
+      return res.status(400).json({
+        error: "Terminez votre profil (prénom / nom) avant de devenir commerçant",
+      });
+    }
+    const updated = await prisma.user.update({
+      where: { id: req.userId },
+      data: { isMerchant: true },
+    });
+    res.json({ user: userToApi(updated) });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Activation commerçant impossible" });
   }
 });
 

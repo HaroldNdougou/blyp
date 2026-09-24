@@ -67,6 +67,40 @@ function currentNumberLocale(): string {
   return getNumberLocale(lang);
 }
 
+/** Fenêtre « Maintenant » pour la dernière réception (accueil commerce). */
+export const JUST_NOW_WINDOW_MS = 30_000;
+
+/** True si `iso` est dans la fenêtre « juste reçu » (tolérance horloge ~2s). */
+export function isTransactionJustNow(
+  iso: string,
+  nowMs: number = Date.now(),
+): boolean {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return false;
+  const age = nowMs - t;
+  return age >= -2000 && age <= JUST_NOW_WINDOW_MS;
+}
+
+/** ms restantes avant fin de « Maintenant », ou null si déjà expiré. */
+export function msUntilJustNowExpires(
+  iso: string,
+  nowMs: number = Date.now(),
+): number | null {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  const remaining = JUST_NOW_WINDOW_MS - (nowMs - t);
+  return remaining > 0 ? remaining : null;
+}
+
+export function formatMessageTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString(currentNumberLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 export function formatTransactionDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

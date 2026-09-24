@@ -36,6 +36,9 @@ export async function drainOfflineQueue(opts: {
           String(p.recipientName ?? ""),
           p.recipientPhone != null ? String(p.recipientPhone) : null,
           pin,
+          p.recipientAccountId != null
+            ? String(p.recipientAccountId)
+            : null,
         );
         await removeOfflineOp(op.id);
         await syncTransactionsFromNetwork(opts.token, opts.phone);

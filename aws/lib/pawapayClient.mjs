@@ -98,7 +98,8 @@ export async function pawapayInitiateDeposit({
         provider,
       },
     },
-    customerMessage: "Blyp recharge",
+    /** Narration SMS / historique (4–22 car.) — pas le nom du popup PIN MoMo. */
+    customerMessage: "BLYP PAY",
   };
   if (clientReferenceId) body.clientReferenceId = clientReferenceId;
 

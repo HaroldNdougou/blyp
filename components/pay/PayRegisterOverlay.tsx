@@ -23,6 +23,7 @@ import {
   Alert,
   Animated,
   Image,
+  InteractionManager,
   Keyboard,
   KeyboardAvoidingView,
   Modal,
@@ -86,6 +87,10 @@ export default function PayRegisterOverlay({
   const regPinConfirmInputRef = useRef<TextInput>(null);
   const regFirstNameInputRef = useRef<TextInput>(null);
   const regLastNameInputRef = useRef<TextInput>(null);
+  const regFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const regFocusGenRef = useRef(0);
+  /** Remount phone field → autoFocus fiable (MIUI / Modal Android). */
+  const [regPhoneInputKey, setRegPhoneInputKey] = useState(0);
   const phoneAutoSubmittedRef = useRef<string | null>(null);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
@@ -406,20 +411,68 @@ export default function PayRegisterOverlay({
     submitOnboardingPinConfirm,
   ]);
 
-  /** Focus + clavier : court délai pour la mise en page du modal (pas d’animation d’entrée). */
+  const focusRefForStep = useCallback((step: RegStep) => {
+    if (step === "phone") return regPhoneInputRef.current;
+    if (step === "otp") return regOtpInputRef.current;
+    if (step === "pin") return regPinInputRef.current;
+    if (step === "pinConfirm") return regPinConfirmInputRef.current;
+    if (step === "profile") return regFirstNameInputRef.current;
+    return null;
+  }, []);
+
+  /** Clavier dès l’ouverture — retries Android (Redmi / Modal). */
+  const scheduleRegFieldFocus = useCallback(
+    (step: RegStep) => {
+      const gen = ++regFocusGenRef.current;
+      if (regFocusTimerRef.current) {
+        clearTimeout(regFocusTimerRef.current);
+        regFocusTimerRef.current = null;
+      }
+
+      const tryFocus = (attempt: number) => {
+        if (gen !== regFocusGenRef.current) return;
+        const input = focusRefForStep(step);
+        if (!input) {
+          if (attempt < 24) {
+            regFocusTimerRef.current = setTimeout(
+              () => tryFocus(attempt + 1),
+              40,
+            );
+          }
+          return;
+        }
+        input.focus();
+        if (Platform.OS === "android" && attempt < 8) {
+          regFocusTimerRef.current = setTimeout(
+            () => tryFocus(attempt + 1),
+            80,
+          );
+        } else {
+          regFocusTimerRef.current = null;
+        }
+      };
+
+      regFocusTimerRef.current = setTimeout(() => {
+        InteractionManager.runAfterInteractions(() => {
+          requestAnimationFrame(() => tryFocus(0));
+        });
+      }, Platform.OS === "android" ? 80 : 16);
+    },
+    [focusRefForStep],
+  );
+
   useEffect(() => {
-    const delay = Platform.OS === "android" ? 100 : 50;
-    const t = setTimeout(() => {
-      if (welcomeStep === "phone") regPhoneInputRef.current?.focus();
-      else if (welcomeStep === "otp") regOtpInputRef.current?.focus();
-      else if (welcomeStep === "pin") regPinInputRef.current?.focus();
-      else if (welcomeStep === "pinConfirm")
-        regPinConfirmInputRef.current?.focus();
-      else if (welcomeStep === "profile")
-        regFirstNameInputRef.current?.focus();
-    }, delay);
-    return () => clearTimeout(t);
-  }, [welcomeStep]);
+    if (welcomeStep === "phone") {
+      setRegPhoneInputKey((k) => k + 1);
+    }
+    scheduleRegFieldFocus(welcomeStep);
+    return () => {
+      if (regFocusTimerRef.current) {
+        clearTimeout(regFocusTimerRef.current);
+        regFocusTimerRef.current = null;
+      }
+    };
+  }, [welcomeStep, scheduleRegFieldFocus]);
 
   useEffect(() => {
     if (welcomeStep === "phone") railwayOtpHashAlertShownRef.current = false;
@@ -454,6 +507,12 @@ export default function PayRegisterOverlay({
             transparent
             animationType="none"
             statusBarTranslucent
+            onShow={() => {
+              if (welcomeStep === "phone") {
+                setRegPhoneInputKey((k) => k + 1);
+              }
+              scheduleRegFieldFocus(welcomeStep);
+            }}
             onRequestClose={() => {
               if (welcomeStep === "phone" || welcomeStep === "otp") {
                 closeRegistrationOverlay();
@@ -595,6 +654,7 @@ export default function PayRegisterOverlay({
                               </Text>
                               <Text style={styles.regModalPrefix}>+237</Text>
                               <TextInput
+                                key={`reg-phone-${regPhoneInputKey}`}
                                 ref={regPhoneInputRef}
                                 style={styles.regModalPhoneInput}
                                 placeholder={t("register.phonePlaceholder")}
@@ -603,6 +663,8 @@ export default function PayRegisterOverlay({
                                 maxLength={9}
                                 value={welcomePhone}
                                 editable={!authOtpSending}
+                                autoFocus={welcomeStep === "phone"}
+                                showSoftInputOnFocus
                                 onChangeText={(t) => {
                                   const next = normalizeCameroonPhoneDigits(t);
                                   setWelcomePhone(next);
@@ -623,7 +685,6 @@ export default function PayRegisterOverlay({
                                     );
                                   }
                                 }}
-                                showSoftInputOnFocus
                               />
                               {phoneWalletBrand === "orange" && (
                                 <Image
@@ -674,8 +735,9 @@ export default function PayRegisterOverlay({
                             <Text style={styles.regModalLabel}>{t("register.verificationCode")}</Text>
                             <MaskedPinInput
                               ref={regOtpInputRef}
+                              variant="circles"
                               style={styles.regModalOtpInput}
-                              placeholderTextColor={colors.placeholder}
+                              accessibilityLabel={t("register.verificationCode")}
                               digits={welcomeOtp}
                               maxLength={OTP_LEN}
                               onDigitsChange={setWelcomeOtp}
@@ -774,9 +836,9 @@ export default function PayRegisterOverlay({
                             <Text style={styles.regModalLabel}>{t("register.newPin")}</Text>
                             <MaskedPinInput
                               ref={regPinInputRef}
+                              variant="circles"
                               style={styles.regModalOtpInput}
-                              placeholder={t("common.pinPlaceholder")}
-                              placeholderTextColor={colors.placeholder}
+                              accessibilityLabel={t("register.newPin")}
                               digits={onboardingPin}
                               maxLength={ONBOARDING_PIN_LEN}
                               onDigitsChange={setOnboardingPin}
@@ -814,9 +876,9 @@ export default function PayRegisterOverlay({
                             <Text style={styles.regModalLabel}>{t("common.confirm")}</Text>
                             <MaskedPinInput
                               ref={regPinConfirmInputRef}
+                              variant="circles"
                               style={styles.regModalOtpInput}
-                              placeholder={t("common.pinPlaceholder")}
-                              placeholderTextColor={colors.placeholder}
+                              accessibilityLabel={t("common.confirm")}
                               digits={onboardingPinConfirm}
                               maxLength={ONBOARDING_PIN_LEN}
                               onDigitsChange={setOnboardingPinConfirm}

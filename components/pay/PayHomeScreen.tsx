@@ -1,17 +1,24 @@
 import "@/lib/perf/eagerRoutes";
 import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
-import { MAX_AMOUNT_DIGITS, parseAmountFcfa } from "@/lib/amountLimits";
+import { useNearbyTaxi } from "@/hooks/useNearbyTaxi";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
+import {
+  initiateWalletDeposit,
+  newDepositIdempotencyKey,
+  waitDepositCompleted,
+} from "@/lib/deposit/runDeposit";
+import { takePendingDepositWatch } from "@/lib/deposit/pendingWatch";
+import { takeTopUpSuccessFlash } from "@/lib/deposit/successFlash";
 import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
-import i18n, { getNumberLocale, type AppLanguage } from "@/lib/i18n";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import { fallbackTxReference } from "@/lib/txReference";
+import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, Stack } from "expo-router";
 import React, {
@@ -19,7 +26,6 @@ import React, {
   Suspense,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,31 +33,29 @@ import React, {
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   BackHandler,
-  Image,
   InteractionManager,
   Keyboard,
+  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
-  ScrollView,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from "react-native";
 
-import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
 import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
+import { PayAmountEntry } from "@/components/pay/PayAmountEntry";
 import { CheckGlyph } from "@/components/pay/PayGlyphs";
+import {
+  PayOutcomeSheet,
+  type PayOutcomeSheetData,
+} from "@/components/pay/PayOutcomeSheet";
 import { createPayHomeStyles } from "@/components/pay/payHomeStyles";
 import { PayRegisterOverlayFallback } from "@/components/pay/PayRegisterOverlayFallback";
-import { useTranslation } from "react-i18next";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
+import { Trans, useTranslation } from "react-i18next";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
 const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
@@ -64,46 +68,20 @@ const PAY_PIN_MAX_ATTEMPTS = 5;
 /** Blocage temporaire après épuisement des tentatives (ms). */
 const PAY_PIN_LOCKOUT_MS = 2 * 60 * 1000;
 
+/** Micro-fenêtre « Recherche… » avant l’état calme (scan BLE continue). */
+const BLE_SEARCH_PULSE_MS = 1400;
+
 /**
  * Si true : ouverture auto du sheet inscription (compte manquant / onboarding).
  * Sans le bouton « Créer un compte », passe à true si tu n’as pas d’autre entrée vers l’inscription.
  */
 const AUTO_OPEN_REGISTER_SHEET_ON_LAUNCH = false;
 
-/** Bénéficiaire démo (écran paiement) — référence stable pour les hooks. */
-const DEMO_DRIVER = {
-  name: "Taxi Mohamadou",
-  phone: "698 25 68 96",
-  avatar: null,
+type PayRecipient = {
+  accountId: string | null;
+  name: string;
+  phoneDigits: string;
 };
-
-/** Montants rapides (FCFA) — un tap remplace le champ, comme Wave / OM. */
-const PAY_QUICK_AMOUNTS_FCFA = [500, 600] as const;
-
-type PaymentReceipt = {
-  amountFcfa: number;
-  recipientName: string;
-  recipientPhone: string;
-  paidAt: string;
-  balanceFcfa: number;
-  reference: string;
-};
-
-function formatReceiptDateTime(iso: string): string {
-  const d = new Date(iso);
-  const lang: AppLanguage = i18n.language === "fr" ? "fr" : "en";
-  const locale = getNumberLocale(lang);
-  const date = d.toLocaleDateString(locale, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-  const time = d.toLocaleTimeString(locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-  return `${date} · ${time}`;
-}
 
 export default function PayHomeScreen() {
   useMarkRootShellReady();
@@ -115,29 +93,209 @@ export default function PayHomeScreen() {
     return () => cancelAnimationFrame(id);
   }, []);
   const [depositChrome, setDepositChrome] = useState(false);
+  /** Montant pad Pay — pour recharge + sans passer par le modal dépôt. */
+  const [payAmountFcfa, setPayAmountFcfa] = useState<number | null>(null);
+  const [topUpPhase, setTopUpPhase] = useState<
+    "idle" | "loading" | "awaiting" | "success"
+  >("idle");
+  const [topUpSuccessMessage, setTopUpSuccessMessage] = useState<string | null>(
+    null,
+  );
+  const topUpIdempotencyRef = useRef<string | null>(null);
+  const topUpBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const topUpPollAbortRef = useRef<AbortController | null>(null);
   const openDepositInstant = useCallback(() => {
     setDepositChrome(true);
     openDepositRoute();
   }, []);
-  useFocusEffect(
-    useCallback(() => {
-      setDepositChrome(false);
-    }, []),
-  );
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
-  const insets = useSafeAreaInsets();
-  const { width: windowWidth } = useWindowDimensions();
-  const successSlideX = useRef(new Animated.Value(0)).current;
-  const { user, token, isLoading: authLoading, refreshUser } = useAuth();
-  const userPhone = user?.phone ?? "";
-  const [amount, setAmount] = useState("");
-  const [paymentStatus, setPaymentStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS'>('IDLE');
-  /** Feedback PIN : spinner → coche succès → écran Payé. */
-  const [payPinUi, setPayPinUi] = useState<"idle" | "sending" | "success">(
-    "idle",
+  const { user, token, isLoading: authLoading, refreshUser, updateBalance } =
+    useAuth();
+  const {
+    peer: nearbyPeer,
+    status: bleStatus,
+    broadcasting: bleBroadcasting,
+    refreshing: bleRefreshing,
+    refresh: refreshNearbyTaxi,
+    resyncOnFocus: resyncNearbyTaxiOnFocus,
+  } = useNearbyTaxi(true);
+  const recipient = useMemo<PayRecipient | null>(() => {
+    if (!nearbyPeer) return null;
+    /** Ne pas se détecter soi-même. */
+    if (user?.id && nearbyPeer.accountId === user.id) return null;
+    return {
+      accountId: nearbyPeer.accountId,
+      name: nearbyPeer.displayName,
+      phoneDigits: nearbyPeer.phoneDigits,
+    };
+  }, [nearbyPeer, user?.id]);
+  const recipientRef = useRef(recipient);
+  recipientRef.current = recipient;
+
+  /**
+   * Soft UX BLE : micro-pulse « Recherche… » à l’ouverture / refresh,
+   * puis état calme « Aucun à proximité » sans spinner — le scan continue.
+   */
+  const [bleSearchPulse, setBleSearchPulse] = useState(true);
+  const blePulseGenRef = useRef(0);
+
+  const bleHardBlock =
+    bleBroadcasting ||
+    bleStatus === "denied" ||
+    bleStatus === "powered_off" ||
+    bleStatus === "unavailable";
+
+  const armBleSearchPulse = useCallback(() => {
+    const gen = ++blePulseGenRef.current;
+    setBleSearchPulse(true);
+    const id = setTimeout(() => {
+      if (blePulseGenRef.current === gen) setBleSearchPulse(false);
+    }, BLE_SEARCH_PULSE_MS);
+    return () => {
+      clearTimeout(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (recipient || bleHardBlock) {
+      blePulseGenRef.current += 1;
+      setBleSearchPulse(false);
+      return;
+    }
+    return armBleSearchPulse();
+  }, [recipient, bleHardBlock, armBleSearchPulse]);
+
+  useEffect(() => {
+    if (!bleRefreshing || recipient || bleHardBlock) return;
+    return armBleSearchPulse();
+  }, [bleRefreshing, recipient, bleHardBlock, armBleSearchPulse]);
+
+  const bleShowSearchChrome =
+    !recipient && !bleHardBlock && (bleSearchPulse || bleRefreshing);
+
+  const bleHeaderTitle = recipient
+    ? recipient.name
+    : bleBroadcasting
+      ? t("ble.broadcastingShort")
+      : bleStatus === "denied"
+        ? t("ble.permissionDeniedShort")
+        : bleStatus === "powered_off"
+          ? t("ble.bluetoothOffShort")
+          : bleStatus === "unavailable"
+            ? t("ble.nativeUnavailableShort")
+            : bleShowSearchChrome
+              ? t("ble.searchingTaxi")
+              : t("ble.noneNearby");
+  const bleHeaderSubtitle = recipient
+    ? formatCameroonPhoneDisplay(recipient.phoneDigits)
+    : bleBroadcasting
+      ? t("ble.broadcastingHint")
+      : bleStatus === "denied" ||
+          bleStatus === "powered_off" ||
+          bleStatus === "unavailable"
+        ? t("ble.noTaxiHint")
+        : bleShowSearchChrome
+          ? bleRefreshing
+            ? t("ble.refreshingHint")
+            : t("ble.searchingHint")
+          : t("ble.noneNearbyHint");
+  const onRefreshNearbyTaxi = useCallback(() => {
+    if (bleBroadcasting) return;
+    const started = refreshNearbyTaxi();
+    if (!started) return;
+    void import("expo-haptics")
+      .then((H) => H.impactAsync(H.ImpactFeedbackStyle.Light))
+      .catch(() => {});
+  }, [bleBroadcasting, refreshNearbyTaxi]);
+  const showTopUpSuccessBanner = useCallback(
+    (amountFcfa: number) => {
+      if (topUpBannerTimerRef.current) {
+        clearTimeout(topUpBannerTimerRef.current);
+      }
+      setTopUpSuccessMessage(
+        t("deposit.successBanner", { amount: formatFcfa(amountFcfa) }),
+      );
+      topUpBannerTimerRef.current = setTimeout(() => {
+        setTopUpSuccessMessage(null);
+        topUpBannerTimerRef.current = null;
+      }, 2800);
+    },
+    [t],
   );
+  useFocusEffect(
+    useCallback(() => {
+      setDepositChrome(false);
+      resyncNearbyTaxiOnFocus();
+      armBleSearchPulse();
+      const flashed = takeTopUpSuccessFlash();
+      if (flashed != null) {
+        showTopUpSuccessBanner(flashed);
+      }
+      const pending = takePendingDepositWatch();
+      if (pending == null) return;
+      topUpPollAbortRef.current?.abort();
+      const pollAbort = new AbortController();
+      topUpPollAbortRef.current = pollAbort;
+      setTopUpPhase("awaiting");
+      void (async () => {
+        try {
+          await waitDepositCompleted(pending.token, pending.depositIntentId, {
+            signal: pollAbort.signal,
+          });
+          if (pollAbort.signal.aborted) return;
+          setTopUpPhase("success");
+          showTopUpSuccessBanner(pending.amountFcfa);
+          void refreshUser();
+          await new Promise<void>((r) => setTimeout(r, 500));
+          setTopUpPhase("idle");
+        } catch (e) {
+          if (pollAbort.signal.aborted) return;
+          setTopUpPhase("idle");
+          setTopUpSuccessMessage(null);
+          Alert.alert(
+            t("deposit.topUpTitle"),
+            e instanceof ApiError ? e.message : t("deposit.creditFailed"),
+          );
+        }
+      })();
+    }, [
+      showTopUpSuccessBanner,
+      refreshUser,
+      t,
+      resyncNearbyTaxiOnFocus,
+      armBleSearchPulse,
+    ]),
+  );
+  useEffect(() => {
+    return () => {
+      if (topUpBannerTimerRef.current) {
+        clearTimeout(topUpBannerTimerRef.current);
+      }
+      topUpPollAbortRef.current?.abort();
+    };
+  }, []);
+  const userPhone = user?.phone ?? "";
+  /** Module API préchargé pendant la saisie PIN (pas au moment du POST). */
+  const payApiRef = useRef<typeof import("@/lib/api/client") | null>(null);
+  const warmPayApi = useCallback(() => {
+    void import("@/lib/api/client")
+      .then((m) => {
+        payApiRef.current = m;
+        return m.ensureSessionFresh();
+      })
+      .catch(() => {
+        /* warm best-effort */
+      });
+  }, []);
+  const [paymentStatus, setPaymentStatus] = useState<"IDLE" | "SENDING">("IDLE");
+  /** Montant affiché dans la modale solde insuffisant (état local pad). */
+  const [insufficientAttemptFcfa, setInsufficientAttemptFcfa] = useState(0);
+  /** Feedback PIN : spinner → coche succès → écran Payé. */
+  const [payPinUi, setPayPinUi] = useState<"idle" | "sending">("idle");
   const [payPinModalVisible, setPayPinModalVisible] = useState(false);
   const [payPinDraft, setPayPinDraft] = useState("");
   /** Contrôle ponctuel du curseur après refocus (Android + secureTextEntry). */
@@ -149,9 +307,8 @@ export default function PayHomeScreen() {
     null,
   );
   const [payPendingAmount, setPayPendingAmount] = useState(0);
-  const [paymentReceipt, setPaymentReceipt] = useState<PaymentReceipt | null>(
-    null,
-  );
+  const [payOutcomeSheet, setPayOutcomeSheet] =
+    useState<PayOutcomeSheetData | null>(null);
   const payPinFailedRef = useRef(0);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
@@ -169,9 +326,6 @@ export default function PayHomeScreen() {
   const payPinOpenFocusGenRef = useRef(0);
   /** Remount TextInput → autoFocus fiable (Modal RN cassait le clavier). */
   const [payPinInputKey, setPayPinInputKey] = useState(0);
-  /** Soulève le sheet PIN au-dessus du clavier (Android overlay). */
-  const [payPinKeyboardLift, setPayPinKeyboardLift] = useState(0);
-
   const showRegisterOverlay =
     registerInviteVisible && (!user || Boolean(user.needsOnboarding));
 
@@ -200,13 +354,10 @@ export default function PayHomeScreen() {
     }
   }, [user]);
 
-  useEffect(() => {
-    if (!token) setAmount("");
-  }, [token]);
-
   /**
-   * Splash sacré → puis flood prefetch (mémoire) : onglets, dépôt, register, cache.
-   * Zéro concession latence clic.
+   * Splash sacré → prefetch hors chemin critique Pay.
+   * Pas de warm API client ici : ça volerait le CPU du 1er frame.
+   * Le client se précharge au clic « payer » / montant rapide (Pay déjà affiché).
    */
   useEffect(() => {
     if (authLoading) return;
@@ -299,35 +450,100 @@ export default function PayHomeScreen() {
     };
   }, [payPinModalVisible, schedulePayPinFieldFocus, payPinInputKey]);
 
-  const AMOUNT_MAX_LEN = MAX_AMOUNT_DIGITS;
+  const handleTopUpFromPay = useCallback(async () => {
+    if (topUpPhase !== "idle" || paymentStatus === "SENDING") return;
+    if (!token) {
+      Keyboard.dismiss();
+      void importPayRegisterOverlay();
+      setConnexionPromptKind("recharge");
+      return;
+    }
+    if (user?.needsOnboarding) {
+      Alert.alert(
+        t("pay.onboardingRequiredTitle"),
+        t("pay.onboardingRequiredMessage"),
+      );
+      return;
+    }
+    const n = payAmountFcfa;
+    /** Pas de montant sur le pad → feuille dépôt classique. */
+    if (n == null || n <= 0) {
+      openDepositInstant();
+      return;
+    }
+    if (!topUpIdempotencyRef.current) {
+      topUpIdempotencyRef.current = newDepositIdempotencyKey();
+    }
+    const idempotencyKey = topUpIdempotencyRef.current;
+    topUpPollAbortRef.current?.abort();
+    const pollAbort = new AbortController();
+    topUpPollAbortRef.current = pollAbort;
+    setTopUpPhase("loading");
+    try {
+      const init = await initiateWalletDeposit(token, n, idempotencyKey);
+      if (init.status === "completed") {
+        topUpIdempotencyRef.current = null;
+        setTopUpPhase("success");
+        showTopUpSuccessBanner(n);
+        void refreshUser();
+        await new Promise<void>((r) => setTimeout(r, 500));
+        setTopUpPhase("idle");
+        return;
+      }
+      /** MoMo lancé → plus de spinner ; confirmation silencieuse en fond. */
+      setTopUpPhase("awaiting");
+      await waitDepositCompleted(token, init.depositIntentId, {
+        signal: pollAbort.signal,
+      });
+      if (pollAbort.signal.aborted) return;
+      topUpIdempotencyRef.current = null;
+      setTopUpPhase("success");
+      showTopUpSuccessBanner(n);
+      void refreshUser();
+      await new Promise<void>((r) => setTimeout(r, 500));
+      setTopUpPhase("idle");
+    } catch (e) {
+      if (pollAbort.signal.aborted) return;
+      topUpIdempotencyRef.current = null;
+      setTopUpPhase("idle");
+      setTopUpSuccessMessage(null);
+      Alert.alert(
+        t("deposit.topUpTitle"),
+        e instanceof ApiError ? e.message : t("deposit.creditFailed"),
+      );
+    }
+  }, [
+    topUpPhase,
+    paymentStatus,
+    token,
+    user?.needsOnboarding,
+    payAmountFcfa,
+    openDepositInstant,
+    refreshUser,
+    showTopUpSuccessBanner,
+    t,
+  ]);
 
-  const onAmountDigit = useCallback((digit: string) => {
-    setAmount((prev) => {
-      const d = digit.replace(/\D/g, "");
-      if (!d) return prev;
-      if (prev.length >= AMOUNT_MAX_LEN) return prev;
-      if (prev === "" && d === "0") return prev;
-      if (prev === "0") return d;
-      return prev + d;
-    });
-  }, []);
-
-  const onAmountBackspace = useCallback(() => {
-    setAmount((prev) => prev.slice(0, -1));
-  }, []);
-
-  const onQuickAmount = useCallback((value: number) => {
-    const next = String(value);
-    setAmount((prev) => (prev === next ? prev : next));
-  }, []);
-
-  const handlePay = () => {
-    const n = parseAmountFcfa(amount);
-    if (n == null || paymentStatus === "SENDING") return;
+  const handlePay = useCallback((n: number) => {
+    if (n <= 0 || paymentStatus === "SENDING") return;
+    /** Pendant le PIN : module + JWT prêts → POST quasi immédiat. */
+    warmPayApi();
     if (!token) {
       Keyboard.dismiss();
       void importPayRegisterOverlay();
       setConnexionPromptKind("pay");
+      return;
+    }
+    if (user?.activeContext?.type === "commerce") {
+      Alert.alert(t("commerce.payAsPersonalTitle"), t("commerce.payAsPersonalMessage"));
+      return;
+    }
+    if (!recipientRef.current) {
+      Alert.alert(t("ble.noTaxiTitle"), t("ble.noTaxiMessage"));
+      return;
+    }
+    if (!recipientRef.current.accountId) {
+      Alert.alert(t("ble.noTaxiTitle"), t("ble.noTaxiMessage"));
       return;
     }
     if (user?.needsOnboarding) {
@@ -343,6 +559,7 @@ export default function PayHomeScreen() {
      */
     if (user != null && n > balance) {
       Keyboard.dismiss();
+      setInsufficientAttemptFcfa(n);
       setInsufficientBalanceVisible(true);
       return;
     }
@@ -374,10 +591,18 @@ export default function PayHomeScreen() {
     payPinOpenFocusGenRef.current += 1;
     setPayPinInputKey((k) => k + 1);
     setPayPinModalVisible(true);
-  };
+  }, [
+    paymentStatus,
+    token,
+    user,
+    balance,
+    payPinLockoutUntil,
+    t,
+    warmPayApi,
+  ]);
 
   const cancelPayPin = useCallback(() => {
-    if (payPinUi === "sending" || payPinUi === "success") return;
+    if (payPinUi === "sending") return;
     payPinOpenFocusGenRef.current += 1;
     if (payPinFocusTimerRef.current) {
       clearTimeout(payPinFocusTimerRef.current);
@@ -403,27 +628,6 @@ export default function PayHomeScreen() {
     return () => back.remove();
   }, [payPinModalVisible, paymentStatus, cancelPayPin]);
 
-  useEffect(() => {
-    if (!payPinModalVisible) {
-      setPayPinKeyboardLift(0);
-      return;
-    }
-    const showEvt =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvt =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const onShow = Keyboard.addListener(showEvt, (e) => {
-      setPayPinKeyboardLift(e.endCoordinates?.height ?? 0);
-    });
-    const onHide = Keyboard.addListener(hideEvt, () => {
-      setPayPinKeyboardLift(0);
-    });
-    return () => {
-      onShow.remove();
-      onHide.remove();
-    };
-  }, [payPinModalVisible]);
-
   const confirmPayWithPin = useCallback(async (pinRaw?: string) => {
     const pin = (pinRaw ?? payPinDraft).replace(/\D/g, "");
     if (pin.length !== ONBOARDING_PIN_LEN || !token) return;
@@ -432,13 +636,19 @@ export default function PayHomeScreen() {
     setPaymentStatus("SENDING");
     setPayPinUi("sending");
     try {
-      const { pay } = await import("@/lib/api/client");
-      const payRes = await pay(
+      const api = payApiRef.current ?? (await import("@/lib/api/client"));
+      payApiRef.current = api;
+      const to = recipientRef.current;
+      if (!to) {
+        throw new ApiError(t("ble.noTaxiMessage"), 409);
+      }
+      const payRes = await api.pay(
         token,
         payPendingAmount,
-        DEMO_DRIVER.name,
-        DEMO_DRIVER.phone.replace(/\s/g, "") || null,
+        to.name,
+        to.phoneDigits || null,
         pin,
+        to.accountId,
       );
       if (payPinFocusTimerRef.current) {
         clearTimeout(payPinFocusTimerRef.current);
@@ -447,31 +657,51 @@ export default function PayHomeScreen() {
       payPinInputRef.current?.blur();
       Keyboard.dismiss();
       payPinFailedRef.current = 0;
-      setPaymentReceipt({
-        amountFcfa: payPendingAmount,
-        recipientName: DEMO_DRIVER.name,
-        recipientPhone: DEMO_DRIVER.phone.replace(/\s/g, ""),
-        paidAt: new Date().toISOString(),
-        balanceFcfa: payRes.balanceFcfa,
-        reference:
-          payRes.reference?.trim() ||
-          (payRes.transactionId
-            ? fallbackTxReference(payRes.transactionId)
-            : fallbackTxReference(`pay-${Date.now()}`)),
-      });
-      setPayPinUi("success");
-      await new Promise<void>((r) => setTimeout(r, 500));
+      const paidAt = new Date().toISOString();
+      const reference =
+        payRes.reference?.trim() ||
+        (payRes.transactionId
+          ? fallbackTxReference(payRes.transactionId)
+          : fallbackTxReference(`pay-${Date.now()}`));
+      /** Solde + historique RAM tout de suite (onglet Transactions = flash, pas reload). */
+      updateBalance(payRes.balanceFcfa);
+      if (userPhone && payRes.transactionId) {
+        const cache = await import("@/lib/transactionsCache");
+        cache.mergeTransactionsDelta(userPhone, [
+          {
+            id: payRes.transactionId,
+            reference,
+            type: "sent",
+            amountFcfa: payPendingAmount,
+            counterpartyName: to.name,
+            counterpartyPhone: to.phoneDigits || null,
+            createdAt: paidAt,
+          },
+        ]);
+        await cache.setSyncCursor(userPhone, paidAt);
+      }
       setPayPinModalVisible(false);
       setPayPinDraft("");
       setPayPinSelection(undefined);
       setPayPinUi("idle");
+      setPaymentStatus("IDLE");
+      setPayOutcomeSheet({
+        kind: "success",
+        amountFcfa: payPendingAmount,
+        recipientName: to.name,
+      });
+      if (to.accountId && to.name) {
+        void import("@/lib/peers/displayNameCache").then((m) => {
+          m.rememberPeerDisplayName(to.accountId!, to.name);
+        });
+      }
+      /** Confirmations réseau en fond (ne bloquent pas l’UI). */
       void refreshUser();
       if (userPhone) {
         void import("@/lib/sync/transactionsSync").then((m) => {
           void m.syncTransactionsFromNetwork(token, userPhone);
         });
       }
-      setPaymentStatus("SUCCESS");
     } catch (e) {
       setPaymentStatus("IDLE");
       setPayPinUi("idle");
@@ -519,19 +749,25 @@ export default function PayHomeScreen() {
         setPayPinSelection(undefined);
         // Réseau down → file offline (rejeu au reconnect)
         if (e instanceof ApiError && e.status === 0) {
-          void import("@/lib/offline/queue").then((m) => {
-            void m.enqueueOfflineOp("pay", {
-              amountFcfa: payPendingAmount,
-              recipientName: DEMO_DRIVER.name,
-              recipientPhone: DEMO_DRIVER.phone.replace(/\s/g, "") || null,
-              transactionPin: pin,
+          const to = recipientRef.current;
+          if (to) {
+            void import("@/lib/offline/queue").then((m) => {
+              void m.enqueueOfflineOp("pay", {
+                amountFcfa: payPendingAmount,
+                recipientName: to.name,
+                recipientPhone: to.phoneDigits || null,
+                transactionPin: pin,
+              });
             });
-          });
+          }
         }
-        Alert.alert(
-          t("pay.paymentTitle"),
-          e instanceof ApiError ? e.message : t("common.genericError"),
-        );
+        setPayOutcomeSheet({
+          kind: "error",
+          title: t("pay.paymentTitle"),
+          message:
+            e instanceof ApiError ? e.message : t("common.genericError"),
+          recipientName: recipientRef.current?.name,
+        });
       }
     }
   }, [
@@ -541,172 +777,24 @@ export default function PayHomeScreen() {
     token,
     payPendingAmount,
     refreshUser,
+    updateBalance,
     schedulePayPinFieldFocus,
     t,
     userPhone,
   ]);
 
-  const payAmountFcfa = parseAmountFcfa(amount);
-  const canPayAmount = payAmountFcfa != null;
-  const quickAmountsDisabled =
-    paymentStatus === "SENDING" || showRegisterOverlay;
-  const quickAmountItems = useMemo(
-    () =>
-      PAY_QUICK_AMOUNTS_FCFA.map((value) => ({
-        value,
-        label: formatFcfa(value),
-        selected: amount === String(value),
-      })),
-    [amount],
-  );
+  const dismissPayOutcomeSheet = useCallback(() => {
+    setPayOutcomeSheet(null);
+  }, []);
 
-  const payAmountDisplayText =
-    amount === "" ? "0" : formatFcfa(payAmountFcfa ?? 0);
-
-  useLayoutEffect(() => {
-    if (paymentStatus !== "SUCCESS") return;
-    successSlideX.setValue(windowWidth);
-    Animated.timing(successSlideX, {
-      toValue: 0,
-      duration: 280,
-      useNativeDriver: true,
-    }).start();
-  }, [paymentStatus, windowWidth, successSlideX]);
-
-  if (paymentStatus === "SUCCESS" && paymentReceipt) {
-    const phoneDisplay = formatCameroonPhoneDisplay(
-      paymentReceipt.recipientPhone,
-    );
-    return (
-      <View style={styles.successSafe}>
-      <Animated.View
-        style={[
-          styles.successSafe,
-          { transform: [{ translateX: successSlideX }] },
-        ]}
-      >
-      <SafeAreaView style={styles.successSafe} edges={["top", "left", "right"]}>
-        <ScrollView
-          style={styles.successScroll}
-          contentContainerStyle={styles.successScrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-          bounces
-        >
-          <View style={styles.successTop}>
-            <View
-              style={styles.successIconWrap}
-              accessibilityLabel={t("pay.receiptStatusOk")}
-            >
-              <CheckGlyph color={colors.accent} size={40} />
-            </View>
-            <Text style={styles.successTitle}>{t("pay.paid")}</Text>
-            <Text style={styles.successSubtitle}>{t("pay.successSubtitle")}</Text>
-            <Text style={styles.successAmount}>
-              −{formatFcfa(paymentReceipt.amountFcfa)}
-            </Text>
-            <Text style={styles.successAmountCurrency}>{t("common.fcfa")}</Text>
-
-            <View style={styles.successReceipt}>
-              <View style={[styles.successRow, styles.successRowBorder]}>
-                <Text style={styles.successRowLabel}>{t("pay.receiptTo")}</Text>
-                <Text style={styles.successRowValue}>
-                  {paymentReceipt.recipientName}
-                </Text>
-              </View>
-              {phoneDisplay ? (
-                <View style={[styles.successRow, styles.successRowBorder]}>
-                  <Text style={styles.successRowLabel}>
-                    {t("pay.receiptPhone")}
-                  </Text>
-                  <Text
-                    style={[styles.successRowValue, styles.successRowValueMuted]}
-                  >
-                    +237 {phoneDisplay}
-                  </Text>
-                </View>
-              ) : null}
-              <View style={[styles.successRow, styles.successRowBorder]}>
-                <Text style={styles.successRowLabel}>{t("pay.receiptDate")}</Text>
-                <Text
-                  style={[styles.successRowValue, styles.successRowValueMuted]}
-                >
-                  {formatReceiptDateTime(paymentReceipt.paidAt)}
-                </Text>
-              </View>
-              <View style={[styles.successRow, styles.successRowBorder]}>
-                <Text style={styles.successRowLabel}>
-                  {t("pay.receiptStatus")}
-                </Text>
-                <Text style={[styles.successRowValue, styles.successStatusOk]}>
-                  {t("pay.receiptStatusOk")}
-                </Text>
-              </View>
-              <View style={[styles.successRow, styles.successRowBorder]}>
-                <Text style={styles.successRowLabel}>
-                  {t("pay.receiptBalance")}
-                </Text>
-                <Text style={styles.successRowValue}>
-                  {formatFcfa(paymentReceipt.balanceFcfa)} {t("common.fcfa")}
-                </Text>
-              </View>
-              <View style={styles.successRow}>
-                <Text style={styles.successRowLabel}>{t("pay.receiptRef")}</Text>
-                <Text
-                  style={[styles.successRowValue, styles.successRowValueMuted]}
-                  numberOfLines={1}
-                >
-                  {paymentReceipt.reference}
-                </Text>
-              </View>
-            </View>
-
-            <Pressable
-              style={({ pressed }) => [
-                styles.successSecondaryBtn,
-                styles.successHistoryInScroll,
-                pressed && styles.successSecondaryBtnPressed,
-              ]}
-              onPress={() => {
-                setAmount("");
-                setPaymentReceipt(null);
-                setPaymentStatus("IDLE");
-                router.push("/(tabs)/history");
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={t("pay.viewHistory")}
-            >
-              <Text style={styles.successSecondaryBtnText}>
-                {t("pay.viewHistory")}
-              </Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-
-        <View style={styles.successActions}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.successPrimaryBtn,
-              pressed && styles.successPrimaryBtnPressed,
-            ]}
-            onPress={() => {
-              setAmount("");
-              setPaymentReceipt(null);
-              setPaymentStatus("IDLE");
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={t("pay.newTransaction")}
-          >
-            <Text style={styles.successPrimaryBtnText}>
-              {t("pay.newTransaction")}
-            </Text>
-          </Pressable>
-        </View>
-      </SafeAreaView>
-      </Animated.View>
-      </View>
-    );
-  }
+  useEffect(() => {
+    if (!payOutcomeSheet) return;
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      dismissPayOutcomeSheet();
+      return true;
+    });
+    return () => back.remove();
+  }, [payOutcomeSheet, dismissPayOutcomeSheet]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -719,139 +807,110 @@ export default function PayHomeScreen() {
             <View style={styles.payScreenBody}>
               <View style={styles.payTopBlock}>
                 <View style={styles.topBarRow}>
-                  <View style={styles.recipientRow}>
-                    {!DEMO_DRIVER.avatar ? (
-                      <View style={styles.recipientThumb}>
+                  <Pressable
+                    onPress={onRefreshNearbyTaxi}
+                    disabled={bleBroadcasting}
+                    hitSlop={8}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("ble.refreshA11y")}
+                    accessibilityState={{
+                      disabled: bleBroadcasting,
+                      busy: bleRefreshing,
+                    }}
+                    style={({ pressed }) => [
+                      styles.recipientRow,
+                      pressed &&
+                        !bleBroadcasting &&
+                        styles.recipientRowPressed,
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.recipientThumb,
+                        !recipient && styles.recipientThumbMuted,
+                      ]}
+                    >
+                      {bleShowSearchChrome ? (
+                        <ActivityIndicator color={colors.accent} size="small" />
+                      ) : recipient ? (
                         <Text style={styles.recipientThumbLetter}>
-                          {DEMO_DRIVER.name.charAt(0)}
+                          {recipient.name.charAt(0).toUpperCase()}
                         </Text>
-                      </View>
-                    ) : (
-                      <Image
-                        source={DEMO_DRIVER.avatar}
-                        style={styles.recipientThumbImage}
-                      />
-                    )}
+                      ) : bleBroadcasting ? (
+                        <Ionicons
+                          name="radio"
+                          size={22}
+                          color={colors.accent}
+                        />
+                      ) : (
+                        <Text style={styles.recipientThumbLetter}>?</Text>
+                      )}
+                    </View>
                     <View style={styles.recipientTexts}>
                       <Text
                         style={styles.driverName}
                         numberOfLines={1}
                         ellipsizeMode="tail"
                       >
-                        {DEMO_DRIVER.name}
+                        {bleHeaderTitle}
                       </Text>
-                      <Text style={styles.driverPhone}>{DEMO_DRIVER.phone}</Text>
+                      <Text style={styles.driverPhone} numberOfLines={1}>
+                        {bleHeaderSubtitle}
+                      </Text>
                     </View>
-                  </View>
+                  </Pressable>
                   <Pressable
                     style={({ pressed }) => [
                       styles.balanceAddBtn,
-                      pressed && styles.balanceAddBtnPressed,
+                      pressed &&
+                        topUpPhase !== "loading" &&
+                        topUpPhase !== "awaiting" &&
+                        styles.balanceAddBtnPressed,
                     ]}
-                      onPressIn={() => {
-                        if (token) void import("@/app/deposit");
-                      }}
-                      onPress={() => {
-                        if (!token) {
-                          Keyboard.dismiss();
-                          void importPayRegisterOverlay();
-                          setConnexionPromptKind("recharge");
-                          return;
-                        }
-                        openDepositInstant();
-                      }}
+                    onPressIn={() => {
+                      if (token && payAmountFcfa == null) {
+                        void import("@/app/deposit");
+                      } else if (token) {
+                        void import("@/lib/api/client");
+                      }
+                    }}
+                    onPress={() => {
+                      void handleTopUpFromPay();
+                    }}
+                    disabled={topUpPhase === "loading" || topUpPhase === "awaiting"}
                     accessibilityRole="button"
                     accessibilityLabel={t("common.topUpAccount")}
+                    accessibilityState={{
+                      busy: topUpPhase === "loading" || topUpPhase === "awaiting",
+                      disabled:
+                        topUpPhase === "loading" || topUpPhase === "awaiting",
+                    }}
                     hitSlop={10}
                   >
-                    <Text style={styles.balanceAddIcon}>+</Text>
-                  </Pressable>
-                </View>
-
-                <View style={styles.inputSection}>
-                  <Text style={styles.inputLabel}>{t("pay.amountLabel")}</Text>
-                  <View style={styles.inputWrapper}>
-                    <View style={styles.amountDisplayWrap}>
-                      <Text
-                        style={styles.amountDisplay}
-                        numberOfLines={1}
-                        accessibilityRole="text"
-                        accessibilityLabel={t("a11y.amountLabel", {
-                          amount: payAmountDisplayText,
-                        })}
-                      >
-                        {payAmountDisplayText}
-                      </Text>
-                    </View>
-                    <Text style={styles.currency}>{t("common.fcfa")}</Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={styles.payContentSpacer} />
-
-              <View style={styles.payBottomBlock}>
-                <View style={styles.quickAmountsRow}>
-                  {quickAmountItems.map((item) => (
-                    <Pressable
-                      key={item.value}
-                      style={({ pressed }) => [
-                        styles.quickAmountBtn,
-                        item.selected && styles.quickAmountBtnSelected,
-                        pressed &&
-                          !quickAmountsDisabled &&
-                          styles.quickAmountBtnPressed,
-                        quickAmountsDisabled && styles.quickAmountBtnDisabled,
-                      ]}
-                      onPressIn={() => {
-                        if (!quickAmountsDisabled) {
-                          onQuickAmount(item.value);
-                        }
-                      }}
-                      disabled={quickAmountsDisabled}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("pay.quickAmount", {
-                        amount: item.label,
-                      })}
-                      accessibilityState={{
-                        selected: item.selected,
-                        disabled: quickAmountsDisabled,
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.quickAmountBtnText,
-                          item.selected && styles.quickAmountBtnTextSelected,
-                        ]}
-                      >
-                        {item.label}
-                      </Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <AmountNumericKeypad
-                  onDigit={onAmountDigit}
-                  onBackspace={onAmountBackspace}
-                  disabled={quickAmountsDisabled}
-                />
-                <View style={styles.actionSection}>
-                  <Pressable
-                    style={({ pressed }) => [
-                      styles.payButton,
-                      (pressed || paymentStatus === 'SENDING') && styles.payButtonPressed,
-                      (!canPayAmount || paymentStatus === 'SENDING') && styles.payButtonDisabled,
-                    ]}
-                    onPress={handlePay}
-                    disabled={!canPayAmount || paymentStatus === 'SENDING'}
-                  >
-                    {paymentStatus === 'SENDING' ? (
-                      <ActivityIndicator color={colors.accentOn} size="small" />
+                    {topUpPhase === "loading" ? (
+                      <ActivityIndicator color={colors.accent} size="small" />
+                    ) : topUpPhase === "success" ? (
+                      <CheckGlyph color={colors.accent} size={22} />
                     ) : (
-                      <Text style={styles.payButtonText}>{t("pay.payNow")}</Text>
+                      <Text style={styles.balanceAddIcon}>+</Text>
                     )}
                   </Pressable>
                 </View>
               </View>
+
+              <PayAmountEntry
+                styles={styles}
+                /** Identité stable — pas le JWT (refresh → sinon montant remis à 0). */
+                resetKey={user?.personalAccountId ?? user?.phone ?? "anon"}
+                keypadDisabled={
+                  paymentStatus === "SENDING" || showRegisterOverlay
+                }
+                payBusy={paymentStatus === "SENDING"}
+                onPay={handlePay}
+                onAmountFcfaChange={setPayAmountFcfa}
+                topUpSuccessMessage={topUpSuccessMessage}
+                balanceFcfa={user && balance <= 1000 ? balance : null}
+              />
             </View>
           </SafeAreaView>
 
@@ -948,7 +1007,7 @@ export default function PayHomeScreen() {
                   <Text style={styles.connexionModalMessage}>
                     {t("pay.insufficientBalanceMessage", {
                       balance: formatFcfa(balance),
-                      amount: formatFcfa(parseInt(amount, 10) || 0),
+                      amount: formatFcfa(insufficientAttemptFcfa),
                     })}
                   </Text>
                   <View style={styles.connexionModalActions}>
@@ -988,7 +1047,11 @@ export default function PayHomeScreen() {
           ) : null}
 
           {payPinModalVisible ? (
-            <View style={styles.payPinOverlay} accessibilityViewIsModal>
+            <KeyboardAvoidingView
+              style={styles.payPinOverlay}
+              behavior={Platform.OS === "ios" ? "padding" : undefined}
+              accessibilityViewIsModal
+            >
               <Pressable
                 style={styles.payPinModalBackdrop}
                 onPress={() => {
@@ -997,34 +1060,19 @@ export default function PayHomeScreen() {
                 disabled={payPinUi !== "idle"}
                 accessibilityLabel={t("common.close")}
               />
-              <View
-                style={[
-                  styles.payPinSheet,
-                  payPinKeyboardLift > 0 && styles.payPinSheetKeyboardFlush,
-                  {
-                    /** Collage exact : bas du sheet = haut du clavier. */
-                    bottom:
-                      payPinKeyboardLift > 0
-                        ? Math.max(
-                            0,
-                            payPinKeyboardLift -
-                              (Platform.OS === "android" ? insets.bottom : 0),
-                          )
-                        : 0,
-                    paddingBottom:
-                      payPinKeyboardLift > 0
-                        ? 12
-                        : Math.max(insets.bottom, 16) + 8,
-                  },
-                ]}
-              >
-                <View style={styles.payPinSheetHandle} />
+              <View style={styles.payPinCard}>
                 <Text style={styles.payPinModalTitle}>{t("pay.pinTitle")}</Text>
                 <Text style={styles.payPinModalSub}>
-                  {t("pay.pinConfirmPayment", {
-                    amount: formatFcfa(payPendingAmount),
-                    name: DEMO_DRIVER.name,
-                  })}
+                  <Trans
+                    i18nKey="pay.pinConfirmPayment"
+                    values={{
+                      amount: formatFcfa(payPendingAmount),
+                      name: recipientRef.current?.name ?? t("ble.driverDefaultName"),
+                    }}
+                    components={{
+                      amount: <Text style={styles.payPinModalSubAmount} />,
+                    }}
+                  />
                 </Text>
                 {payPinErrorLine ? (
                   <Text
@@ -1065,16 +1113,9 @@ export default function PayHomeScreen() {
                   <View style={styles.payPinFeedback}>
                     <ActivityIndicator color={colors.accent} size="small" />
                   </View>
-                ) : payPinUi === "success" ? (
-                  <View
-                    style={styles.payPinFeedback}
-                    accessibilityLabel={t("pay.paid")}
-                  >
-                    <CheckGlyph color={colors.accent} size={36} />
-                  </View>
                 ) : null}
               </View>
-            </View>
+            </KeyboardAvoidingView>
           ) : null}
 
           {depositChrome ? (
@@ -1083,6 +1124,13 @@ export default function PayHomeScreen() {
                 setDepositChrome(false);
                 if (router.canGoBack()) router.back();
               }}
+            />
+          ) : null}
+
+          {payOutcomeSheet ? (
+            <PayOutcomeSheet
+              outcome={payOutcomeSheet}
+              onDismiss={dismissPayOutcomeSheet}
             />
           ) : null}
       </View>

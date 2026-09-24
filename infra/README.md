@@ -1,6 +1,8 @@
 # Blyp — infra AWS (phase 3)
 
-Stack **SAM** : API Gateway HTTP, Lambda `/health` + **auth OTP/JWT** + **wallet** + **webhooks PawaPay**, table DynamoDB single-table (`PK` / `SK`, TTL `expiresAt`, PITR).
+Stack **SAM** : API Gateway HTTP, Lambda `/health` + **auth OTP/JWT** + **wallet** + **webhooks PawaPay** + **worker push SQS**, table DynamoDB single-table (`PK` / `SK`, TTL `expiresAt`, PITR).
+
+**Push** : après crédit paiement, Wallet enfile SQS → `blyp-push-*` envoie Expo (`+1 500 FCFA · Marie`). Tokens : `USER#…` / `DEVICE#…`. Idempotence `IDEM#push` / `transactionId`.
 
 Région cible : **`af-south-1`**.
 
@@ -15,6 +17,8 @@ Région cible : **`af-south-1`**.
 | POST | `/auth/onboarding/transaction-pin` | Définir PIN (auth) |
 | POST | `/auth/onboarding/profile` | Prénom / nom (auth) |
 | GET | `/me` | Profil + solde (auth) |
+| PUT | `/me/device-token` | Enregistrer jeton push Expo (auth) |
+| DELETE | `/me/device-token` | Révoquer jeton push (auth / logout) |
 | POST | `/wallet/deposit` | Dépôt (sync par défaut, idempotence `Idempotency-Key`) |
 | GET | `/wallet/deposits/{id}` | Statut d’un dépôt |
 | POST | `/payments/pay` | Paiement (PIN 4 chiffres, idempotence) |
@@ -72,8 +76,28 @@ Cocher dans l’ordre. **Ne pas basculer l’app mobile** vers AWS tant que vous
 
 ### Paramètres phase 3 (wallet)
 
-- `DepositMode=sync` — crédit interne immédiat (sans PawaPay réel)
-- `DepositMode=async` + `PawapayApiToken` + `PawapayWebhookSecret` — Mobile Money réel
+- `DepositMode=sync` — crédit interne immédiat (**pas** de débit MoMo)
+- `DepositMode=async` + `PawapayApiToken` — initiation Mobile Money (USSD / push)
+- `PawapayApiBaseUrl` :
+  - sandbox : `https://api.sandbox.pawapay.io` (pas de vrai argent)
+  - **live** : `https://api.pawapay.io` (**vrai débit** MTN/Orange)
+- Enregistrer chez PawaPay l’output CloudFormation `PawapayWebhookUrl`
+- Après succès / échec opérateur → webhook crédite le solde Blyp (l’app poll aussi `GET /wallet/deposits/{id}`)
+
+#### Activer le vrai MoMo (checklist)
+
+1. Compte PawaPay **live** + token API live + pays Cameroun (XAF) activé  
+2. Dans `infra/samconfig.toml` (local, gitignoré) :
+
+```text
+DepositMode=async
+PawapayApiToken=TON_TOKEN_LIVE
+PawapayApiBaseUrl=https://api.pawapay.io
+```
+
+3. `npm run aws:build` puis `npm run aws:deploy`  
+4. Copier `PawapayWebhookUrl` dans le dashboard PawaPay  
+5. Sur le Redmi : se connecter avec un numéro MoMo réel → recharge → valider le push/USSD sur le téléphone
 
 ### Stack sans coûts fixes (règles Blyp)
 

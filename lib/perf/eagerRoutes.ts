@@ -10,3 +10,5 @@ void import("@/components/history/preloadHistory").then((m) => {
   void m.preloadHistoryScreen();
 });
 void import("@/app/(tabs)/profile");
+void import("@/app/(tabs)/messages");
+void import("@/components/messages/ConversationsScreen");

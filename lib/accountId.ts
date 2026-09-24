@@ -18,6 +18,11 @@ export function makeAccountId(): string {
   return `BLYP-U-${randomCrockford(10)}`;
 }
 
+/** Ex. BLYP-C-7KQ9XM2A4B */
+export function makeCommerceAccountId(): string {
+  return `BLYP-C-${randomCrockford(10)}`;
+}
+
 export function fallbackAccountId(userId: string): string {
   const hex = String(userId ?? "")
     .replace(/-/g, "")

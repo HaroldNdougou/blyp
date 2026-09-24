@@ -3,7 +3,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import type { ThemeColors } from "@/lib/theme/colors";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 
 /** Délai avant rafale ; intervalle entre chaque effacement (ms). */
 const BACKSPACE_REPEAT_DELAY_MS = 360;
@@ -18,7 +18,8 @@ function KeypadBackspaceKey({
   iconColor,
   backspaceLabel,
 }: {
-  onBackspace: () => void;
+  /** `true` = champ vide → arrêter la rafale. */
+  onBackspace: () => boolean;
   disabled?: boolean;
   styles: KeypadStyles;
   iconColor: string;
@@ -40,17 +41,18 @@ function KeypadBackspaceKey({
 
   useEffect(() => () => stopRepeat(), [stopRepeat]);
 
+  const tick = useCallback(() => {
+    if (onBackspace()) stopRepeat();
+  }, [onBackspace, stopRepeat]);
+
   const onPressIn = useCallback(() => {
     if (disabled) return;
-    onBackspace();
-    delayRef.current = setTimeout(() => {
-      repeatRef.current = setInterval(onBackspace, BACKSPACE_REPEAT_INTERVAL_MS);
-    }, BACKSPACE_REPEAT_DELAY_MS);
-  }, [disabled, onBackspace]);
-
-  const onPressOut = useCallback(() => {
     stopRepeat();
-  }, [stopRepeat]);
+    if (onBackspace()) return;
+    delayRef.current = setTimeout(() => {
+      repeatRef.current = setInterval(tick, BACKSPACE_REPEAT_INTERVAL_MS);
+    }, BACKSPACE_REPEAT_DELAY_MS);
+  }, [disabled, onBackspace, stopRepeat, tick]);
 
   return (
     <Pressable
@@ -61,7 +63,7 @@ function KeypadBackspaceKey({
         disabled && styles.keypadKeyDisabled,
       ]}
       onPressIn={onPressIn}
-      onPressOut={onPressOut}
+      onPressOut={stopRepeat}
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={backspaceLabel}
@@ -73,21 +75,26 @@ function KeypadBackspaceKey({
 
 type Props = {
   onDigit: (digit: string) => void;
-  onBackspace: () => void;
+  /** `true` si plus aucun chiffre. */
+  onBackspace: () => boolean;
+  /** Case vide sous le 7 → confirmer le paiement. */
+  onConfirm?: () => void;
+  confirmEnabled?: boolean;
+  confirmBusy?: boolean;
   disabled?: boolean;
 };
 
 const ROWS: readonly (readonly string[])[] = [
-  ["1", "2", "3"],
-  ["4", "5", "6"],
   ["7", "8", "9"],
-  ["", "0", "back"],
+  ["4", "5", "6"],
+  ["1", "2", "3"],
+  ["back", "0", "pay"],
 ];
 
 function createKeypadStyles(c: ThemeColors) {
   return StyleSheet.create({
     keypad: {
-      marginTop: 8,
+      marginTop: 0,
       paddingHorizontal: 8,
       alignSelf: "center",
     },
@@ -110,16 +117,24 @@ function createKeypadStyles(c: ThemeColors) {
     keypadKeyFn: {
       backgroundColor: c.keypadBackgroundFn,
     },
+    keypadKeyPay: {
+      backgroundColor: c.accent,
+      borderColor: c.accent,
+    },
+    keypadKeyPayPressed: {
+      backgroundColor: c.accentDark,
+      borderColor: c.accentDark,
+    },
+    keypadKeyPayDisabled: {
+      backgroundColor: c.disabledButton,
+      borderColor: c.disabledButton,
+      opacity: 1,
+    },
     keypadKeyPressed: {
       backgroundColor: c.keypadPressed,
-      transform: [{ scale: 0.96 }],
     },
     keypadKeyDisabled: {
       opacity: 0.45,
-    },
-    keypadKeySpacer: {
-      width: KEY_SIZE,
-      height: KEY_SIZE,
     },
     keypadKeyText: {
       fontSize: 28,
@@ -127,25 +142,58 @@ function createKeypadStyles(c: ThemeColors) {
       color: c.keypadText,
       fontVariant: ["tabular-nums"],
     },
+    /** Flèche ↑ Text — zéro Ionicons, même poids qu’un chiffre. */
+    keypadPayArrow: {
+      fontSize: 28,
+      fontWeight: "700",
+      color: c.accentOn,
+      marginTop: -2,
+    },
   });
 }
 
 function AmountNumericKeypadInner({
   onDigit,
   onBackspace,
+  onConfirm,
+  confirmEnabled = false,
+  confirmBusy = false,
   disabled,
 }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const styles = useMemo(() => createKeypadStyles(colors), [colors]);
+  const payReady = Boolean(onConfirm) && confirmEnabled && !confirmBusy && !disabled;
 
   return (
     <View style={styles.keypad} collapsable={false}>
       {ROWS.map((row, ri) => (
         <View key={ri} style={styles.keypadRow}>
           {row.map((cell, ci) => {
-            if (cell === "") {
-              return <View key={ci} style={styles.keypadKeySpacer} />;
+            if (cell === "pay") {
+              return (
+                <Pressable
+                  key={ci}
+                  style={({ pressed }) => [
+                    styles.keypadKey,
+                    payReady ? styles.keypadKeyPay : styles.keypadKeyPayDisabled,
+                    pressed && payReady && styles.keypadKeyPayPressed,
+                  ]}
+                  onPressIn={() => {
+                    if (payReady) onConfirm?.();
+                  }}
+                  disabled={!payReady}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("pay.payNow")}
+                  accessibilityState={{ disabled: !payReady, busy: confirmBusy }}
+                >
+                  {confirmBusy ? (
+                    <ActivityIndicator color={colors.accentOn} size="small" />
+                  ) : (
+                    <Text style={styles.keypadPayArrow}>↑</Text>
+                  )}
+                </Pressable>
+              );
             }
             if (cell === "back") {
               return (
@@ -171,6 +219,8 @@ function AmountNumericKeypadInner({
                   if (!disabled) onDigit(cell);
                 }}
                 disabled={disabled}
+                delayPressIn={0}
+                unstable_pressDelay={0}
                 accessibilityRole="button"
                 accessibilityLabel={t("a11y.digit", { digit: cell })}
               >

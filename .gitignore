@@ -35,6 +35,11 @@ yarn-error.*
 .env*.local
 server/.env
 
+# Firebase / FCM — clé privée jamais en git ; google-services.json OK (public)
+.secrets/
+*-firebase-adminsdk-*.json
+**/fcm-service-account.json
+
 # typescript
 *.tsbuildinfo
 

@@ -5,12 +5,20 @@ const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
  * ID compte public.
- * Ex. : `BLYP-U-7KQ9XM2A4B`
+ * Ex. : `BLYP-U-7KQ9XM2A4B` (perso) / `BLYP-C-7KQ9XM2A4B` (commerce)
  * - BLYP : marque
- * - U : user
+ * - U | C : user | commerce
  * - 10 chars Crockford (~50 bits)
  */
 export function makeAccountId() {
+  return makePrefixedAccountId("U");
+}
+
+export function makeCommerceAccountId() {
+  return makePrefixedAccountId("C");
+}
+
+function makePrefixedAccountId(kind) {
   const bytes = randomBytes(7);
   let n = 0n;
   for (const b of bytes) n = (n << 8n) | BigInt(b);
@@ -19,7 +27,7 @@ export function makeAccountId() {
     code = CROCKFORD[Number(n % 32n)] + code;
     n /= 32n;
   }
-  return `BLYP-U-${code}`;
+  return `BLYP-${kind}-${code}`;
 }
 
 /** Fallback déterministe pour anciens profils (avant backfill). */

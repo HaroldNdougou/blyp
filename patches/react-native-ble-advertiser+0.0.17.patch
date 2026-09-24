@@ -1,0 +1,126 @@
+diff --git a/node_modules/react-native-ble-advertiser/android/build.gradle b/node_modules/react-native-ble-advertiser/android/build.gradle
+index 2526548..62cd0e2 100644
+--- a/node_modules/react-native-ble-advertiser/android/build.gradle
++++ b/node_modules/react-native-ble-advertiser/android/build.gradle
+@@ -1,18 +1,15 @@
+ apply plugin: 'com.android.library'
+ 
+ android {
+-    compileSdkVersion 28
+-    buildToolsVersion "28.0.3"
++    compileSdkVersion rootProject.hasProperty('compileSdkVersion') ? rootProject.ext.compileSdkVersion : 35
++    namespace "com.vitorpamplona.bleavertiser"
+ 
+     defaultConfig {
+-        minSdkVersion 21
+-        targetSdkVersion 28
+-        versionCode 1
+-        versionName "1.0"
++        minSdkVersion rootProject.hasProperty('minSdkVersion') ? rootProject.ext.minSdkVersion : 24
++        targetSdkVersion rootProject.hasProperty('targetSdkVersion') ? rootProject.ext.targetSdkVersion : 35
+     }
+ }
+ 
+ dependencies {
+     implementation 'com.facebook.react:react-native:+'
+ }
+-
+diff --git a/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java b/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
+index 036de18..54ca8af 100644
+--- a/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
++++ b/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
+@@ -49,8 +49,16 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+     public static final String TAG = "BleAdvertiserXX0";
+     private BluetoothAdapter mBluetoothAdapter;
+ 
+-    private static Hashtable<String, BluetoothLeAdvertiser> mAdvertiserList;
+-    private static Hashtable<String, AdvertiseCallback> mAdvertiserCallbackList;
++    /**
++     * Static + never reset in ctor.
++     * RN reload used to `new Hashtable()` here → lost AdvertiseCallbacks while
++     * Android kept advertising → stopBroadcast became a no-op (Hors ligne UX lie).
++     * Android requires the *same* AdvertiseCallback instance to stop.
++     */
++    private static final Hashtable<String, BluetoothLeAdvertiser> mAdvertiserList =
++        new Hashtable<String, BluetoothLeAdvertiser>();
++    private static final Hashtable<String, AdvertiseCallback> mAdvertiserCallbackList =
++        new Hashtable<String, AdvertiseCallback>();
+     private static BluetoothLeScanner mScanner;
+     private static ScanCallback mScannerCallback;
+     private int companyId;
+@@ -60,9 +68,6 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+     public BLEAdvertiserModule(ReactApplicationContext reactContext) {
+         super(reactContext);
+ 
+-        mAdvertiserList = new Hashtable<String, BluetoothLeAdvertiser>();
+-        mAdvertiserCallbackList = new Hashtable<String, AdvertiseCallback>();
+-
+         BluetoothManager bluetoothManager = (BluetoothManager) reactContext.getApplicationContext()
+                 .getSystemService(Context.BLUETOOTH_SERVICE);
+         if (bluetoothManager != null) {
+@@ -187,28 +192,29 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+     public void stopBroadcast(final Promise promise) {
+         Log.w("BLEAdvertiserModule", "Stop Broadcast call");
+ 
+-        if (mBluetoothAdapter == null) {
+-            Log.w("BLEAdvertiserModule", "mBluetoothAdapter unavailable");
+-            promise.reject("mBluetoothAdapter unavailable");
+-            return;
+-        } 
+-
+-        if (mObservedState != null && !mObservedState) {
+-            Log.w("BLEAdvertiserModule", "Bluetooth disabled");
+-            promise.reject("Bluetooth disabled");
+-            return;
+-        }
+-
+-        WritableArray promiseArray=Arguments.createArray();
+-
+-        Set<String> keys = mAdvertiserList.keySet();
+-        for (String key : keys) {
+-            BluetoothLeAdvertiser tempAdvertiser = mAdvertiserList.remove(key);
+-            AdvertiseCallback tempCallback = mAdvertiserCallbackList.remove(key);
+-            if (tempAdvertiser != null) {
+-                tempAdvertiser.stopAdvertising(tempCallback);
+-                promiseArray.pushString(key);
++        WritableArray promiseArray = Arguments.createArray();
++
++        /** Toujours tenter l’arrêt (même si BT « disabled » côté observer MIUI). */
++        try {
++            java.util.ArrayList<String> keys =
++                new java.util.ArrayList<String>(mAdvertiserList.keySet());
++            for (String key : keys) {
++                BluetoothLeAdvertiser tempAdvertiser = mAdvertiserList.remove(key);
++                AdvertiseCallback tempCallback = mAdvertiserCallbackList.remove(key);
++                if (tempAdvertiser != null && tempCallback != null) {
++                    try {
++                        tempAdvertiser.stopAdvertising(tempCallback);
++                        promiseArray.pushString(key);
++                        Log.w("BLEAdvertiserModule", "stopAdvertising ok: " + key);
++                    } catch (Exception e) {
++                        Log.w("BLEAdvertiserModule", "stopAdvertising failed: " + e.getMessage());
++                    }
++                }
+             }
++            mAdvertiserList.clear();
++            mAdvertiserCallbackList.clear();
++        } catch (Exception e) {
++            Log.w("BLEAdvertiserModule", "stopBroadcast error: " + e.getMessage());
+         }
+ 
+         promise.resolve(promiseArray);
+@@ -467,7 +473,13 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+             dataBuilder.setIncludeTxPowerLevel(options.getBoolean("includeTxPowerLevel"));
+         
+         dataBuilder.addManufacturerData(companyId, payload);
+-        dataBuilder.addServiceUuid(uuid);
++        /** Blyp: UUID 128-bit + manuf dépasse souvent 31 octets → optionnel. */
++        boolean includeServiceUuid = options == null
++            || !options.hasKey("includeServiceUuid")
++            || options.getBoolean("includeServiceUuid");
++        if (includeServiceUuid) {
++            dataBuilder.addServiceUuid(uuid);
++        }
+         return dataBuilder.build();
+     }
+ 

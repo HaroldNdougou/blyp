@@ -124,3 +124,44 @@ export function PersonTabIcon({ color }: { color: string }) {
     </View>
   );
 }
+
+/** Bulle message — onglet Messages (Views, pas Ionicons). */
+export function ChatTabIcon({ color }: { color: string }) {
+  return (
+    <View
+      style={{
+        width: 22,
+        height: 16,
+        borderRadius: 8,
+        borderWidth: 2,
+        borderColor: color,
+      }}
+    />
+  );
+}
+
+/** Pièce / encaissement — mode commerce (Views, pas Ionicons). */
+export function CashTabIcon({ color }: { color: string }) {
+  return (
+    <View
+      style={{
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: color,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          width: 3,
+          height: 10,
+          borderRadius: 1.5,
+          backgroundColor: color,
+        }}
+      />
+    </View>
+  );
+}

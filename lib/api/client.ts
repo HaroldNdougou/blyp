@@ -67,42 +67,54 @@ function readJwtExpMs(accessToken: string): number | null {
   }
 }
 
+/** Un seul refresh à la fois — évite rotation concurrente (famille révoquée côté AWS). */
+let refreshInFlight: Promise<boolean> | null = null;
+
 /**
  * Rafraîchit access (+ refresh si rotation) ; met à jour le stockage sécurisé.
  * Appelé depuis `request` sur 401, sans repasser par `request` (évite boucle).
  */
 async function refreshSessionTokens(): Promise<boolean> {
-  const refresh = getRefreshToken();
-  if (!refresh) return false;
-  try {
-    let data: { token: string; refreshToken?: string };
-    if (USE_MOCK_API) {
-      data = (await loadMock()).mockRefreshSession(refresh);
-    } else {
-      const url = `${API_BASE_URL}/auth/refresh`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refreshToken: refresh }),
-      });
-      const body = await parseJson(res);
-      if (!res.ok) {
-        throw new ApiError(
-          errorMessageFromResponse(res, body),
-          res.status,
-          body,
-        );
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = (async () => {
+    const refresh = getRefreshToken();
+    if (!refresh) return false;
+    try {
+      let data: { token: string; refreshToken?: string };
+      if (USE_MOCK_API) {
+        data = (await loadMock()).mockRefreshSession(refresh);
+      } else {
+        const url = `${API_BASE_URL}/auth/refresh`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refreshToken: refresh }),
+        });
+        const body = await parseJson(res);
+        if (!res.ok) {
+          throw new ApiError(
+            errorMessageFromResponse(res, body),
+            res.status,
+            body,
+          );
+        }
+        data = body as { token: string; refreshToken?: string };
       }
-      data = body as { token: string; refreshToken?: string };
+      await setAuthSession(data.token, data.refreshToken ?? refresh);
+      return true;
+    } catch (e) {
+      /** Réseau / timeout : ne jamais effacer — l’utilisateur garde sa session locale. */
+      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+        await clearAuthSession();
+      }
+      return false;
+    } finally {
+      refreshInFlight = null;
     }
-    await setAuthSession(data.token, data.refreshToken ?? refresh);
-    return true;
-  } catch (e) {
-    if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-      await clearAuthSession();
-    }
-    return false;
-  }
+  })();
+
+  return refreshInFlight;
 }
 
 /**
@@ -122,19 +134,18 @@ export async function ensureSessionFresh(): Promise<boolean> {
   return true;
 }
 
-function errorMessageFromResponse(res: Response, data: unknown): string {
+function errorMessageFromResponse(_res: Response, data: unknown): string {
   if (typeof data === "object" && data !== null && "error" in data) {
-    const o = data as { error: string; detail?: string };
-    let msg = String(o.error);
-    if (typeof o.detail === "string" && o.detail.trim()) {
-      msg = `${msg}\n\n${o.detail.trim()}`;
+    const msg = String((data as { error?: unknown }).error ?? "").trim();
+    if (
+      msg &&
+      !/^réponse http \d+/i.test(msg) &&
+      !/^session invalide$/i.test(msg)
+    ) {
+      return msg;
     }
-    return msg;
   }
-  const st = res.statusText?.trim();
-  if (st) return st;
-  if (res.status) return `Réponse HTTP ${res.status}`;
-  return "Erreur réseau";
+  return "Une erreur est survenue.";
 }
 
 async function request<T>(
@@ -374,6 +385,13 @@ export async function deposit(
 export async function getDepositIntentStatus(
   token: string,
   depositIntentId: string,
+  opts?: {
+    /**
+     * false = lecture Dynamo seule (rapide, suit le webhook).
+     * true = peut appeler PawaPay si encore pending (défaut).
+     */
+    syncRemote?: boolean;
+  },
 ): Promise<WalletDepositStatusResponse> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockGetDepositIntentStatus(
@@ -381,8 +399,9 @@ export async function getDepositIntentStatus(
       depositIntentId,
     );
   }
+  const syncQ = opts?.syncRemote === false ? "?sync=0" : "";
   return request<WalletDepositStatusResponse>(
-    `/wallet/deposits/${encodeURIComponent(depositIntentId)}`,
+    `/wallet/deposits/${encodeURIComponent(depositIntentId)}${syncQ}`,
     { token },
   );
 }
@@ -393,6 +412,7 @@ export async function pay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
+  recipientAccountId?: string | null,
 ): Promise<{
   balanceFcfa: number;
   transactionId: string | null;
@@ -406,6 +426,7 @@ export async function pay(
       recipientName,
       recipientPhone,
       transactionPin,
+      recipientAccountId,
     );
   }
   return request("/payments/pay", {
@@ -415,8 +436,93 @@ export async function pay(
       amount,
       recipientName,
       recipientPhone,
+      recipientAccountId,
       transactionPin,
     }),
+  });
+}
+
+export async function createCommerce(
+  token: string,
+  input: { name: string; category?: string; phone?: string },
+): Promise<{ commerce: import("./types").ApiCommerce; user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockCreateCommerce(token, input);
+  }
+  return request("/commerces", {
+    method: "POST",
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listCommerces(
+  token: string,
+): Promise<{ items: import("./types").ApiCommerce[] }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListCommerces(token);
+  }
+  return request("/commerces", { token });
+}
+
+/** Lookup nom public (commerce / prénom) — GetItem ciblé, pour libellé BLE. */
+export async function lookupAccountPublic(
+  token: string,
+  accountId: string,
+): Promise<{ accountId: string; displayName: string; kind: string }> {
+  const id = String(accountId ?? "")
+    .trim()
+    .toUpperCase();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockLookupAccountPublic(token, id);
+  }
+  return request(
+    `/accounts/${encodeURIComponent(id)}/public`,
+    { token },
+  );
+}
+
+export async function setActiveContext(
+  token: string,
+  input:
+    | { type: "personal" }
+    | { type: "commerce"; commerceId: string },
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSetActiveContext(token, input);
+  }
+  return request("/me/context", {
+    method: "PUT",
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
+export async function registerDeviceToken(
+  token: string,
+  input: { token: string; platform: string; deviceId?: string },
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockRegisterDeviceToken(token, input);
+  }
+  return request("/me/device-token", {
+    method: "PUT",
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
+export async function unregisterDeviceToken(
+  token: string,
+  input: { token?: string; deviceId?: string },
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockUnregisterDeviceToken(token, input);
+  }
+  return request("/me/device-token", {
+    method: "DELETE",
+    token,
+    body: JSON.stringify(input),
   });
 }
 
@@ -438,3 +544,112 @@ export async function listTransactions(
   return request(`/transactions${q}`, { token });
 }
 
+export async function listConversations(
+  token: string,
+): Promise<{ items: import("./types").Conversation[] }> {
+  if (USE_MOCK_API) return (await loadMock()).mockListConversations(token);
+  return request("/conversations", { token });
+}
+
+export async function openConversation(
+  token: string,
+  phone: string,
+): Promise<{ conversation: import("./types").Conversation }> {
+  if (USE_MOCK_API) return (await loadMock()).mockOpenConversation(token, phone);
+  return request("/conversations", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ phone }),
+  });
+}
+
+export async function listMessages(
+  token: string,
+  conversationId: string,
+): Promise<{ items: import("./types").ChatMessage[] }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListMessages(token, conversationId);
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    { token },
+  );
+}
+
+export async function sendTextMessage(
+  token: string,
+  conversationId: string,
+  body: string,
+  clientId: string,
+): Promise<{ message: import("./types").ChatMessage }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSendTextMessage(
+      token,
+      conversationId,
+      body,
+      clientId,
+    );
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "text", body, clientId }),
+    },
+  );
+}
+
+export async function sendMoneyMessage(
+  token: string,
+  conversationId: string,
+  amount: number,
+  clientId: string,
+  idempotencyKey: string,
+  transactionPin: string,
+): Promise<{
+  message: import("./types").ChatMessage;
+  balanceFcfa: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSendMoneyMessage(
+      token,
+      conversationId,
+      amount,
+      clientId,
+      idempotencyKey,
+      transactionPin,
+    );
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify({
+        type: "money",
+        amount,
+        clientId,
+        idempotencyKey,
+        transactionPin,
+      }),
+    },
+  );
+}
+
+export async function claimMoneyTransfer(
+  token: string,
+  transferId: string,
+): Promise<{
+  transfer: import("./types").MoneyTransfer;
+  balanceFcfa: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockClaimMoneyTransfer(token, transferId);
+  }
+  return request(
+    `/money-transfers/${encodeURIComponent(transferId)}/claim`,
+    { method: "POST", token },
+  );
+}

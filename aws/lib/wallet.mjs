@@ -459,6 +459,7 @@ export async function executePayment(
   recipientName,
   recipientPhone,
   idempotencyKey,
+  recipientAccountId,
 ) {
   if (!isValidTxAmount(amount)) {
     return { error: "AMOUNT_INVALID" };
@@ -469,15 +470,77 @@ export async function executePayment(
     if (cached) return { ...cached, reused: true };
   }
 
+  const { resolvePayTarget, getCommerceRecord, commercePk } = await import(
+    "./commerce.mjs"
+  );
+  const { resolveAccountId } = await import("./accountId.mjs");
+  const { getUserProfile, getUserApiPayload } = await import("./user.mjs");
+
+  const payerProfile = await getUserProfile(userId);
+  if (!payerProfile) return { error: "USER_NOT_FOUND" };
+
+  const payerAccountId = resolveAccountId(payerProfile);
+  const activeType =
+    payerProfile.activeContextType === "commerce" ? "commerce" : "personal";
+  const activeCommerceId =
+    activeType === "commerce" && payerProfile.activeCommerceId
+      ? String(payerProfile.activeCommerceId)
+      : null;
+
+  /** V1 : on paie depuis le wallet perso uniquement (mode pro = recevoir). */
+  if (activeCommerceId) {
+    return { error: "PAY_FROM_COMMERCE_FORBIDDEN" };
+  }
+
   const balanceBefore = await getUserBalance(userId);
   if (balanceBefore < amount) {
     return { error: "INSUFFICIENT_BALANCE" };
   }
 
+  const accountId = String(recipientAccountId ?? "").trim().toUpperCase();
+  if (!accountId) {
+    return { error: "RECIPIENT_REQUIRED" };
+  }
+
+  const target = await resolvePayTarget(accountId);
+  if (!target) {
+    return { error: "RECIPIENT_NOT_FOUND" };
+  }
+
+  if (target.type === "personal" && target.userId === userId) {
+    return { error: "SELF_PAY" };
+  }
+  if (target.type === "commerce" && target.ownerUserId === userId) {
+    return { error: "SELF_PAY" };
+  }
+
+  let counterpartyName = String(recipientName ?? "").trim() || null;
+  let counterpartyPhone =
+    recipientPhone != null ? String(recipientPhone).replace(/\D/g, "").slice(-9) : null;
+
+  if (target.type === "commerce") {
+    const rec = await getCommerceRecord(target.ownerUserId, target.commerceId);
+    if (rec?.name) counterpartyName = String(rec.name);
+    if (rec?.phoneDigits) counterpartyPhone = String(rec.phoneDigits);
+  } else {
+    const payeeProfile = await getUserProfile(target.userId);
+    if (payeeProfile) {
+      const fn = String(payeeProfile.firstName ?? "").trim();
+      const ln = String(payeeProfile.lastName ?? "").trim();
+      if (fn || ln) counterpartyName = `${fn} ${ln}`.trim();
+      if (!counterpartyPhone && payeeProfile.phone) {
+        counterpartyPhone = String(payeeProfile.phone).replace(/\D/g, "").slice(-9);
+      }
+    }
+  }
+  if (!counterpartyName) counterpartyName = "Blyp";
+
   const now = new Date().toISOString();
   const nowMs = Date.now();
   const txId = randomUUID();
+  const receiveTxId = randomUUID();
   const reference = makeTxReference("PAYMENT");
+  const receiveReference = makeTxReference("PAYMENT");
   const transactItems = [];
 
   if (idempotencyKey) {
@@ -495,37 +558,111 @@ export async function executePayment(
     });
   }
 
-  transactItems.push(
-    {
+  /** Débit payeur (perso). */
+  transactItems.push({
+    Update: {
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "BALANCE" },
+      UpdateExpression: "SET balanceFcfa = balanceFcfa - :amt, updatedAt = :now",
+      ConditionExpression: "balanceFcfa >= :amt",
+      ExpressionAttributeValues: {
+        ":amt": amount,
+        ":now": now,
+      },
+    },
+  });
+
+  /** Crédit destinataire. */
+  if (target.type === "commerce") {
+    transactItems.push({
       Update: {
         TableName: getTableName(),
-        Key: { PK: userPk(userId), SK: "BALANCE" },
-        UpdateExpression: "SET balanceFcfa = balanceFcfa - :amt, updatedAt = :now",
-        ConditionExpression: "balanceFcfa >= :amt",
+        Key: { PK: commercePk(target.commerceId), SK: "BALANCE" },
+        UpdateExpression:
+          "SET balanceFcfa = if_not_exists(balanceFcfa, :z) + :amt, updatedAt = :now",
         ExpressionAttributeValues: {
           ":amt": amount,
           ":now": now,
+          ":z": 0,
         },
       },
-    },
-    {
+    });
+    transactItems.push({
       Put: {
         TableName: getTableName(),
         Item: {
-          PK: userPk(userId),
-          SK: txSk(nowMs, txId),
-          transactionId: txId,
-          reference,
-          userId,
-          type: "PAYMENT",
+          PK: commercePk(target.commerceId),
+          SK: txSk(nowMs, receiveTxId),
+          transactionId: receiveTxId,
+          reference: receiveReference,
+          commerceId: target.commerceId,
+          type: "RECEIVED",
           amountFcfa: amount,
-          counterpartyName: recipientName,
-          counterpartyPhone: recipientPhone,
+          counterpartyName:
+            `${String(payerProfile.firstName ?? "").trim()} ${String(payerProfile.lastName ?? "").trim()}`.trim() ||
+            "Client Blyp",
+          counterpartyPhone: String(payerProfile.phone ?? "")
+            .replace(/\D/g, "")
+            .slice(-9) || null,
           createdAt: now,
         },
       },
+    });
+  } else {
+    transactItems.push({
+      Update: {
+        TableName: getTableName(),
+        Key: { PK: userPk(target.userId), SK: "BALANCE" },
+        UpdateExpression:
+          "SET balanceFcfa = if_not_exists(balanceFcfa, :z) + :amt, updatedAt = :now",
+        ExpressionAttributeValues: {
+          ":amt": amount,
+          ":now": now,
+          ":z": 0,
+        },
+      },
+    });
+    transactItems.push({
+      Put: {
+        TableName: getTableName(),
+        Item: {
+          PK: userPk(target.userId),
+          SK: txSk(nowMs, receiveTxId),
+          transactionId: receiveTxId,
+          reference: receiveReference,
+          userId: target.userId,
+          type: "RECEIVED",
+          amountFcfa: amount,
+          counterpartyName:
+            `${String(payerProfile.firstName ?? "").trim()} ${String(payerProfile.lastName ?? "").trim()}`.trim() ||
+            "Client Blyp",
+          counterpartyPhone: String(payerProfile.phone ?? "")
+            .replace(/\D/g, "")
+            .slice(-9) || null,
+          createdAt: now,
+        },
+      },
+    });
+  }
+
+  transactItems.push({
+    Put: {
+      TableName: getTableName(),
+      Item: {
+        PK: userPk(userId),
+        SK: txSk(nowMs, txId),
+        transactionId: txId,
+        reference,
+        userId,
+        type: "PAYMENT",
+        amountFcfa: amount,
+        counterpartyName,
+        counterpartyPhone,
+        counterpartyAccountId: accountId,
+        createdAt: now,
+      },
     },
-  );
+  });
 
   try {
     await doc.send(new TransactWriteCommand({ TransactItems: transactItems }));
@@ -540,7 +677,8 @@ export async function executePayment(
     throw err;
   }
 
-  const balanceFcfa = await getUserBalance(userId);
+  const me = await getUserApiPayload(userId);
+  const balanceFcfa = me?.balanceFcfa ?? (await getUserBalance(userId));
 
   if (idempotencyKey) {
     await doc.send(
@@ -558,26 +696,71 @@ export async function executePayment(
     );
   }
 
-  return { balanceFcfa, transactionId: txId, reference, reused: false };
+  /** Push destinataire — async SQS, jamais bloquant pour le payeur. */
+  try {
+    const { enqueuePaymentReceivedPush } = await import("./pushQueue.mjs");
+    const fromName =
+      String(payerProfile.firstName ?? "").trim() ||
+      String(payerProfile.lastName ?? "").trim() ||
+      "Blyp";
+    const recipientUserId =
+      target.type === "commerce" ? target.ownerUserId : target.userId;
+    void enqueuePaymentReceivedPush({
+      recipientUserId,
+      transactionId: receiveTxId,
+      amountFcfa: amount,
+      fromName,
+      contextType: target.type === "commerce" ? "commerce" : "personal",
+      commerceId:
+        target.type === "commerce" ? target.commerceId : null,
+    }).catch((err) => {
+      console.warn("[wallet] push enqueue failed", err?.message ?? err);
+    });
+  } catch (err) {
+    console.warn("[wallet] push enqueue import failed", err?.message ?? err);
+  }
+
+  return {
+    balanceFcfa,
+    transactionId: txId,
+    reference,
+    reused: false,
+    counterpartyName,
+    counterpartyPhone,
+  };
 }
 
 /**
  * @param {string} userId
  * @param {{ limit?: number, since?: string | null }} [opts]
  * `since` = ISO — ne renvoie que les TX strictement plus récentes (delta sync).
+ * Respecte le contexte actif (perso vs commerce).
  */
 export async function listTransactions(userId, opts = {}) {
   const limit = opts.limit ?? 100;
   const since = opts.since ? String(opts.since) : null;
   const sinceMs = since ? Date.parse(since) : NaN;
 
+  const profile = await getUserProfile(userId);
+  let pk = userPk(userId);
+  if (
+    profile?.activeContextType === "commerce" &&
+    profile?.activeCommerceId
+  ) {
+    const { commercePk, getCommerceRecord } = await import("./commerce.mjs");
+    const rec = await getCommerceRecord(
+      userId,
+      String(profile.activeCommerceId),
+    );
+    if (rec) pk = commercePk(String(profile.activeCommerceId));
+  }
+
   const exprValues = {
-    ":pk": userPk(userId),
+    ":pk": pk,
   };
   let keyCond;
 
   if (Number.isFinite(sinceMs)) {
-    // SK = TX#{ms 13}#{id} — bornes exclusives après `since`
     keyCond = "PK = :pk AND SK > :after";
     exprValues[":after"] = `TX#${String(sinceMs).padStart(13, "0")}#\uffff`;
   } else {
@@ -597,11 +780,16 @@ export async function listTransactions(userId, opts = {}) {
   let items = (res.Items ?? []).map((t) => ({
     id: t.transactionId,
     reference: resolveTxReference(t),
-    type: t.type === "DEPOSIT" ? "received" : "sent",
+    type:
+      t.type === "DEPOSIT" || t.type === "RECEIVED" ? "received" : "sent",
     amountFcfa: t.amountFcfa,
     counterpartyName:
       t.counterpartyName ||
-      (t.type === "DEPOSIT" ? "Rechargement" : "Paiement"),
+      (t.type === "DEPOSIT"
+        ? "Rechargement"
+        : t.type === "RECEIVED"
+          ? "Paiement reçu"
+          : "Paiement"),
     counterpartyPhone: t.counterpartyPhone ?? null,
     createdAt: t.createdAt,
   }));

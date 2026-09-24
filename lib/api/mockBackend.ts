@@ -1,8 +1,14 @@
-import { makeAccountId } from "@/lib/accountId";
+import { makeAccountId, makeCommerceAccountId } from "@/lib/accountId";
 import { makeTxReference } from "@/lib/txReference";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
+  ApiActiveContext,
+  ApiCommerce,
   ApiUser,
+  ChatMessage,
+  CommerceCategory,
+  Conversation,
+  MoneyTransfer,
   OnboardingStep,
   TransactionItem,
   WalletDepositResponse,
@@ -18,23 +24,21 @@ function normalizeCameroonPhone(raw: string): string | null {
 }
 
 let pendingOtpPhone: string | null = null;
-/** Jeton d’accès (Bearer). */
 let sessionToken: string | null = null;
-/** Jeton de rafraîchissement (rotation à chaque refresh). */
 let sessionRefreshToken: string | null = null;
 let sessionPhone: string | null = null;
-/** PIN mock (clair en mémoire — uniquement mode démo). */
 let mockTransactionPinPlain: string | null = null;
 let mockFirstName: string | null = null;
 let mockLastName: string | null = null;
-/** ID compte public mock (ex. BLYP-U-…). */
 let mockSessionUserId: string | null = null;
 let balanceFcfa = 0;
 let transactions: TransactionItem[] = [];
+let mockCommerces: ApiCommerce[] = [];
+let mockCommerceTx = new Map<string, TransactionItem[]>();
+let mockActiveContext: ApiActiveContext = { type: "personal" };
 let mockHelloSeq = 0;
 const lastMockOtpAtByPhone = new Map<string, number>();
 const MOCK_OTP_RESEND_MS = 60_000;
-/** Idempotence rechargement (mode démo). */
 const mockDepositIdempotencyCache = new Map<string, WalletDepositResponse>();
 const mockDepositStatusByIntentId = new Map<
   string,
@@ -45,6 +49,12 @@ function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
     throw new ApiError("Non autorisé", 401);
   }
+}
+
+function activeCommerce(): ApiCommerce | null {
+  if (mockActiveContext.type !== "commerce") return null;
+  const commerceId = mockActiveContext.commerceId;
+  return mockCommerces.find((c) => c.id === commerceId) ?? null;
 }
 
 function mockUserFromState(): ApiUser {
@@ -61,14 +71,30 @@ function mockUserFromState(): ApiUser {
     : needsNames
       ? "profile"
       : null;
+  const commerce = activeCommerce();
   return {
-    id: mockSessionUserId ?? makeAccountId(),
+    id: commerce?.accountId ?? mockSessionUserId ?? makeAccountId(),
+    personalAccountId: mockSessionUserId,
     phone,
-    balanceFcfa,
+    balanceFcfa: commerce ? commerce.balanceFcfa : balanceFcfa,
+    personalBalanceFcfa: balanceFcfa,
     needsOnboarding,
     onboardingStep,
-    firstName: mockFirstName,
-    lastName: mockLastName,
+    firstName: commerce ? commerce.name : mockFirstName,
+    lastName: commerce ? null : mockLastName,
+    personalFirstName: mockFirstName,
+    personalLastName: mockLastName,
+    isMerchant: mockCommerces.length > 0,
+    activeContext: commerce
+      ? {
+          type: "commerce",
+          commerceId: commerce.id,
+          name: commerce.name,
+          accountId: commerce.accountId,
+          category: commerce.category,
+        }
+      : { type: "personal" },
+    commerces: mockCommerces.map((c) => ({ ...c })),
   };
 }
 
@@ -105,7 +131,6 @@ export function mockVerifyOtp(
 } {
   const phone = normalizeCameroonPhone(phoneDigits);
   const clean = code.replace(/\D/g, "");
-  /** TEMP : accepte 1234 (4 chiffres) en plus du format 6 chiffres. */
   if (!phone || (clean !== "1234" && clean.length !== 6)) {
     throw new ApiError("Téléphone ou code invalide", 400);
   }
@@ -117,6 +142,11 @@ export function mockVerifyOtp(
   sessionPhone = phone;
   if (isNewAccount || !mockSessionUserId) {
     mockSessionUserId = makeAccountId();
+    mockCommerces = [];
+    mockCommerceTx = new Map();
+    mockActiveContext = { type: "personal" };
+    balanceFcfa = 0;
+    transactions = [];
   }
   const ts = Date.now();
   sessionToken = `blyp-mock-access-${ts}`;
@@ -186,6 +216,130 @@ export function mockSetOnboardingProfile(
   return { user: mockUserFromState() };
 }
 
+export function mockCreateCommerce(
+  token: string,
+  input: { name: string; category?: string; phone?: string },
+): { commerce: ApiCommerce; user: ApiUser } {
+  assertSession(token);
+  if (mockTransactionPinPlain == null) {
+    throw new ApiError(
+      "Terminez l’inscription avant de créer un commerce",
+      400,
+    );
+  }
+  const name = String(input?.name ?? "")
+    .trim()
+    .replace(/\s+/g, " ");
+  if (name.length < 2) {
+    throw new ApiError("Nom du commerce trop court", 400);
+  }
+  if (mockCommerces.length >= 10) {
+    throw new ApiError("Limite de commerces atteinte", 400);
+  }
+  const catRaw = String(input?.category ?? "other").toLowerCase();
+  const category = (
+    catRaw === "taxi" || catRaw === "shop" || catRaw === "other"
+      ? catRaw
+      : "other"
+  ) as CommerceCategory;
+  const phoneDigits =
+    String(input?.phone ?? sessionPhone ?? "")
+      .replace(/\D/g, "")
+      .slice(-9) || null;
+  const commerce: ApiCommerce = {
+    id: `mock-c-${Date.now()}`,
+    accountId: makeCommerceAccountId(),
+    name,
+    category,
+    phoneDigits,
+    balanceFcfa: 0,
+    createdAt: new Date().toISOString(),
+  };
+  mockCommerces = [...mockCommerces, commerce];
+  mockCommerceTx.set(commerce.id, []);
+  mockActiveContext = {
+    type: "commerce",
+    commerceId: commerce.id,
+    name: commerce.name,
+    accountId: commerce.accountId,
+    category: commerce.category,
+  };
+  return { commerce, user: mockUserFromState() };
+}
+
+export function mockListCommerces(token: string): { items: ApiCommerce[] } {
+  assertSession(token);
+  return { items: mockCommerces.map((c) => ({ ...c })) };
+}
+
+export function mockLookupAccountPublic(
+  token: string,
+  accountId: string,
+): { accountId: string; displayName: string; kind: string } {
+  assertSession(token);
+  const id = String(accountId ?? "")
+    .trim()
+    .toUpperCase();
+  const commerce = mockCommerces.find((c) => c.accountId === id);
+  if (commerce) {
+    return {
+      accountId: commerce.accountId,
+      displayName: commerce.name,
+      kind: "commerce",
+    };
+  }
+  if (id === mockSessionUserId && mockFirstName) {
+    return {
+      accountId: id,
+      displayName: mockFirstName,
+      kind: "personal",
+    };
+  }
+  throw new ApiError("Compte introuvable", 404);
+}
+
+export function mockSetActiveContext(
+  token: string,
+  input: { type: string; commerceId?: string },
+): { user: ApiUser } {
+  assertSession(token);
+  const type = String(input?.type ?? "personal").toLowerCase();
+  if (type === "personal") {
+    mockActiveContext = { type: "personal" };
+    return { user: mockUserFromState() };
+  }
+  if (type !== "commerce") {
+    throw new ApiError("Contexte invalide", 400);
+  }
+  const commerceId = String(input?.commerceId ?? "").trim();
+  const hit = mockCommerces.find((c) => c.id === commerceId);
+  if (!hit) throw new ApiError("Commerce introuvable", 400);
+  mockActiveContext = {
+    type: "commerce",
+    commerceId: hit.id,
+    name: hit.name,
+    accountId: hit.accountId,
+    category: hit.category,
+  };
+  return { user: mockUserFromState() };
+}
+
+export function mockRegisterDeviceToken(
+  token: string,
+  _input: { token: string; platform: string; deviceId?: string },
+): { ok: boolean } {
+  assertSession(token);
+  return { ok: true };
+}
+
+export function mockUnregisterDeviceToken(
+  token: string,
+  _input: { token?: string; deviceId?: string },
+): { ok: boolean } {
+  assertSession(token);
+  return { ok: true };
+}
+
 export function mockDeposit(
   token: string,
   amount: number,
@@ -220,7 +374,7 @@ export function mockDeposit(
   transactions = [row, ...transactions];
   const res: WalletDepositResponse = {
     status: "completed",
-    balanceFcfa,
+    balanceFcfa: mockUserFromState().balanceFcfa,
     transactionId,
     reference,
     depositIntentId,
@@ -230,7 +384,7 @@ export function mockDeposit(
     status: "completed",
     depositIntentId,
     amountFcfa: amount,
-    balanceFcfa,
+    balanceFcfa: res.balanceFcfa,
     transactionId,
   });
   return res;
@@ -254,6 +408,7 @@ export function mockPay(
   recipientName: string,
   recipientPhone: string | null,
   transactionPin: string,
+  recipientAccountId?: string | null,
 ): {
   balanceFcfa: number;
   transactionId: string | null;
@@ -272,12 +427,26 @@ export function mockPay(
       code: API_ERROR_TRANSACTION_PIN_INVALID,
     });
   }
+  if (mockActiveContext.type === "commerce") {
+    throw new ApiError("Passez en mode perso pour payer", 400);
+  }
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new ApiError("Montant invalide", 400);
   }
   if (balanceFcfa < amount) {
     throw new ApiError("Solde insuffisant", 400);
   }
+  const accountId = String(recipientAccountId ?? "").trim().toUpperCase();
+  if (!accountId) {
+    throw new ApiError("Destinataire invalide (accountId requis)", 400);
+  }
+  if (
+    accountId === mockSessionUserId ||
+    mockCommerces.some((c) => c.accountId === accountId)
+  ) {
+    throw new ApiError("Impossible de vous payer vous-même", 400);
+  }
+
   balanceFcfa -= amount;
   const transactionId = `mock-${Date.now()}-p`;
   const reference = makeTxReference("PAYMENT");
@@ -291,7 +460,12 @@ export function mockPay(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
-  return { balanceFcfa, transactionId, reference };
+
+  return {
+    balanceFcfa: mockUserFromState().balanceFcfa,
+    transactionId,
+    reference,
+  };
 }
 
 export function mockListTransactions(
@@ -303,7 +477,10 @@ export function mockListTransactions(
   delta: boolean;
 } {
   assertSession(token);
-  let items = [...transactions];
+  const commerce = activeCommerce();
+  let items = commerce
+    ? [...(mockCommerceTx.get(commerce.id) ?? [])]
+    : [...transactions];
   const delta = Boolean(since);
   if (since) {
     const ms = Date.parse(since);
@@ -317,7 +494,7 @@ export function mockListTransactions(
           (max, t) => (t.createdAt > max ? t.createdAt : max),
           items[0].createdAt,
         )
-      : since ?? null;
+      : (since ?? null);
   return { items, cursor, delta };
 }
 
@@ -325,16 +502,143 @@ export function mockHealth(): boolean {
   return true;
 }
 
-export function mockSayHello(): {
-  ok: boolean;
-  id: string;
-  createdAt: string;
-} {
-  mockHelloSeq += 1;
-  return {
-    ok: true,
-    id: `mock-hello-${mockHelloSeq}`,
-    createdAt: new Date().toISOString(),
-  };
+const mockConversations: Conversation[] = [];
+const mockMessages = new Map<string, ChatMessage[]>();
+
+function mockDirectId(phone: string) {
+  return `dm_mock_${phone}`;
 }
 
+export function mockListConversations(_token: string) {
+  return { items: [...mockConversations] };
+}
+
+export function mockOpenConversation(_token: string, phone: string) {
+  const digits = String(phone).replace(/\D/g, "").slice(-9);
+  const id = mockDirectId(digits);
+  let conversation = mockConversations.find((c) => c.id === id);
+  if (!conversation) {
+    conversation = {
+      id,
+      type: "direct",
+      peerName: `+237${digits}`,
+      peerPhone: `+237${digits}`,
+      peerUserId: null,
+      lastMessagePreview: "",
+      lastMessageType: null,
+      lastMessageAt: null,
+      updatedAt: new Date().toISOString(),
+    };
+    mockConversations.unshift(conversation);
+  }
+  return { conversation };
+}
+
+export function mockListMessages(_token: string, conversationId: string) {
+  return { items: mockMessages.get(conversationId) ?? [] };
+}
+
+export function mockSendTextMessage(
+  _token: string,
+  conversationId: string,
+  body: string,
+  clientId: string,
+) {
+  const now = new Date().toISOString();
+  const message: ChatMessage = {
+    id: clientId,
+    conversationId,
+    senderUserId: "me",
+    type: "text",
+    body,
+    moneyTransfer: null,
+    createdAt: now,
+    clientId,
+  };
+  const list = mockMessages.get(conversationId) ?? [];
+  list.push(message);
+  mockMessages.set(conversationId, list);
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (conv) {
+    conv.lastMessagePreview = body;
+    conv.lastMessageType = "text";
+    conv.lastMessageAt = now;
+    conv.updatedAt = now;
+  }
+  return { message };
+}
+
+export function mockSendMoneyMessage(
+  _token: string,
+  conversationId: string,
+  amount: number,
+  clientId: string,
+  _idempotencyKey: string,
+  transactionPin: string,
+) {
+  if (String(transactionPin).replace(/\D/g, "").length !== 4) {
+    throw new ApiError("Code PIN incorrect", 400);
+  }
+  if (balanceFcfa < amount) {
+    throw new ApiError("Solde insuffisant", 409);
+  }
+  balanceFcfa -= amount;
+  const now = new Date().toISOString();
+  const transfer: MoneyTransfer = {
+    transferId: clientId,
+    amountFcfa: amount,
+    status: "pending",
+    fromUserId: "me",
+    toUserId: null,
+    toPhone: "",
+    expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
+    claimedAt: null,
+    createdAt: now,
+  };
+  const message: ChatMessage = {
+    id: clientId,
+    conversationId,
+    senderUserId: "me",
+    type: "money",
+    body: null,
+    moneyTransfer: transfer,
+    createdAt: now,
+    clientId,
+  };
+  const list = mockMessages.get(conversationId) ?? [];
+  list.push(message);
+  mockMessages.set(conversationId, list);
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (conv) {
+    conv.lastMessagePreview = `${amount} FCFA`;
+    conv.lastMessageType = "money";
+    conv.lastMessageAt = now;
+    conv.updatedAt = now;
+  }
+  return { message, balanceFcfa };
+}
+
+export function mockClaimMoneyTransfer(_token: string, transferId: string) {
+  for (const list of mockMessages.values()) {
+    const msg = list.find((m) => m.moneyTransfer?.transferId === transferId);
+    if (msg?.moneyTransfer) {
+      msg.moneyTransfer = {
+        ...msg.moneyTransfer,
+        status: "claimed",
+        claimedAt: new Date().toISOString(),
+      };
+      balanceFcfa += msg.moneyTransfer.amountFcfa;
+      return { transfer: msg.moneyTransfer, balanceFcfa };
+    }
+  }
+  throw new ApiError("Transfert introuvable", 404);
+}
+
+export function mockSayHello(): {
+  ok: boolean;
+  message: string;
+  seq: number;
+} {
+  mockHelloSeq += 1;
+  return { ok: true, message: "hello", seq: mockHelloSeq };
+}

@@ -11,7 +11,7 @@ export function createPayHomeStyles(c: ThemeColors) {
       flex: 1,
       flexDirection: "column",
       paddingHorizontal: 22,
-      paddingBottom: 8,
+      paddingBottom: 0,
     },
     payContentSpacer: {
       flex: 1,
@@ -21,9 +21,32 @@ export function createPayHomeStyles(c: ThemeColors) {
       width: "100%",
       paddingTop: 28,
     },
-    payBottomBlock: {
+    payKeypadSpacer: {
+      flex: 1,
+      minHeight: 28,
+    },
+    payKeypadBlock: {
       width: "100%",
       flexShrink: 0,
+    },
+    payBalanceRow: {
+      alignItems: "center",
+      marginBottom: 2,
+      paddingHorizontal: 8,
+    },
+    payBalanceText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: c.textMuted,
+      fontVariant: ["tabular-nums"],
+    },
+    topUpSuccessBanner: {
+      textAlign: "center",
+      fontSize: 13,
+      fontWeight: "700",
+      color: c.accent,
+      marginBottom: 10,
+      paddingHorizontal: 8,
     },
     topBarRow: {
       flexDirection: "row",
@@ -111,48 +134,30 @@ export function createPayHomeStyles(c: ThemeColors) {
       fontWeight: "700",
       color: c.accent,
     },
-    /** Overlay in-tree (pas RN Modal) — seul moyen fiable d’autofocus clavier Android. */
+    /** Overlay in-tree (pas RN Modal) — autofocus clavier Android. */
     payPinOverlay: {
       ...StyleSheet.absoluteFillObject,
       zIndex: 100,
       elevation: 24,
-      justifyContent: "flex-end",
-    },
-    payPinModalKeyboardWrap: {
-      flex: 1,
-      justifyContent: "flex-end",
-      width: "100%",
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 28,
     },
     payPinModalBackdrop: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: c.overlay,
     },
-    payPinSheet: {
-      position: "absolute",
-      left: 0,
-      right: 0,
-      backgroundColor: c.modal,
-      borderTopLeftRadius: 18,
-      borderTopRightRadius: 18,
-      paddingHorizontal: 22,
-      paddingTop: 10,
-      zIndex: 1,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: c.borderLight,
+    payPinCard: {
       width: "100%",
-    },
-    /** Collé au clavier : pas d’arrondi bas (évite un « vide » visuel). */
-    payPinSheetKeyboardFlush: {
-      borderBottomLeftRadius: 0,
-      borderBottomRightRadius: 0,
-    },
-    payPinSheetHandle: {
-      alignSelf: "center",
-      width: 36,
-      height: 4,
-      borderRadius: 2,
-      backgroundColor: c.border,
-      marginBottom: 14,
+      maxWidth: 340,
+      backgroundColor: c.modal,
+      borderRadius: 16,
+      paddingHorizontal: 22,
+      paddingTop: 20,
+      paddingBottom: 18,
+      zIndex: 1,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
     },
     payPinFeedback: {
       marginTop: 8,
@@ -170,11 +175,15 @@ export function createPayHomeStyles(c: ThemeColors) {
     },
     payPinModalSub: {
       fontSize: 12,
-      fontWeight: "600",
+      fontWeight: "400",
       color: c.textSecondary,
       lineHeight: 17,
       marginBottom: 10,
       textAlign: "center",
+    },
+    payPinModalSubAmount: {
+      color: c.accent,
+      fontWeight: "400",
     },
     payPinModalError: {
       fontSize: 11,
@@ -201,6 +210,9 @@ export function createPayHomeStyles(c: ThemeColors) {
       minWidth: 0,
       marginRight: 4,
     },
+    recipientRowPressed: {
+      opacity: 0.72,
+    },
     recipientThumb: {
       width: 52,
       height: 52,
@@ -211,6 +223,10 @@ export function createPayHomeStyles(c: ThemeColors) {
       justifyContent: "center",
       alignItems: "center",
       marginRight: 12,
+    },
+    recipientThumbMuted: {
+      borderColor: c.borderLight,
+      opacity: 0.9,
     },
     recipientThumbImage: {
       width: 52,
@@ -242,27 +258,31 @@ export function createPayHomeStyles(c: ThemeColors) {
       color: c.textMuted,
     },
     inputSection: {
-      marginBottom: 0,
+      flexShrink: 0,
+      marginBottom: 8,
     },
     inputLabel: {
       fontSize: 13,
       color: c.textMuted,
       fontWeight: "600",
-      marginBottom: 10,
+      marginBottom: 6,
       letterSpacing: 0.8,
       textAlign: "center",
     },
     inputWrapper: {
-      flexDirection: "row",
       alignItems: "center",
       justifyContent: "center",
       width: "100%",
       paddingHorizontal: 18,
-      paddingVertical: 8,
-      minHeight: 96,
+      paddingTop: 8,
+      paddingBottom: 4,
+    },
+    amountRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
     },
     amountDisplayWrap: {
-      minHeight: 84,
       minWidth: 0,
       flexShrink: 1,
       justifyContent: "center",
@@ -273,8 +293,12 @@ export function createPayHomeStyles(c: ThemeColors) {
       color: c.text,
       letterSpacing: -0.5,
       fontVariant: ["tabular-nums"],
+      lineHeight: 50,
       ...Platform.select({
-        android: { textAlignVertical: "center" as const },
+        android: {
+          textAlignVertical: "center" as const,
+          includeFontPadding: false,
+        },
         default: {},
       }),
     },
@@ -282,7 +306,20 @@ export function createPayHomeStyles(c: ThemeColors) {
       fontSize: 19,
       fontWeight: "800",
       color: c.textFaint,
-      marginLeft: 10,
+      marginLeft: 2,
+    },
+    payFeeLine: {
+      marginTop: -10,
+      fontSize: 13,
+      lineHeight: 15,
+      fontWeight: "600",
+      color: c.textMuted,
+      textAlign: "center",
+      fontVariant: ["tabular-nums"],
+      ...Platform.select({
+        android: { includeFontPadding: false },
+        default: {},
+      }),
     },
     quickAmountsRow: {
       flexDirection: "row",
@@ -325,6 +362,46 @@ export function createPayHomeStyles(c: ThemeColors) {
     actionSection: {
       marginTop: 18,
     },
+    quickAmountsRow: {
+      flexDirection: "row",
+      justifyContent: "center",
+      flexWrap: "nowrap",
+      gap: 8,
+      marginTop: 10,
+      paddingHorizontal: 4,
+    },
+    quickAmountChip: {
+      flexGrow: 1,
+      flexBasis: 0,
+      minHeight: 40,
+      paddingHorizontal: 6,
+      borderRadius: 12,
+      backgroundColor: "transparent",
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    quickAmountChipSelected: {
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderColor: c.accent,
+    },
+    quickAmountChipPressed: {
+      opacity: 0.75,
+    },
+    quickAmountChipDisabled: {
+      opacity: 0.45,
+    },
+    quickAmountChipText: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: c.textMuted,
+      fontVariant: ["tabular-nums"],
+    },
+    quickAmountChipTextSelected: {
+      color: c.accent,
+    },
     payButton: {
       backgroundColor: c.accent,
       height: 60,
@@ -353,148 +430,6 @@ export function createPayHomeStyles(c: ThemeColors) {
       letterSpacing: 0,
       paddingHorizontal: 2,
       textAlign: "center",
-    },
-    successSafe: {
-      flex: 1,
-      backgroundColor: c.background,
-    },
-    successScroll: {
-      flex: 1,
-    },
-    successScrollContent: {
-      flexGrow: 1,
-      paddingHorizontal: 24,
-      paddingTop: 28,
-      paddingBottom: 16,
-    },
-    successTop: {
-      alignItems: "center",
-    },
-    successIconWrap: {
-      width: 72,
-      height: 72,
-      borderRadius: 36,
-      backgroundColor: c.depositHighlightBackground,
-      borderWidth: 1,
-      borderColor: c.depositHighlightBorder,
-      alignItems: "center",
-      justifyContent: "center",
-      marginBottom: 18,
-    },
-    successTitle: {
-      color: c.text,
-      fontSize: 26,
-      fontWeight: "800",
-      textAlign: "center",
-    },
-    successSubtitle: {
-      color: c.textSecondary,
-      fontSize: 14,
-      lineHeight: 20,
-      textAlign: "center",
-      marginTop: 8,
-      marginBottom: 22,
-      paddingHorizontal: 12,
-    },
-    successAmount: {
-      color: c.accent,
-      fontSize: 36,
-      fontWeight: "800",
-      letterSpacing: -0.5,
-      textAlign: "center",
-    },
-    successAmountCurrency: {
-      color: c.textFaint,
-      fontSize: 15,
-      fontWeight: "700",
-      textAlign: "center",
-      marginTop: 4,
-      marginBottom: 28,
-    },
-    successReceipt: {
-      width: "100%",
-      backgroundColor: c.surfaceMuted,
-      borderRadius: 16,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: c.borderLight,
-      paddingHorizontal: 16,
-      paddingVertical: 6,
-    },
-    successRow: {
-      flexDirection: "row",
-      alignItems: "flex-start",
-      justifyContent: "space-between",
-      paddingVertical: 7,
-      gap: 12,
-    },
-    successRowBorder: {
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: c.borderLight,
-    },
-    successRowLabel: {
-      flexShrink: 0,
-      fontSize: 12,
-      fontWeight: "600",
-      color: c.textMuted,
-      paddingTop: 1,
-    },
-    successRowValue: {
-      flex: 1,
-      fontSize: 12,
-      fontWeight: "700",
-      color: c.text,
-      textAlign: "right",
-    },
-    successRowValueMuted: {
-      fontWeight: "600",
-      color: c.textSecondary,
-    },
-    successStatusOk: {
-      color: c.accent,
-    },
-    successHistoryInScroll: {
-      width: "100%",
-      marginTop: 20,
-    },
-    successActions: {
-      width: "100%",
-      paddingHorizontal: 24,
-      paddingTop: 10,
-      paddingBottom: 12,
-      backgroundColor: c.background,
-    },
-    successPrimaryBtn: {
-      backgroundColor: c.accent,
-      height: 54,
-      borderRadius: 27,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    successPrimaryBtnPressed: {
-      opacity: 0.92,
-      transform: [{ scale: 0.99 }],
-    },
-    successPrimaryBtnText: {
-      color: c.accentOn,
-      fontSize: 16,
-      fontWeight: "800",
-    },
-    successSecondaryBtn: {
-      height: 48,
-      borderRadius: 24,
-      alignItems: "center",
-      justifyContent: "center",
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: c.border,
-      backgroundColor: c.surface,
-    },
-    successSecondaryBtnPressed: {
-      opacity: 0.75,
-    },
-    successSecondaryBtnText: {
-      color: c.text,
-      fontSize: 15,
-      fontWeight: "700",
     },
   });
 }

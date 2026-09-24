@@ -45,6 +45,12 @@ export function createHistoryStyles(c: ThemeColors) {
       textTransform: "uppercase",
       letterSpacing: 0.4,
     },
+    summaryCurrency: {
+      marginTop: 2,
+      fontSize: 11,
+      fontWeight: "700",
+      color: c.textFaint,
+    },
     summaryValue: {
       marginTop: 4,
       fontSize: 16,
@@ -87,12 +93,12 @@ export function createHistoryStyles(c: ThemeColors) {
       lineHeight: 20,
     },
     sectionHeader: {
-      paddingTop: 18,
-      paddingBottom: 8,
+      paddingTop: 12,
+      paddingBottom: 6,
       backgroundColor: c.background,
     },
     sectionTitle: {
-      fontSize: 13,
+      fontSize: 11,
       fontWeight: "800",
       color: c.textMuted,
       textTransform: "uppercase",
@@ -102,12 +108,12 @@ export function createHistoryStyles(c: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: c.surfaceMuted,
-      borderRadius: 14,
+      borderRadius: 12,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: c.borderLight,
-      paddingHorizontal: 12,
-      paddingVertical: 12,
-      marginBottom: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 8,
+      marginBottom: 6,
     },
     transactionItemPressed: {
       opacity: 0.88,
@@ -117,15 +123,15 @@ export function createHistoryStyles(c: ThemeColors) {
       flexDirection: "row",
       alignItems: "center",
       minWidth: 0,
-      marginRight: 10,
+      marginRight: 8,
     },
     iconWrap: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       alignItems: "center",
       justifyContent: "center",
-      marginRight: 12,
+      marginRight: 8,
     },
     iconWrapSent: {
       backgroundColor: c.surface,
@@ -138,17 +144,17 @@ export function createHistoryStyles(c: ThemeColors) {
       borderColor: c.depositHighlightBorder,
     },
     avatarSmall: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
       backgroundColor: c.avatarBackground,
       justifyContent: "center",
       alignItems: "center",
-      marginRight: 12,
+      marginRight: 8,
       overflow: "hidden",
     },
     avatarText: {
-      fontSize: 17,
+      fontSize: 14,
       fontWeight: "700",
       color: c.avatarText,
     },
@@ -157,19 +163,19 @@ export function createHistoryStyles(c: ThemeColors) {
       minWidth: 0,
     },
     nameText: {
-      fontSize: 15,
+      fontSize: 13,
       fontWeight: "700",
       color: c.text,
     },
     metaLine: {
-      marginTop: 2,
-      fontSize: 12,
+      marginTop: 1,
+      fontSize: 11,
       fontWeight: "600",
       color: c.textMuted,
     },
     refText: {
-      marginTop: 2,
-      fontSize: 10,
+      marginTop: 1,
+      fontSize: 9,
       fontWeight: "600",
       color: c.textFaint,
       letterSpacing: 0.2,
@@ -179,31 +185,50 @@ export function createHistoryStyles(c: ThemeColors) {
       maxWidth: "38%",
     },
     amountText: {
-      fontSize: 15,
+      fontSize: 13,
       fontWeight: "800",
     },
     amountCurrency: {
       marginTop: 1,
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: "700",
       color: c.textFaint,
     },
     typeChip: {
-      marginTop: 4,
-      paddingHorizontal: 7,
+      marginTop: 3,
+      paddingHorizontal: 6,
       paddingVertical: 2,
-      borderRadius: 8,
+      borderRadius: 7,
       backgroundColor: c.surface,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: c.borderLight,
     },
     typeChipText: {
-      fontSize: 10,
+      fontSize: 9,
       fontWeight: "700",
       color: c.textSecondary,
     },
     greenText: { color: c.successAmount },
     blackText: { color: c.sentAmount },
+    seeMoreWrap: {
+      paddingTop: 8,
+      paddingBottom: 12,
+      alignItems: "center",
+    },
+    seeMoreBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      minWidth: 140,
+      alignItems: "center",
+    },
+    seeMoreBtnPressed: {
+      opacity: 0.65,
+    },
+    seeMoreText: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: c.accent,
+    },
 
     /** Détail transaction (overlay) */
     detailOverlay: {
@@ -226,6 +251,10 @@ export function createHistoryStyles(c: ThemeColors) {
       paddingTop: 12,
       maxHeight: "88%",
     },
+    /** Au-dessus de la tab bar (déjà safe-area) — pas de 2e insets.bottom. */
+    detailSheetFlush: {
+      paddingBottom: 0,
+    },
     detailHandle: {
       alignSelf: "center",
       width: 36,
@@ -233,6 +262,37 @@ export function createHistoryStyles(c: ThemeColors) {
       borderRadius: 2,
       backgroundColor: c.border,
       marginBottom: 14,
+    },
+    detailScroll: {
+      flexGrow: 0,
+      flexShrink: 1,
+    },
+    detailCloseFooter: {
+      alignItems: "center",
+      justifyContent: "flex-end",
+      paddingTop: 10,
+      paddingBottom: 10,
+      backgroundColor: c.modal,
+    },
+    detailCloseXBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: c.depositHighlightBackground,
+      borderWidth: 1,
+      borderColor: c.depositHighlightBorder,
+    },
+    detailCloseXBtnPressed: {
+      opacity: 0.7,
+    },
+    detailCloseXIcon: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: c.accent,
+      lineHeight: 18,
+      marginTop: -1,
     },
     detailHeader: {
       alignItems: "center",
@@ -273,7 +333,7 @@ export function createHistoryStyles(c: ThemeColors) {
       borderColor: c.borderLight,
       paddingHorizontal: 14,
       paddingVertical: 4,
-      marginBottom: 16,
+      marginBottom: 0,
     },
     detailRow: {
       flexDirection: "row",
@@ -305,22 +365,6 @@ export function createHistoryStyles(c: ThemeColors) {
     },
     detailStatusOk: {
       color: c.accent,
-    },
-    detailCloseBtn: {
-      backgroundColor: c.accent,
-      height: 52,
-      borderRadius: 26,
-      alignItems: "center",
-      justifyContent: "center",
-      marginBottom: 8,
-    },
-    detailCloseBtnPressed: {
-      opacity: 0.92,
-    },
-    detailCloseBtnText: {
-      color: c.accentOn,
-      fontSize: 16,
-      fontWeight: "800",
     },
   });
 }

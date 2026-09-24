@@ -1,15 +1,45 @@
 /** Étape onboarding côté serveur (`null` = profil complet). */
 export type OnboardingStep = "pin" | "profile";
 
+export type CommerceCategory = "taxi" | "shop" | "other";
+
+export type ApiCommerce = {
+  id: string;
+  accountId: string;
+  name: string;
+  category: CommerceCategory | string;
+  phoneDigits: string | null;
+  balanceFcfa: number;
+  createdAt?: string | null;
+};
+
+export type ApiActiveContext =
+  | { type: "personal" }
+  | {
+      type: "commerce";
+      commerceId: string;
+      name: string;
+      accountId: string;
+      category?: string;
+    };
+
 export type ApiUser = {
-  /** ID compte public (ex. BLYP-U-7KQ9XM2A4B). */
+  /** ID compte public actif (BLYP-U-… perso ou BLYP-C-… commerce). */
   id: string | null;
+  /** ID perso stable. */
+  personalAccountId?: string | null;
   phone: string;
   balanceFcfa: number;
+  personalBalanceFcfa?: number;
   needsOnboarding: boolean;
   onboardingStep: OnboardingStep | null;
   firstName: string | null;
   lastName: string | null;
+  personalFirstName?: string | null;
+  personalLastName?: string | null;
+  isMerchant?: boolean;
+  activeContext?: ApiActiveContext;
+  commerces?: ApiCommerce[];
 };
 
 export type TransactionItem = {
@@ -62,3 +92,44 @@ export type WalletDepositStatusResponse =
       amountFcfa: number;
       failureReason: string | null;
     };
+
+export type MoneyTransferStatus =
+  | "pending"
+  | "claimed"
+  | "expired"
+  | "cancelled";
+
+export type MoneyTransfer = {
+  transferId: string;
+  amountFcfa: number;
+  status: MoneyTransferStatus;
+  fromUserId: string;
+  toUserId: string | null;
+  toPhone: string;
+  expiresAt: string;
+  claimedAt: string | null;
+  createdAt: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  conversationId: string;
+  senderUserId: string;
+  type: "text" | "money";
+  body: string | null;
+  moneyTransfer: MoneyTransfer | null;
+  createdAt: string;
+  clientId: string | null;
+};
+
+export type Conversation = {
+  id: string;
+  type: "direct" | string;
+  peerName: string;
+  peerPhone: string | null;
+  peerUserId: string | null;
+  lastMessagePreview: string;
+  lastMessageType: "text" | "money" | null;
+  lastMessageAt: string | null;
+  updatedAt: string;
+};

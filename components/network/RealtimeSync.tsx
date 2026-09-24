@@ -1,4 +1,4 @@
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth } from "@/contexts/authContextBase";
 import { useNetwork } from "@/contexts/NetworkContext";
 import { useEffect, useRef } from "react";
 import { AppState, InteractionManager, type AppStateStatus } from "react-native";
@@ -8,7 +8,7 @@ const POLL_MS = 45_000;
 const BOOT_DELAY_MS = 120;
 
 /**
- * Sync « push-like » sans FCM pour l’instant :
+ * Sync fond (filet) — le push Expo couvre l’instantané « paiement reçu » :
  * - boot différé (après 1er frame Pay)
  * - retour foreground
  * - reconnect réseau
@@ -21,6 +21,16 @@ export function RealtimeSync() {
   const phone = user?.phone ?? "";
   const lastReconnect = useRef(0);
   const appState = useRef(AppState.currentState);
+
+  /** Purge pub BLE orpheline (reload natif) — une fois, pas à chaque Profil. */
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      void import("@/lib/ble/advertise").then((m) => {
+        m.purgeOrphanTaxiBroadcastOnce();
+      });
+    });
+    return () => task.cancel?.();
+  }, []);
 
   useEffect(() => {
     if (!token || !phone) return;

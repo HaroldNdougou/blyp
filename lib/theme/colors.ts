@@ -46,6 +46,16 @@ export type ThemeColors = {
   signOutBorder: string;
   depositHighlightBackground: string;
   depositHighlightBorder: string;
+  bubbleMine: string;
+  bubbleTheirs: string;
+  bubbleMineText: string;
+  bubbleTheirsText: string;
+  moneyBubbleBackground: string;
+  moneyBubbleBorder: string;
+  moneyAmountSent: string;
+  moneyAmountPending: string;
+  moneyAmountClaimed: string;
+  moneyAmountExpired: string;
 };
 
 const accent = "#5dc705";
@@ -95,6 +105,16 @@ export const lightColors: ThemeColors = {
   signOutBorder: "#FFCDD2",
   depositHighlightBackground: "#F4FFF0",
   depositHighlightBorder: "#E0F5D5",
+  bubbleMine: accent,
+  bubbleTheirs: "#F0F0F0",
+  bubbleMineText: "#FFFFFF",
+  bubbleTheirsText: "#111111",
+  moneyBubbleBackground: "#F4FFF0",
+  moneyBubbleBorder: "#E0F5D5",
+  moneyAmountSent: "#111111",
+  moneyAmountPending: "#5dc705",
+  moneyAmountClaimed: "#4CAF50",
+  moneyAmountExpired: "#8E8E93",
 };
 
 export const darkColors: ThemeColors = {
@@ -141,6 +161,16 @@ export const darkColors: ThemeColors = {
   signOutBorder: "#5C2B32",
   depositHighlightBackground: "#152016",
   depositHighlightBorder: "#2A4030",
+  bubbleMine: "#3D7A12",
+  bubbleTheirs: "#2C2C2E",
+  bubbleMineText: "#FFFFFF",
+  bubbleTheirsText: "#F5F5F7",
+  moneyBubbleBackground: "#152016",
+  moneyBubbleBorder: "#2A4030",
+  moneyAmountSent: "#F5F5F7",
+  moneyAmountPending: "#5dc705",
+  moneyAmountClaimed: "#5dc705",
+  moneyAmountExpired: "#8E8E93",
 };
 
 export function getThemeColors(scheme: ColorScheme | null | undefined): ThemeColors {

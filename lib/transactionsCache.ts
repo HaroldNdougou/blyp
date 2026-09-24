@@ -1,16 +1,35 @@
 import type { TransactionItem } from "@/lib/api/types";
 import { clearHistoryUiCache, rememberHistoryUi } from "@/lib/history/historyUiCache";
-import { getDb } from "@/lib/db/sqlite";
+import { getDb, runDbWrite } from "@/lib/db/sqlite";
 import { fallbackTxReference } from "@/lib/txReference";
+
+type CacheListener = (phone: string, items: TransactionItem[]) => void;
+const listeners = new Set<CacheListener>();
 
 function publishUi(phone: string, items: TransactionItem[]) {
   rememberHistoryUi(phone, items);
+  for (const l of listeners) l(phone, items);
 }
 
 /** RAM — lecture sync après hydrate. Clé = phone. */
 const byPhone = new Map<string, TransactionItem[]>();
 const cursorByPhone = new Map<string, string | null>();
 const hydratePromises = new Map<string, Promise<void>>();
+
+/** Historique / Pay : réagir au merge sans refetch (flash WhatsApp). */
+export function subscribeTransactionsCache(listener: CacheListener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function transactionSnapshotsEqual(
+  a: TransactionItem[],
+  b: TransactionItem[],
+): boolean {
+  return listsEqual(a, b);
+}
 
 function listsEqual(a: TransactionItem[], b: TransactionItem[]): boolean {
   if (a.length !== b.length) return false;
@@ -48,32 +67,38 @@ export function mergeTransactionsDelta(
   for (const t of delta) map.set(t.id, t);
   const next = sortTx([...map.values()]).slice(0, 200);
   if (listsEqual(prev, next)) return prev;
-  void persistPhone(phone, next);
   byPhone.set(phone, next);
+  const top = next[0]?.createdAt ?? null;
+  if (top) {
+    const cur = cursorByPhone.get(phone);
+    if (!cur || top > cur) cursorByPhone.set(phone, top);
+  }
   publishUi(phone, next);
+  void persistPhone(phone, next);
+  if (top) void setSyncCursor(phone, top);
   return next;
 }
 
 async function persistPhone(phone: string, items: TransactionItem[]) {
-  const db = await getDb();
-  if (!db) return;
-  await db.withTransactionAsync(async () => {
-    await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
-    for (const t of items) {
-      await db.runAsync(
-        `INSERT INTO transactions
-          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        phone,
-        t.id,
-        t.type,
-        t.amountFcfa,
-        t.counterpartyName,
-        t.counterpartyPhone,
-        t.createdAt,
-        t.reference || fallbackTxReference(t.id),
-      );
-    }
+  await runDbWrite(async (db) => {
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
+      for (const t of items) {
+        await db.runAsync(
+          `INSERT INTO transactions
+            (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          phone,
+          t.id,
+          t.type,
+          t.amountFcfa,
+          t.counterpartyName,
+          t.counterpartyPhone,
+          t.createdAt,
+          t.reference || fallbackTxReference(t.id),
+        );
+      }
+    });
   });
 }
 
@@ -138,9 +163,36 @@ export function setTransactionsSnapshot(
   }
   byPhone.set(phone, sorted);
   publishUi(phone, sorted);
-  void persistPhone(phone, sorted);
   const cursor = sorted[0]?.createdAt ?? null;
-  if (cursor) void setSyncCursor(phone, cursor);
+  if (cursor) cursorByPhone.set(phone, cursor);
+  /** Persist + curseur dans la même file (pas de course avec merge après pay). */
+  void runDbWrite(async (db) => {
+    await db.withTransactionAsync(async () => {
+      await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
+      for (const t of sorted) {
+        await db.runAsync(
+          `INSERT INTO transactions
+            (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          phone,
+          t.id,
+          t.type,
+          t.amountFcfa,
+          t.counterpartyName,
+          t.counterpartyPhone,
+          t.createdAt,
+          t.reference || fallbackTxReference(t.id),
+        );
+      }
+      if (cursor) {
+        await db.runAsync(
+          `INSERT OR REPLACE INTO sync_meta (phone, cursor) VALUES (?, ?)`,
+          phone,
+          cursor,
+        );
+      }
+    });
+  });
 }
 
 export function getTransactionsSnapshot(
@@ -162,36 +214,31 @@ export async function setSyncCursor(
 ): Promise<void> {
   if (!phone) return;
   cursorByPhone.set(phone, cursor);
-  const db = await getDb();
-  if (!db) return;
-  if (cursor) {
+  if (!cursor) return;
+  await runDbWrite(async (db) => {
     await db.runAsync(
       `INSERT OR REPLACE INTO sync_meta (phone, cursor) VALUES (?, ?)`,
       phone,
       cursor,
     );
-  }
+  });
 }
 
 export function clearTransactionsSnapshot(phone: string) {
   byPhone.delete(phone);
   cursorByPhone.delete(phone);
   clearHistoryUiCache(phone);
-  void (async () => {
-    const db = await getDb();
-    if (!db) return;
+  void runDbWrite(async (db) => {
     await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
     await db.runAsync(`DELETE FROM sync_meta WHERE phone = ?`, phone);
-  })();
+  });
 }
 
 export function clearAllTransactionsSnapshots() {
   byPhone.clear();
   cursorByPhone.clear();
   clearHistoryUiCache();
-  void (async () => {
-    const db = await getDb();
-    if (!db) return;
+  void runDbWrite(async (db) => {
     await db.execAsync(`DELETE FROM transactions; DELETE FROM sync_meta;`);
-  })();
+  });
 }

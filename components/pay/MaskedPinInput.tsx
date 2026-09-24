@@ -1,7 +1,7 @@
 /**
  * Code PIN / OTP sans flash : TextInput invisible + masque React.
- * - text : • classiques
- * - circles : ronds style iPhone (anneau vide → point plein)
+ * Défaut `circles` : ronds style iPhone (anneau accent vide → point plein).
+ * `text` : • classiques (legacy).
  */
 import { useTheme } from "@/contexts/ThemeContext";
 import React, { forwardRef } from "react";
@@ -25,7 +25,7 @@ type Props = Omit<
   onDigitsChange: (digits: string) => void;
   maxLength: number;
   maskChar?: string;
-  /** `circles` = UI type code iPhone. */
+  /** Défaut : cercles accent Blyp. */
   variant?: "text" | "circles";
   /** Bordure / anneau en erreur (variant circles). */
   error?: boolean;
@@ -42,7 +42,7 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
       onDigitsChange,
       maxLength,
       maskChar = "•",
-      variant = "text",
+      variant = "circles",
       error = false,
       style,
       placeholder,

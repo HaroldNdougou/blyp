@@ -2,7 +2,7 @@
  * File d’attente offline (point 4) — rejoue les ops à la reconnexion.
  * PIN pay : SecureStore uniquement (jamais en clair dans SQLite).
  */
-import { getDb } from "@/lib/db/sqlite";
+import { getDb, runDbWrite } from "@/lib/db/sqlite";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
@@ -51,7 +51,6 @@ export async function enqueueOfflineOp(
   type: OfflineOpType,
   payload: Record<string, unknown>,
 ): Promise<string> {
-  const db = await getDb();
   const id = `opq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const createdAt = new Date().toISOString();
   const safePayload = { ...payload };
@@ -59,15 +58,16 @@ export async function enqueueOfflineOp(
     await storePayPin(id, safePayload.transactionPin);
     delete safePayload.transactionPin;
   }
-  if (!db) return id;
-  await db.runAsync(
-    `INSERT INTO offline_queue (id, type, payload, createdAt, attempts)
-     VALUES (?, ?, ?, ?, 0)`,
-    id,
-    type,
-    JSON.stringify(safePayload),
-    createdAt,
-  );
+  await runDbWrite(async (database) => {
+    await database.runAsync(
+      `INSERT INTO offline_queue (id, type, payload, createdAt, attempts)
+       VALUES (?, ?, ?, ?, 0)`,
+      id,
+      type,
+      JSON.stringify(safePayload),
+      createdAt,
+    );
+  });
   return id;
 }
 
@@ -91,17 +91,17 @@ export async function listOfflineOps(): Promise<OfflineOp[]> {
 }
 
 export async function removeOfflineOp(id: string): Promise<void> {
-  const db = await getDb();
   await clearPayPin(id);
-  if (!db) return;
-  await db.runAsync(`DELETE FROM offline_queue WHERE id = ?`, id);
+  await runDbWrite(async (db) => {
+    await db.runAsync(`DELETE FROM offline_queue WHERE id = ?`, id);
+  });
 }
 
 export async function bumpOfflineOpAttempt(id: string): Promise<void> {
-  const db = await getDb();
-  if (!db) return;
-  await db.runAsync(
-    `UPDATE offline_queue SET attempts = attempts + 1 WHERE id = ?`,
-    id,
-  );
+  await runDbWrite(async (db) => {
+    await db.runAsync(
+      `UPDATE offline_queue SET attempts = attempts + 1 WHERE id = ?`,
+      id,
+    );
+  });
 }

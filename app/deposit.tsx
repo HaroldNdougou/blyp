@@ -2,6 +2,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { digitsOnlyAmount, isValidAmountFcfa, MAX_AMOUNT_DIGITS } from "@/lib/amountLimits";
 import { ApiError } from "@/lib/api/errors";
+import {
+  initiateWalletDeposit,
+  newDepositIdempotencyKey,
+} from "@/lib/deposit/runDeposit";
+import { armPendingDepositWatch } from "@/lib/deposit/pendingWatch";
+import { armTopUpSuccessFlash } from "@/lib/deposit/successFlash";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -23,9 +29,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Part de la hauteur d’écran occupée par la feuille modale (depuis le bas). */
 const SHEET_HEIGHT_RATIO = 0.85;
-
-const POLL_MS = 2500;
-const POLL_MAX = 24;
 
 function createDepositStyles(c: ThemeColors) {
   return StyleSheet.create({
@@ -106,7 +109,7 @@ function createDepositStyles(c: ThemeColors) {
       color: c.textFaint,
       marginLeft: 8,
     },
-    primaryBtn: {
+      primaryBtn: {
       marginTop: 8,
       backgroundColor: c.accent,
       height: 56,
@@ -127,50 +130,16 @@ function createDepositStyles(c: ThemeColors) {
   });
 }
 
-function newIdempotencyKey(): string {
-  const c = globalThis.crypto;
-  if (c && "randomUUID" in c && typeof c.randomUUID === "function") {
-    return c.randomUUID();
-  }
-  return `idemp-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => setTimeout(r, ms));
-}
-
-async function pollDepositCompleted(
-  token: string,
-  depositIntentId: string,
-): Promise<void> {
-  const { getDepositIntentStatus } = await import("@/lib/api/client");
-  for (let i = 0; i < POLL_MAX; i++) {
-    await sleep(POLL_MS);
-    const s = await getDepositIntentStatus(token, depositIntentId);
-    if (s.status === "completed") return;
-    if (s.status === "failed") {
-      throw new ApiError(
-        s.failureReason?.trim() || "Rechargement échoué ou annulé.",
-        409,
-      );
-    }
-  }
-  throw new ApiError(
-    "Délai dépassé. Vérifiez votre solde dans un instant ou réessayez.",
-    408,
-  );
-}
-
 export default function DepositScreen() {
   const { token, refreshUser } = useAuth();
   const { colors } = useTheme();
   const { t } = useTranslation();
   const styles = useMemo(() => createDepositStyles(colors), [colors]);
   const [amount, setAmount] = useState("");
-  /** idle → loading (spinner) → success (coche) → retour Pay. */
-  const [submitPhase, setSubmitPhase] = useState<
-    "idle" | "loading" | "success"
-  >("idle");
+  /** idle → loading (POST) → success (sync) ; async MoMo → retour Pay + poll. */
+  const [submitPhase, setSubmitPhase] = useState<"idle" | "loading" | "success">(
+    "idle",
+  );
   const idempotencyKeyRef = useRef<string | null>(null);
   const amountInputRef = useRef<TextInput>(null);
   const { height: windowHeight } = useWindowDimensions();
@@ -200,22 +169,29 @@ export default function DepositScreen() {
     if (busy) return;
 
     if (!idempotencyKeyRef.current) {
-      idempotencyKeyRef.current = newIdempotencyKey();
+      idempotencyKeyRef.current = newDepositIdempotencyKey();
     }
     const idempotencyKey = idempotencyKeyRef.current;
 
     setSubmitPhase("loading");
     try {
-      const { deposit: apiDeposit } = await import("@/lib/api/client");
-      const res = await apiDeposit(token, n, idempotencyKey);
-      if (res.status !== "completed" && res.depositIntentId) {
-        await pollDepositCompleted(token, res.depositIntentId);
-      }
+      const init = await initiateWalletDeposit(token, n, idempotencyKey);
       idempotencyKeyRef.current = null;
-      setSubmitPhase("success");
-      await new Promise<void>((r) => setTimeout(r, 700));
+      if (init.status === "completed") {
+        setSubmitPhase("success");
+        armTopUpSuccessFlash(n);
+        void refreshUser();
+        await new Promise<void>((r) => setTimeout(r, 450));
+        router.back();
+        return;
+      }
+      /** MoMo lancé → ferme la feuille ; Pay poll en fond. */
+      armPendingDepositWatch({
+        token,
+        depositIntentId: init.depositIntentId,
+        amountFcfa: n,
+      });
       router.back();
-      void refreshUser();
     } catch (e) {
       setSubmitPhase("idle");
       Alert.alert(

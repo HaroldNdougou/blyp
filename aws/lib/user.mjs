@@ -40,18 +40,62 @@ function getOnboardingStep(profile) {
   return null;
 }
 
-export function userToApi(profile, balanceFcfa = 0) {
+export function userToApi(profile, walletOrBalance = 0) {
   const onboardingStep = getOnboardingStep(profile);
+  const wallet =
+    typeof walletOrBalance === "number"
+      ? {
+          balanceFcfa: walletOrBalance,
+          publicId: null,
+          displayFirstName: profile.firstName ?? null,
+          displayLastName: profile.lastName ?? null,
+          activeContext: { type: "personal" },
+          commerces: [],
+        }
+      : walletOrBalance;
+
+  const publicId = wallet.publicId || resolveAccountId(profile);
   return {
-    /** ID compte public (ex. BLYP-U-…) — pas l’UUID interne. */
-    id: resolveAccountId(profile),
+    /** ID compte public actif (perso BLYP-U-… ou commerce BLYP-C-…). */
+    id: publicId,
+    /** ID perso stable (toujours BLYP-U-…). */
+    personalAccountId: resolveAccountId(profile),
     phone: profile.phone,
-    balanceFcfa,
+    balanceFcfa: wallet.balanceFcfa,
+    /** Solde perso (utile pour switch optimistic). */
+    personalBalanceFcfa:
+      wallet.personalBalanceFcfa ?? wallet.balanceFcfa ?? 0,
     needsOnboarding: onboardingStep != null,
     onboardingStep,
-    firstName: profile.firstName ?? null,
-    lastName: profile.lastName ?? null,
+    firstName: wallet.displayFirstName ?? profile.firstName ?? null,
+    lastName: wallet.displayLastName ?? profile.lastName ?? null,
+    /** Noms du profil perso (inchangés en mode pro). */
+    personalFirstName: profile.firstName ?? null,
+    personalLastName: profile.lastName ?? null,
+    /** true si au moins un commerce ou flag legacy. */
+    isMerchant:
+      profile.isMerchant === true || (wallet.commerces?.length ?? 0) > 0,
+    activeContext: wallet.activeContext ?? { type: "personal" },
+    commerces: wallet.commerces ?? [],
   };
+}
+
+/** Active le statut commerçant (opt-in explicite). */
+export async function enableMerchant(userId) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression: "SET isMerchant = :m, updatedAt = :now",
+      ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeValues: {
+        ":m": true,
+        ":now": now,
+      },
+    }),
+  );
+  return getUserApiPayload(userId);
 }
 
 /**
@@ -138,16 +182,15 @@ export async function getUserBalance(userId) {
 }
 
 export async function getUserApiPayload(userId) {
-  const [profile, balanceFcfa] = await Promise.all([
-    getUserProfile(userId),
-    getUserBalance(userId),
-  ]);
+  const profile = await getUserProfile(userId);
   if (!profile) return null;
   if (!profile.userId) profile.userId = userId;
   if (!profile.accountId) {
     profile.accountId = await ensureAccountId(userId, profile);
   }
-  return userToApi(profile, balanceFcfa);
+  const { resolveActiveWallet } = await import("./commerce.mjs");
+  const wallet = await resolveActiveWallet(userId, profile);
+  return userToApi(profile, wallet);
 }
 
 export async function getOtpCooldown(phone) {

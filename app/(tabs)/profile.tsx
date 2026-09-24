@@ -1,6 +1,9 @@
+import { CommerceSection } from "@/components/profile/CommerceSection";
 import { createProfileStyles } from "@/components/profile/profileStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
+import { resolveBleBroadcastAccount } from "@/lib/ble/broadcastAccount";
 import {
   formatCameroonPhoneDisplay,
   formatFcfa,
@@ -9,13 +12,14 @@ import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { Redirect, router } from "expo-router";
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -38,7 +42,70 @@ export default function ProfileTabScreen() {
   const { t, i18n } = useTranslation();
   const styles = useMemo(() => createProfileStyles(colors), [colors]);
   const [signingOut, setSigningOut] = useState(false);
+  const [announcePayments, setAnnouncePayments] = useState(false);
+  const bleBroadcastAccount = useMemo(
+    () => resolveBleBroadcastAccount(user),
+    [user],
+  );
+  const broadcast = useTaxiBroadcast(bleBroadcastAccount);
+  const isPro = user?.activeContext?.type === "commerce";
+  const personalFirst = user?.personalFirstName ?? null;
+  const personalLast = user?.personalLastName ?? null;
 
+  useEffect(() => {
+    let cancelled = false;
+    void import("@/lib/push/announcePref").then((m) => {
+      void m.hydrateAnnouncePaymentsPref().then((on) => {
+        if (!cancelled) setAnnouncePayments(on);
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const onBroadcastToggle = useCallback(
+    async (enabled: boolean) => {
+      const { status, message } = await broadcast.setEnabled(enabled);
+      if (!enabled || status === "broadcasting") return;
+      const msg =
+        status === "denied"
+          ? t("profile.broadcastDenied")
+          : status === "unavailable"
+            ? t("profile.broadcastUnavailable")
+            : status === "powered_off"
+              ? t("profile.broadcastOffBt")
+              : message === "INVALID_ACCOUNT"
+                ? t("profile.broadcastInvalidAccount")
+                : message && __DEV__
+                  ? `${t("profile.broadcastError")}\n${message}`
+                  : t("profile.broadcastError");
+      Alert.alert(t("profile.broadcastLabel"), msg);
+    },
+    [broadcast.setEnabled, t],
+  );
+
+  const onAnnounceToggle = useCallback((enabled: boolean) => {
+    setAnnouncePayments(enabled);
+    void import("@/lib/push/announcePref").then((m) => {
+      void m.setAnnouncePaymentsPref(enabled);
+    });
+  }, []);
+
+  const onContextChanged = useCallback(
+    (next: "personal" | "commerce") => {
+      if (next === "personal") {
+        if (broadcast.on) void broadcast.setEnabled(false);
+        return;
+      }
+      if (broadcast.on) {
+        void broadcast.setEnabled(false).then(() => broadcast.setEnabled(true));
+      }
+    },
+    [broadcast],
+  );
+
+  /** Hooks avant tout return — sinon crash « fewer hooks » au logout / session. */
   if (!isLoading && !token) {
     return <Redirect href="/" />;
   }
@@ -47,10 +114,14 @@ export default function ProfileTabScreen() {
   const phoneDisplay = phoneDigits
     ? `+237 ${formatCameroonPhoneDisplay(phoneDigits)}`
     : t("profile.dash");
-  const hasName = Boolean(user?.firstName?.trim() && user?.lastName?.trim());
-  const displayName = hasName
-    ? `${user!.firstName!.trim()} ${user!.lastName!.trim()}`
-    : t("common.account");
+  const hasName = isPro
+    ? Boolean(user?.firstName?.trim())
+    : Boolean(user?.firstName?.trim() && user?.lastName?.trim());
+  const displayName = isPro
+    ? (user?.firstName ?? "").trim() || t("common.account")
+    : hasName
+      ? `${user!.firstName!.trim()} ${user!.lastName!.trim()}`
+      : t("common.account");
   const accountComplete = Boolean(user && !user.needsOnboarding);
   const pinOk = user?.onboardingStep !== "pin" && Boolean(user);
   const langLabel =
@@ -106,7 +177,12 @@ export default function ProfileTabScreen() {
           <View style={styles.avatar}>
             {hasName ? (
               <Text style={styles.avatarText}>
-                {initialsFromName(user?.firstName ?? null, user?.lastName ?? null)}
+                {isPro
+                  ? (user?.firstName ?? "?").trim().charAt(0).toUpperCase()
+                  : initialsFromName(
+                      user?.firstName ?? null,
+                      user?.lastName ?? null,
+                    )}
               </Text>
             ) : (
               <Ionicons name="person" size={36} color={colors.accent} />
@@ -116,20 +192,24 @@ export default function ProfileTabScreen() {
           <View
             style={[
               styles.statusChip,
-              accountComplete ? styles.statusChipOk : styles.statusChipWarn,
+              accountComplete || isPro
+                ? styles.statusChipOk
+                : styles.statusChipWarn,
             ]}
           >
             <Text
               style={[
                 styles.statusChipText,
-                accountComplete
+                accountComplete || isPro
                   ? styles.statusChipTextOk
                   : styles.statusChipTextWarn,
               ]}
             >
-              {accountComplete
-                ? t("profile.statusActive")
-                : t("profile.statusIncomplete")}
+              {isPro
+                ? t("profile.modeProChip")
+                : accountComplete
+                  ? t("profile.statusActive")
+                  : t("profile.statusIncomplete")}
             </Text>
           </View>
         </View>
@@ -221,6 +301,84 @@ export default function ProfileTabScreen() {
           </Pressable>
         </View>
 
+        <CommerceSection styles={styles} onContextChanged={onContextChanged} />
+
+        <Text style={styles.sectionTitle}>{t("profile.sectionTaxi")}</Text>
+        <View style={styles.sectionCard}>
+          <Pressable
+            style={[styles.broadcastRow, styles.broadcastRowOnline]}
+            onPress={() => {
+              if (broadcast.busy) return;
+              void onBroadcastToggle(!broadcast.on);
+            }}
+            disabled={broadcast.busy}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: broadcast.on, disabled: broadcast.busy }}
+            accessibilityLabel={t("profile.broadcastLabel")}
+            hitSlop={{ top: 4, bottom: 4, left: 0, right: 0 }}
+          >
+            <View style={styles.broadcastTexts}>
+              <Text style={styles.broadcastTitle}>
+                {t("profile.broadcastLabel")}
+              </Text>
+              <Text
+                style={[
+                  styles.broadcastHint,
+                  broadcast.on && styles.broadcastHintOn,
+                ]}
+              >
+                {broadcast.on
+                  ? t("profile.broadcastHintOn")
+                  : t("profile.broadcastHintOff")}
+              </Text>
+            </View>
+            {broadcast.busy ? (
+              <ActivityIndicator color={colors.accent} size="small" />
+            ) : (
+              <View style={styles.broadcastSwitchWrap} pointerEvents="none">
+                <Switch
+                  value={broadcast.on}
+                  trackColor={{
+                    false: colors.borderLight,
+                    true: colors.depositHighlightBorder,
+                  }}
+                  thumbColor={broadcast.on ? colors.accent : colors.surface}
+                />
+              </View>
+            )}
+          </Pressable>
+          <View style={[styles.broadcastRow, styles.broadcastRowBorder]}>
+            <View style={styles.broadcastTexts}>
+              <Text style={styles.broadcastTitle}>
+                {t("profile.announcePaymentsLabel")}
+              </Text>
+              <Text
+                style={[
+                  styles.broadcastHint,
+                  announcePayments && styles.broadcastHintOn,
+                ]}
+              >
+                {announcePayments
+                  ? t("profile.announcePaymentsHintOn")
+                  : t("profile.announcePaymentsHintOff")}
+              </Text>
+            </View>
+            <Switch
+              value={announcePayments}
+              onValueChange={onAnnounceToggle}
+              trackColor={{
+                false: colors.borderLight,
+                true: colors.depositHighlightBorder,
+              }}
+              thumbColor={
+                announcePayments ? colors.accent : colors.surface
+              }
+              accessibilityLabel={t("profile.announcePaymentsLabel")}
+              accessibilityRole="switch"
+            />
+          </View>
+        </View>
+
         <Text style={styles.sectionTitle}>{t("profile.sectionAccount")}</Text>
         <View style={styles.sectionCard}>
           <View style={[styles.row, styles.rowBorder]}>
@@ -232,13 +390,15 @@ export default function ProfileTabScreen() {
           <View style={[styles.row, styles.rowBorder]}>
             <Text style={styles.rowLabel}>{t("profile.firstName")}</Text>
             <Text style={styles.rowValue}>
-              {user?.firstName?.trim() || t("profile.dash")}
+              {(isPro ? personalFirst : user?.firstName)?.trim() ||
+                t("profile.dash")}
             </Text>
           </View>
           <View style={[styles.row, styles.rowBorder]}>
             <Text style={styles.rowLabel}>{t("profile.lastName")}</Text>
             <Text style={styles.rowValue}>
-              {user?.lastName?.trim() || t("profile.dash")}
+              {(isPro ? personalLast : user?.lastName)?.trim() ||
+                t("profile.dash")}
             </Text>
           </View>
           <View style={styles.row}>

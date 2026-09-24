@@ -18,7 +18,8 @@ capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
 resolve_s3 = true
 region = "af-south-1"
-parameter_overrides = "Stage=dev JwtSecret=dev-insecure-change-me OtpPepper=pepper DepositMode=sync"
+# sync = crédit fictif. async + token + base URL live = vrai MoMo.
+parameter_overrides = "Stage=dev JwtSecret=dev-insecure-change-me OtpPepper=pepper DepositMode=sync PawapayApiToken= PawapayApiBaseUrl=https://api.sandbox.pawapay.io"
 
 [staging.deploy.parameters]
 stack_name = "blyp-api-staging"

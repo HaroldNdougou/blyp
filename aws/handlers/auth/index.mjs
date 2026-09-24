@@ -3,6 +3,7 @@ import {
   badRequest,
   getBearerToken,
   normalizeApiPath,
+  notFound,
   ok,
   parseJsonBody,
   serverError,
@@ -28,6 +29,7 @@ import {
 import { deliverOtpSms } from "../../lib/sms.mjs";
 import {
   deleteOtpChallenge,
+  enableMerchant,
   findOrCreateUserByPhoneSafe,
   getOtpChallenge,
   getOtpCooldown,
@@ -41,6 +43,20 @@ import {
   setTransactionPin,
   updateProfileNames,
 } from "../../lib/user.mjs";
+import {
+  createCommerce,
+  getPublicAccountLabel,
+  listCommercesForUser,
+  setActiveContext,
+} from "../../lib/commerce.mjs";
+import {
+  deleteDeviceToken,
+  upsertDeviceToken,
+} from "../../lib/devices.mjs";
+
+function trimStr(v) {
+  return String(v ?? "").trim();
+}
 
 function isItemActive(item) {
   if (!item?.expiresAt) return true;
@@ -213,6 +229,99 @@ async function handleMe(userId) {
   return ok(user);
 }
 
+async function handleEnableMerchant(userId) {
+  const profile = await getUserProfile(userId);
+  if (!profile) return unauthorized("Utilisateur introuvable");
+  if (!profile.transactionPinHash) {
+    return badRequest("Terminez l’inscription (PIN) avant de devenir commerçant");
+  }
+  if (!trimStr(profile.firstName) || !trimStr(profile.lastName)) {
+    return badRequest("Terminez votre profil (prénom / nom) avant de devenir commerçant");
+  }
+  const user = await enableMerchant(userId);
+  return ok({ user });
+}
+
+async function handleCreateCommerce(userId, body) {
+  const result = await createCommerce(userId, body);
+  if (result.error === "USER_NOT_FOUND") return unauthorized("Utilisateur introuvable");
+  if (result.error === "ONBOARDING_REQUIRED") {
+    return badRequest("Terminez l’inscription avant de créer un commerce");
+  }
+  if (result.error === "NAME_INVALID") {
+    return badRequest("Nom du commerce trop court");
+  }
+  if (result.error === "PHONE_INVALID") {
+    return badRequest("Téléphone invalide");
+  }
+  if (result.error === "LIMIT") {
+    return badRequest("Limite de commerces atteinte");
+  }
+  if (result.error) return serverError("Création commerce impossible");
+  const user = await getUserApiPayload(userId);
+  return ok({ commerce: result.commerce, user });
+}
+
+async function handleListCommerces(userId) {
+  const commerces = await listCommercesForUser(userId);
+  return ok({ items: commerces });
+}
+
+async function handleSetContext(userId, body) {
+  const result = await setActiveContext(userId, body);
+  if (result.error === "TYPE_INVALID") return badRequest("Contexte invalide");
+  if (result.error === "COMMERCE_REQUIRED") {
+    return badRequest("commerceId requis");
+  }
+  if (result.error === "NOT_FOUND") return badRequest("Commerce introuvable");
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
+}
+
+async function handleUpsertDeviceToken(userId, body) {
+  const result = await upsertDeviceToken(userId, {
+    token: body?.token,
+    platform: body?.platform,
+    deviceId: body?.deviceId,
+  });
+  if (result.error === "TOKEN_INVALID") {
+    return badRequest("Jeton push invalide");
+  }
+  return ok({ ok: true });
+}
+
+async function handleDeleteDeviceToken(userId, body) {
+  const result = await deleteDeviceToken(userId, {
+    token: body?.token,
+    deviceId: body?.deviceId,
+  });
+  if (result.error === "TOKEN_REQUIRED") {
+    return badRequest("Jeton ou deviceId requis");
+  }
+  return ok({ ok: true });
+}
+
+async function handlePublicAccount(accountIdRaw) {
+  const accountId = String(accountIdRaw ?? "")
+    .trim()
+    .toUpperCase();
+  if (!accountId.startsWith("BLYP-") || accountId.length < 12) {
+    return badRequest("accountId invalide");
+  }
+  const label = await getPublicAccountLabel(accountId);
+  if (!label) return notFound("Compte introuvable");
+  const displayName =
+    label.displayName && String(label.displayName).trim().length >= 2
+      ? String(label.displayName).trim().slice(0, 48)
+      : null;
+  if (!displayName) return notFound("Nom indisponible");
+  return ok({
+    accountId: label.accountId,
+    displayName,
+    kind: label.kind,
+  });
+}
+
 export async function handler(event, context) {
   /** Ne pas attendre les promesses SMS en arrière-plan après la réponse. */
   if (context && typeof context.callbackWaitsForEmptyEventLoop === "boolean") {
@@ -261,6 +370,56 @@ export async function handler(event, context) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handleMe(auth.userId);
+    }
+
+    if (method === "POST" && path === "/auth/merchant/enable") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return await handleEnableMerchant(auth.userId);
+    }
+
+    if (method === "POST" && path === "/commerces") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleCreateCommerce(auth.userId, body);
+    }
+
+    if (method === "GET" && path === "/commerces") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return await handleListCommerces(auth.userId);
+    }
+
+    if (method === "PUT" && path === "/me/context") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleSetContext(auth.userId, body);
+    }
+
+    const accountPublic = path.match(/^\/accounts\/([^/]+)\/public$/);
+    if (method === "GET" && accountPublic) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return await handlePublicAccount(decodeURIComponent(accountPublic[1]));
+    }
+
+    if (method === "PUT" && path === "/me/device-token") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleUpsertDeviceToken(auth.userId, body);
+    }
+
+    if (method === "DELETE" && path === "/me/device-token") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event) ?? {};
+      return await handleDeleteDeviceToken(auth.userId, body);
     }
 
     return badRequest("Route introuvable");

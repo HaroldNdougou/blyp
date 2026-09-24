@@ -194,14 +194,19 @@ async function handleDeposit(userId, event, body) {
   });
 }
 
-async function handleDepositStatus(userId, depositIntentId) {
+async function handleDepositStatus(userId, depositIntentId, event) {
   if (!depositIntentId?.trim()) {
     return badRequest("Identifiant invalide");
   }
   let intent = await getDepositIntent(userId, depositIntentId.trim());
   if (!intent) return notFound("Dépôt introuvable");
 
-  if (intent.status === "PENDING_PROVIDER") {
+  /** sync=0 → Dynamo seul (poll app rapide). Sinon sync PawaPay si pending. */
+  const qs = event?.queryStringParameters || {};
+  const syncRaw = String(qs.sync ?? "1").toLowerCase();
+  const syncRemote = !(syncRaw === "0" || syncRaw === "false" || syncRaw === "no");
+
+  if (intent.status === "PENDING_PROVIDER" && syncRemote) {
     intent = await syncRemotePawapayStatus(intent);
   }
 
@@ -213,6 +218,7 @@ async function handlePay(userId, body, event) {
   const amount = parseInt(String(body?.amount), 10);
   const recipientName = body?.recipientName || "Bénéficiaire";
   const recipientPhone = body?.recipientPhone ?? null;
+  const recipientAccountId = body?.recipientAccountId ?? null;
   const transactionPin = String(body?.transactionPin ?? "").replace(/\D/g, "");
   const idempotencyKey = getIdempotencyKey(event);
 
@@ -224,6 +230,9 @@ async function handlePay(userId, body, event) {
   }
   if (transactionPin.length !== 4) {
     return badRequest("Code PIN de transaction requis (4 chiffres)");
+  }
+  if (!String(recipientAccountId ?? "").trim()) {
+    return badRequest("Destinataire invalide (accountId requis)");
   }
 
   const profile = await getUserProfile(userId);
@@ -247,6 +256,7 @@ async function handlePay(userId, body, event) {
     recipientName,
     recipientPhone,
     idempotencyKey,
+    recipientAccountId,
   );
 
   if (result.error === "INSUFFICIENT_BALANCE") {
@@ -254,6 +264,15 @@ async function handlePay(userId, body, event) {
   }
   if (result.error === "AMOUNT_INVALID") {
     return badRequest(`Montant invalide (max ${MAX_TX_AMOUNT_FCFA.toLocaleString("fr-FR")} FCFA)`);
+  }
+  if (result.error === "RECIPIENT_REQUIRED" || result.error === "RECIPIENT_NOT_FOUND") {
+    return badRequest("Destinataire introuvable");
+  }
+  if (result.error === "SELF_PAY") {
+    return badRequest("Impossible de vous payer vous-même");
+  }
+  if (result.error === "PAY_FROM_COMMERCE_FORBIDDEN") {
+    return badRequest("Passez en mode perso pour payer");
   }
 
   return ok({
@@ -291,7 +310,7 @@ export async function handler(event) {
     if (method === "GET" && depositMatch) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
-      return await handleDepositStatus(auth.userId, depositMatch[1]);
+      return await handleDepositStatus(auth.userId, depositMatch[1], event);
     }
 
     if (method === "POST" && path === "/payments/pay") {
