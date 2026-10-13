@@ -9,6 +9,8 @@ object PaymentAnnouncePrefs {
   private const val KEY_LANG = "lang"
   private const val KEY_LAST_TX = "last_tx"
   private const val KEY_ACTIVE_CONV = "active_conversation"
+  private const val KEY_API_BASE = "api_base"
+  private const val KEY_ACCESS_TOKEN = "access_token"
 
   fun isEnabled(context: Context): Boolean =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -53,6 +55,29 @@ object PaymentAnnouncePrefs {
   fun getActiveConversation(context: Context): String =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
       .getString(KEY_ACTIVE_CONV, "")
+      ?.trim()
+      .orEmpty()
+
+  fun setApiSession(context: Context, apiBase: String?, accessToken: String?) {
+    val base = apiBase?.trim().orEmpty().trimEnd('/')
+    val token = accessToken?.trim().orEmpty()
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_API_BASE, base)
+      .putString(KEY_ACCESS_TOKEN, token)
+      .commit()
+  }
+
+  fun getApiBase(context: Context): String =
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      .getString(KEY_API_BASE, "")
+      ?.trim()
+      .orEmpty()
+      .trimEnd('/')
+
+  fun getAccessToken(context: Context): String =
+    context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+      .getString(KEY_ACCESS_TOKEN, "")
       ?.trim()
       .orEmpty()
 

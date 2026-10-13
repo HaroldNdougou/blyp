@@ -18,7 +18,9 @@
       "bundleIdentifier": "com.haroldndougou.blyp",
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Blyp utilise le Bluetooth pour détecter les taxis à proximité.",
-        "NSLocationWhenInUseUsageDescription": "La localisation est requise sur Android pour le scan Bluetooth à proximité."
+        "NSLocationWhenInUseUsageDescription": "La localisation est requise sur Android pour le scan Bluetooth à proximité.",
+        "NSMicrophoneUsageDescription": "Blyp utilise le micro pour les messages vocaux.",
+        "NSContactsUsageDescription": "Blyp accède à vos contacts pour démarrer une conversation."
       },
       "splash": {
         "image": "./assets/images/splash-mark-light.png",
@@ -52,7 +54,9 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
-        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_CONTACTS"
       ],
       "splash": {
         "image": "./assets/images/splash-mark-light.png",
@@ -67,9 +71,27 @@
     },
     "plugins": [
       "expo-localization",
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Blyp accède à vos contacts pour démarrer une conversation, comme sur WhatsApp."
+        }
+      ],
       "expo-secure-store",
       "expo-sqlite",
       "expo-router",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Blyp utilise le micro pour les messages vocaux."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Blyp accède à vos photos pour les envoyer dans le chat."
+        }
+      ],
       [
         "expo-notifications",
         {
@@ -115,7 +137,8 @@
         }
       ],
       "./plugins/withBleBroadcastForeground.js",
-      "./plugins/withPaymentAnnounceBackground.js"
+      "./plugins/withPaymentAnnounceBackground.js",
+      "./plugins/withReadContacts.js"
     ],
     "experiments": {
       "typedRoutes": true

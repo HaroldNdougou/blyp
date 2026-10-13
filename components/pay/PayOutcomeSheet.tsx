@@ -11,6 +11,7 @@ export type PayOutcomeSheetData =
       kind: "success";
       amountFcfa: number;
       recipientName: string;
+      copy?: "payment" | "transfer";
     }
   | {
       kind: "error";
@@ -47,7 +48,11 @@ function PayOutcomeSheetInner({ outcome, onDismiss }: Props) {
             >
               <CheckGlyph color={colors.accent} size={28} />
             </View>
-            <Text style={styles.title}>{t("pay.paid")}</Text>
+            <Text style={styles.title}>
+              {t(
+                outcome.copy === "transfer" ? "pay.transferred" : "pay.paid",
+              )}
+            </Text>
             <Text style={styles.amount}>
               {formatFcfa(outcome.amountFcfa)} {t("common.fcfa")}
             </Text>

@@ -10,6 +10,9 @@ import type {
   Conversation,
   MoneyTransfer,
   OnboardingStep,
+  Pocket,
+  PocketMoveResponse,
+  PocketTransaction,
   TransactionItem,
   WalletDepositResponse,
   WalletDepositStatusResponse,
@@ -37,6 +40,7 @@ let mockCommerces: ApiCommerce[] = [];
 let mockCommerceTx = new Map<string, TransactionItem[]>();
 let mockActiveContext: ApiActiveContext = { type: "personal" };
 let mockHelloSeq = 0;
+let mockAvatarUri: string | null = null;
 const lastMockOtpAtByPhone = new Map<string, number>();
 const MOCK_OTP_RESEND_MS = 60_000;
 const mockDepositIdempotencyCache = new Map<string, WalletDepositResponse>();
@@ -95,7 +99,44 @@ function mockUserFromState(): ApiUser {
         }
       : { type: "personal" },
     commerces: mockCommerces.map((c) => ({ ...c })),
+    avatarUrl: mockAvatarUri,
   };
+}
+
+export function mockStageAvatarLocalUri(uri: string): void {
+  mockAvatarUri = String(uri ?? "").trim() || null;
+}
+
+export function mockPresignProfileAvatar(
+  token: string,
+  contentType: string,
+): {
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+} {
+  assertSession(token);
+  const nine = String(sessionPhone ?? "").replace(/\D/g, "").slice(-9);
+  const ct = String(contentType ?? "image/jpeg").trim() || "image/jpeg";
+  return {
+    uploadUrl: "mock://avatar",
+    key: `avatars/${nine || "600000000"}.jpg`,
+    contentType: ct,
+    expiresIn: 300,
+  };
+}
+
+export function mockConfirmProfileAvatar(
+  token: string,
+  key: string,
+): { user: ApiUser } {
+  assertSession(token);
+  const nine = String(sessionPhone ?? "").replace(/\D/g, "").slice(-9);
+  if (!key.includes(nine || "600000000")) {
+    throw new ApiError("Clé avatar invalide", 400);
+  }
+  return { user: mockUserFromState() };
 }
 
 export function mockRequestOtp(phoneDigits: string): { ok: boolean } {
@@ -275,7 +316,12 @@ export function mockListCommerces(token: string): { items: ApiCommerce[] } {
 export function mockLookupAccountPublic(
   token: string,
   accountId: string,
-): { accountId: string; displayName: string; kind: string } {
+): {
+  accountId: string;
+  displayName: string;
+  kind: string;
+  category?: string | null;
+} {
   assertSession(token);
   const id = String(accountId ?? "")
     .trim()
@@ -286,6 +332,7 @@ export function mockLookupAccountPublic(
       accountId: commerce.accountId,
       displayName: commerce.name,
       kind: "commerce",
+      category: commerce.category,
     };
   }
   if (id === mockSessionUserId && mockFirstName) {
@@ -293,6 +340,7 @@ export function mockLookupAccountPublic(
       accountId: id,
       displayName: mockFirstName,
       kind: "personal",
+      category: "taxi",
     };
   }
   throw new ApiError("Compte introuvable", 404);
@@ -498,19 +546,205 @@ export function mockListTransactions(
   return { items, cursor, delta };
 }
 
+let mockPockets: Pocket[] = [];
+const mockPocketTx = new Map<string, PocketTransaction[]>();
+
+function mockPocketLedgerRow(p: Pocket, direction: "in" | "out", amount: number) {
+  const now = new Date().toISOString();
+  const tx: PocketTransaction = {
+    id: `mock-ptx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    pocketId: p.id,
+    direction,
+    amountFcfa: amount,
+    createdAt: now,
+  };
+  mockPocketTx.set(p.id, [tx, ...(mockPocketTx.get(p.id) ?? [])]);
+  transactions = [
+    {
+      id: `mock-${Date.now()}-pk`,
+      reference: makeTxReference("PAYMENT"),
+      type: direction === "in" ? "sent" : "received",
+      kind: direction === "in" ? "POCKET_IN" : "POCKET_OUT",
+      amountFcfa: amount,
+      counterpartyName: `Poche · ${p.kind === "savings" ? "Épargne personnelle" : p.name}`,
+      counterpartyPhone: null,
+      createdAt: now,
+    },
+    ...transactions,
+  ];
+  return tx;
+}
+
+export function mockListPockets(token: string): { items: Pocket[] } {
+  assertSession(token);
+  return { items: mockPockets.map((p) => ({ ...p })) };
+}
+
+export function mockCreatePocket(
+  token: string,
+  input: { name: string; initialAmount?: number },
+): PocketMoveResponse {
+  assertSession(token);
+  const name = String(input.name ?? "").trim().slice(0, 40);
+  if (!name) throw new ApiError("Nom de poche invalide", 400);
+  const amount = Math.floor(Number(input.initialAmount) || 0);
+  if (amount > balanceFcfa) throw new ApiError("Solde disponible insuffisant", 400);
+  const now = new Date().toISOString();
+  const pocket: Pocket = {
+    id: `mock${Date.now().toString(36)}`,
+    name,
+    kind: "custom",
+    balanceFcfa: amount,
+    createdAt: now,
+    updatedAt: now,
+  };
+  mockPockets = [...mockPockets, pocket];
+  let tx: PocketTransaction | null = null;
+  if (amount > 0) {
+    balanceFcfa -= amount;
+    tx = mockPocketLedgerRow(pocket, "in", amount);
+  }
+  return { pocket: { ...pocket }, balanceFcfa, transaction: tx };
+}
+
+export function mockMovePocketFunds(
+  token: string,
+  pocketId: string,
+  direction: "in" | "out",
+  amount: number,
+): PocketMoveResponse {
+  assertSession(token);
+  let pocket = mockPockets.find((p) => p.id === pocketId);
+  if (!pocket && pocketId === "savings" && direction === "in") {
+    const now = new Date().toISOString();
+    pocket = {
+      id: "savings",
+      name: "Épargne personnelle",
+      kind: "savings",
+      balanceFcfa: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockPockets = [...mockPockets, pocket];
+  }
+  if (!pocket) throw new ApiError("Poche introuvable", 404);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new ApiError("Montant invalide", 400);
+  }
+  if (direction === "in" && amount > balanceFcfa) {
+    throw new ApiError("Solde disponible insuffisant", 400);
+  }
+  if (direction === "out" && amount > pocket.balanceFcfa) {
+    throw new ApiError("Montant supérieur au solde de la poche", 400);
+  }
+  const delta = direction === "in" ? amount : -amount;
+  pocket.balanceFcfa += delta;
+  pocket.updatedAt = new Date().toISOString();
+  balanceFcfa -= delta;
+  const tx = mockPocketLedgerRow(pocket, direction, amount);
+  return { pocket: { ...pocket }, balanceFcfa, transaction: tx };
+}
+
+export function mockRenamePocket(
+  token: string,
+  pocketId: string,
+  name: string,
+): { pocket: Pocket | null } {
+  assertSession(token);
+  const pocket = mockPockets.find((p) => p.id === pocketId);
+  if (!pocket || pocket.kind === "savings") {
+    throw new ApiError("Poche introuvable", 404);
+  }
+  pocket.name = String(name ?? "").trim().slice(0, 40) || pocket.name;
+  return { pocket: { ...pocket } };
+}
+
+export function mockDeletePocket(
+  token: string,
+  pocketId: string,
+): { ok: boolean; balanceFcfa: number } {
+  assertSession(token);
+  const pocket = mockPockets.find((p) => p.id === pocketId);
+  if (!pocket || pocket.kind === "savings") {
+    throw new ApiError("Poche introuvable", 404);
+  }
+  if (pocket.balanceFcfa > 0) {
+    balanceFcfa += pocket.balanceFcfa;
+    mockPocketLedgerRow(pocket, "out", pocket.balanceFcfa);
+  }
+  mockPockets = mockPockets.filter((p) => p.id !== pocketId);
+  return { ok: true, balanceFcfa };
+}
+
+export function mockListPocketTransactions(
+  token: string,
+  pocketId: string,
+): { items: PocketTransaction[] } {
+  assertSession(token);
+  return { items: [...(mockPocketTx.get(pocketId) ?? [])] };
+}
+
 export function mockHealth(): boolean {
   return true;
 }
 
 const mockConversations: Conversation[] = [];
 const mockMessages = new Map<string, ChatMessage[]>();
+const mockHiddenMessageIds = new Map<string, Set<string>>();
+const mockInviteSmsAt = new Map<string, number>();
 
 function mockDirectId(phone: string) {
   return `dm_mock_${phone}`;
 }
 
+/** Simule l’invitation SMS (1 / conversation / 24 h) pour un peer sans compte. */
+function mockQueuePeerInvite(
+  conversationId: string,
+  kind: "text" | "voice" | "money" | "image",
+) {
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (!conv || conv.peerUserId) return;
+  const now = Date.now();
+  const last = mockInviteSmsAt.get(conversationId) ?? 0;
+  if (now - last < 24 * 60 * 60 * 1000) return;
+  mockInviteSmsAt.set(conversationId, now);
+  if (typeof __DEV__ !== "undefined" && __DEV__) {
+    console.log(
+      `[mock] invite SMS (${kind}) → ${conv.peerPhone ?? conv.peerName}`,
+    );
+  }
+}
+
 export function mockListConversations(_token: string) {
   return { items: [...mockConversations] };
+}
+
+export function mockLookupBlypPhones(
+  _token: string,
+  phones: string[],
+): { items: { phone: string; onBlyp: boolean }[] } {
+  const demoOnBlyp = new Set([
+    "600000101",
+    "600000102",
+    "600000103",
+    "600000104",
+    "600000105",
+    "600000106",
+    "600000107",
+    "600000108",
+  ]);
+  const items = phones.map((raw) => {
+    const s = String(raw).trim();
+    const phone = s.startsWith("+")
+      ? s
+      : `+237${String(raw).replace(/\D/g, "").slice(-9)}`;
+    const nine = phone.replace(/\D/g, "").slice(-9);
+    return {
+      phone,
+      onBlyp: demoOnBlyp.has(nine),
+    };
+  });
+  return { items };
 }
 
 export function mockOpenConversation(_token: string, phone: string) {
@@ -534,8 +768,37 @@ export function mockOpenConversation(_token: string, phone: string) {
   return { conversation };
 }
 
+function mockReplyToFromList(
+  conversationId: string,
+  replyToMessageId?: string | null,
+): ChatMessage["replyTo"] {
+  const replyMid = String(replyToMessageId ?? "").trim();
+  if (!replyMid) return null;
+  const target = (mockMessages.get(conversationId) ?? []).find(
+    (m) => m.id === replyMid,
+  );
+  if (!target) return null;
+  return {
+    messageId: target.id,
+    senderUserId: target.senderUserId,
+    type: target.type,
+    preview:
+      target.type === "text" || target.type === "image"
+        ? target.body
+        : null,
+  };
+}
+
 export function mockListMessages(_token: string, conversationId: string) {
-  return { items: mockMessages.get(conversationId) ?? [] };
+  const hidden = mockHiddenMessageIds.get(conversationId);
+  const items = (mockMessages.get(conversationId) ?? []).filter(
+    (m) => !hidden?.has(m.id),
+  );
+  return {
+    items,
+    peerLastReadAt: null,
+    peerLastDeliveredAt: null,
+  };
 }
 
 export function mockSendTextMessage(
@@ -543,8 +806,23 @@ export function mockSendTextMessage(
   conversationId: string,
   body: string,
   clientId: string,
+  replyToMessageId?: string | null,
 ) {
   const now = new Date().toISOString();
+  const list = mockMessages.get(conversationId) ?? [];
+  const replyMid = String(replyToMessageId ?? "").trim();
+  let replyTo = null;
+  if (replyMid) {
+    const target = list.find((m) => m.id === replyMid);
+    if (target) {
+      replyTo = {
+        messageId: target.id,
+        senderUserId: target.senderUserId,
+        type: target.type,
+        preview: target.type === "text" ? (target.body ?? null) : null,
+      };
+    }
+  }
   const message: ChatMessage = {
     id: clientId,
     conversationId,
@@ -552,10 +830,10 @@ export function mockSendTextMessage(
     type: "text",
     body,
     moneyTransfer: null,
+    replyTo,
     createdAt: now,
     clientId,
   };
-  const list = mockMessages.get(conversationId) ?? [];
   list.push(message);
   mockMessages.set(conversationId, list);
   const conv = mockConversations.find((c) => c.id === conversationId);
@@ -564,7 +842,84 @@ export function mockSendTextMessage(
     conv.lastMessageType = "text";
     conv.lastMessageAt = now;
     conv.updatedAt = now;
+    conv.lastMessageFromSelf = true;
   }
+  mockQueuePeerInvite(conversationId, "text");
+  return { message };
+}
+
+export function mockSendVoiceMessage(
+  _token: string,
+  conversationId: string,
+  key: string,
+  durationMs: number,
+  clientId: string,
+  replyToMessageId?: string | null,
+) {
+  const now = new Date().toISOString();
+  const message: ChatMessage = {
+    id: clientId,
+    conversationId,
+    senderUserId: "me",
+    type: "voice",
+    body: null,
+    moneyTransfer: null,
+    voice: { key, durationMs, localUri: null },
+    replyTo: mockReplyToFromList(conversationId, replyToMessageId),
+    createdAt: now,
+    clientId,
+  };
+  const list = mockMessages.get(conversationId) ?? [];
+  list.push(message);
+  mockMessages.set(conversationId, list);
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (conv) {
+    conv.lastMessagePreview = "VOICE";
+    conv.lastMessageType = "voice";
+    conv.lastMessageAt = now;
+    conv.updatedAt = now;
+    conv.lastMessageFromSelf = true;
+  }
+  mockQueuePeerInvite(conversationId, "voice");
+  return { message };
+}
+
+export function mockSendImageMessage(
+  _token: string,
+  conversationId: string,
+  key: string,
+  width: number,
+  height: number,
+  clientId: string,
+  caption?: string | null,
+  replyToMessageId?: string | null,
+) {
+  const now = new Date().toISOString();
+  const text = String(caption ?? "").trim() || null;
+  const message: ChatMessage = {
+    id: `m-img-${clientId}`,
+    conversationId,
+    senderUserId: "me",
+    type: "image",
+    body: text,
+    moneyTransfer: null,
+    image: { key, width, height, localUri: null },
+    replyTo: mockReplyToFromList(conversationId, replyToMessageId),
+    createdAt: now,
+    clientId,
+  };
+  const list = mockMessages.get(conversationId) ?? [];
+  list.push(message);
+  mockMessages.set(conversationId, list);
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (conv) {
+    conv.lastMessagePreview = text ?? "📷";
+    conv.lastMessageType = "image";
+    conv.lastMessageAt = now;
+    conv.updatedAt = now;
+    conv.lastMessageFromSelf = true;
+  }
+  mockQueuePeerInvite(conversationId, "image");
   return { message };
 }
 
@@ -575,6 +930,7 @@ export function mockSendMoneyMessage(
   clientId: string,
   _idempotencyKey: string,
   transactionPin: string,
+  replyToMessageId?: string | null,
 ) {
   if (String(transactionPin).replace(/\D/g, "").length !== 4) {
     throw new ApiError("Code PIN incorrect", 400);
@@ -602,6 +958,7 @@ export function mockSendMoneyMessage(
     type: "money",
     body: null,
     moneyTransfer: transfer,
+    replyTo: mockReplyToFromList(conversationId, replyToMessageId),
     createdAt: now,
     clientId,
   };
@@ -614,24 +971,125 @@ export function mockSendMoneyMessage(
     conv.lastMessageType = "money";
     conv.lastMessageAt = now;
     conv.updatedAt = now;
+    conv.lastMessageFromSelf = true;
   }
+  mockQueuePeerInvite(conversationId, "money");
   return { message, balanceFcfa };
 }
 
-export function mockClaimMoneyTransfer(_token: string, transferId: string) {
+export function mockClaimMoneyTransfer(
+  _token: string,
+  transferId: string,
+  action: "claim" | "recall" = "claim",
+) {
   for (const list of mockMessages.values()) {
     const msg = list.find((m) => m.moneyTransfer?.transferId === transferId);
     if (msg?.moneyTransfer) {
+      const now = new Date().toISOString();
+      const uid = mockSessionUserId ?? "me";
+      if (action === "recall") {
+        msg.moneyTransfer = {
+          ...msg.moneyTransfer,
+          status: "claimed",
+          claimedAt: now,
+          claimedByUserId: uid,
+          claimedByFirstName: "Moi",
+        };
+        balanceFcfa += msg.moneyTransfer.amountFcfa;
+        return { transfer: msg.moneyTransfer, balanceFcfa };
+      }
       msg.moneyTransfer = {
         ...msg.moneyTransfer,
         status: "claimed",
-        claimedAt: new Date().toISOString(),
+        claimedAt: now,
+        claimedByUserId: uid,
+        claimedByFirstName: "Moi",
       };
       balanceFcfa += msg.moneyTransfer.amountFcfa;
       return { transfer: msg.moneyTransfer, balanceFcfa };
     }
   }
   throw new ApiError("Transfert introuvable", 404);
+}
+
+export function mockThankMoneyTransfer(
+  _token: string,
+  conversationId: string,
+  transferId: string,
+) {
+  const list = mockMessages.get(conversationId) ?? [];
+  const msg = list.find((m) => m.moneyTransfer?.transferId === transferId);
+  if (!msg?.moneyTransfer) throw new ApiError("Transfert introuvable", 404);
+  const uid = mockSessionUserId ?? "me";
+  msg.moneyTransfer = {
+    ...msg.moneyTransfer,
+    thanksUserId: uid,
+    thanksFirstName: "Moi",
+  };
+  return { ok: true, transfer: msg.moneyTransfer };
+}
+
+export function mockMarkConversationTyping(
+  _token: string,
+  _conversationId: string,
+  _on: boolean,
+) {
+  return { ok: true };
+}
+
+export function mockReactToMessage(
+  _token: string,
+  conversationId: string,
+  messageId: string,
+  emoji: string | null,
+) {
+  const uid = mockSessionUserId ?? "me";
+  const list = mockMessages.get(conversationId) ?? [];
+  const idx = list.findIndex((m) => m.id === messageId);
+  if (idx < 0) throw new ApiError("Message introuvable", 404);
+  const msg = list[idx];
+  const prev = [...(msg.reactions ?? [])];
+  const mine = prev.find((r) => r.userId === uid);
+  const next =
+    !emoji || mine?.emoji === emoji
+      ? prev.filter((r) => r.userId !== uid)
+      : [...prev.filter((r) => r.userId !== uid), { userId: uid, emoji }];
+  list[idx] = { ...msg, reactions: next };
+  mockMessages.set(conversationId, list);
+  return { ok: true, messageId, reactions: next };
+}
+
+export function mockDeleteChatMessage(
+  _token: string,
+  conversationId: string,
+  messageId: string,
+  scope: "me" | "everyone",
+) {
+  const list = mockMessages.get(conversationId) ?? [];
+  const idx = list.findIndex((m) => m.id === messageId);
+  if (idx < 0) throw new ApiError("Message introuvable", 404);
+  const msg = list[idx];
+  if (scope === "me") {
+    const hidden =
+      mockHiddenMessageIds.get(conversationId) ?? new Set<string>();
+    hidden.add(messageId);
+    mockHiddenMessageIds.set(conversationId, hidden);
+    return { ok: true, scope: "me", messageId };
+  }
+  const updated: ChatMessage = {
+    ...msg,
+    type: "text",
+    body: null,
+    voice: null,
+    image: null,
+    moneyTransfer: null,
+    reactions: [],
+    replyTo: null,
+    deletedForAll: true,
+  };
+  list[idx] = updated;
+  mockMessages.set(conversationId, list);
+  return { ok: true, scope: "everyone", messageId, message: updated };
 }
 
 export function mockSayHello(): {

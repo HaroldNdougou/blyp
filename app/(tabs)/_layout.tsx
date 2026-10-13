@@ -1,5 +1,5 @@
 import "@/lib/perf/eagerRoutes";
-import { preloadHistoryScreen } from "@/components/history/preloadHistory";
+import { floodAllTabs } from "@/lib/perf/floodAllTabs";
 import {
   CashTabIcon,
   ChatTabIcon,
@@ -12,7 +12,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { getTotalUnread, subscribeUnread } from "@/lib/messages/unread";
 import { Tabs } from "expo-router";
 import { useEffect, useState } from "react";
-import { InteractionManager, Text, View } from "react-native";
+import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabLayout() {
@@ -25,21 +25,11 @@ export default function TabLayout() {
 
   useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
 
-  /** Flood modules dès le mount tabs — sans attendre 1 s. */
   useEffect(() => {
-    void import("./history");
-    void import("./messages");
-    void import("@/components/messages/ConversationsScreen");
-    void import("@/components/history/HistoryScreen");
-    void preloadHistoryScreen();
-    void import("@/app/deposit");
-    if (token) void import("./profile");
-    const task = InteractionManager.runAfterInteractions(() => {
-      void import("@expo/vector-icons").then((m) => {
-        void m.Ionicons.loadFont().catch(() => {});
-      });
+    floodAllTabs(token);
+    void import("@expo/vector-icons").then((m) => {
+      void m.Ionicons.loadFont().catch(() => {});
     });
-    return () => task.cancel();
   }, [token]);
 
   return (
@@ -49,7 +39,8 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        freezeOnBlur: true,
+        lazy: false,
+        freezeOnBlur: false,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.tabInactive,
         tabBarStyle: {

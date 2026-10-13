@@ -82,6 +82,7 @@ export async function getPublicAccountLabel(accountId) {
       accountId: id,
       displayName: name,
       kind: "commerce",
+      category: normalizeCategory(meta.category),
     };
   }
   const userId = meta.userId != null ? String(meta.userId) : "";
@@ -90,6 +91,7 @@ export async function getPublicAccountLabel(accountId) {
       accountId: id,
       displayName: null,
       kind: "personal",
+      category: "taxi",
     };
   }
   const profile = await getUserProfile(userId);
@@ -101,6 +103,7 @@ export async function getPublicAccountLabel(accountId) {
     accountId: id,
     displayName,
     kind: "personal",
+    category: "taxi",
   };
 }
 
@@ -233,6 +236,7 @@ export async function createCommerce(userId, input) {
                   commerceId,
                   accountId,
                   name,
+                  category,
                   createdAt: now,
                 },
                 ConditionExpression: "attribute_not_exists(PK)",

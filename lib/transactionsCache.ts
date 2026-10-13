@@ -40,12 +40,36 @@ function listsEqual(a: TransactionItem[], b: TransactionItem[]): boolean {
       x.id !== y.id ||
       x.amountFcfa !== y.amountFcfa ||
       x.type !== y.type ||
+      (x.kind ?? null) !== (y.kind ?? null) ||
       x.createdAt !== y.createdAt
     ) {
       return false;
     }
   }
   return true;
+}
+
+/** Claim chat money : crédit du destinataire, comme un paiement reçu. */
+function isClaimedMoneyLabel(name: string | null | undefined): boolean {
+  return String(name ?? "").trim() === "Message Money";
+}
+
+const MONEY_REFUND_KINDS = new Set(["MONEY_RECALL", "MONEY_EXPIRE_REFUND"]);
+
+/** Récupéré / expiré : l’argent revient au solde (vieux cache = libellé). */
+function isMoneyRefund(t: TransactionItem): boolean {
+  if (t.kind && MONEY_REFUND_KINDS.has(t.kind)) return true;
+  return String(t.counterpartyName ?? "").trim().startsWith("Message Money (");
+}
+
+function normalizeTransactionItem(t: TransactionItem): TransactionItem {
+  if (
+    t.type === "sent" &&
+    (isClaimedMoneyLabel(t.counterpartyName) || isMoneyRefund(t))
+  ) {
+    return { ...t, type: "received" };
+  }
+  return t;
 }
 
 function sortTx(items: TransactionItem[]): TransactionItem[] {
@@ -63,8 +87,11 @@ export function mergeTransactionsDelta(
   const prev = byPhone.get(phone) ?? [];
   if (delta.length === 0) return prev;
   const map = new Map<string, TransactionItem>();
-  for (const t of prev) map.set(t.id, t);
-  for (const t of delta) map.set(t.id, t);
+  for (const t of prev) map.set(t.id, normalizeTransactionItem(t));
+  for (const t of delta) {
+    const n = normalizeTransactionItem(t);
+    map.set(n.id, n);
+  }
   const next = sortTx([...map.values()]).slice(0, 200);
   if (listsEqual(prev, next)) return prev;
   byPhone.set(phone, next);
@@ -79,25 +106,32 @@ export function mergeTransactionsDelta(
   return next;
 }
 
+async function insertTxRow(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  phone: string,
+  t: TransactionItem,
+) {
+  await db.runAsync(
+    `INSERT INTO transactions
+      (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    phone,
+    t.id,
+    t.type,
+    t.amountFcfa,
+    t.counterpartyName,
+    t.counterpartyPhone,
+    t.createdAt,
+    t.reference || fallbackTxReference(t.id),
+    t.kind ?? null,
+  );
+}
+
 async function persistPhone(phone: string, items: TransactionItem[]) {
   await runDbWrite(async (db) => {
     await db.withTransactionAsync(async () => {
       await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
-      for (const t of items) {
-        await db.runAsync(
-          `INSERT INTO transactions
-            (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          phone,
-          t.id,
-          t.type,
-          t.amountFcfa,
-          t.counterpartyName,
-          t.counterpartyPhone,
-          t.createdAt,
-          t.reference || fallbackTxReference(t.id),
-        );
-      }
+      for (const t of items) await insertTxRow(db, phone, t);
     });
   });
 }
@@ -119,21 +153,25 @@ export function hydrateTransactionsCache(phone: string): Promise<void> {
       counterpartyPhone: string | null;
       createdAt: string;
       reference: string | null;
+      kind: string | null;
     }>(
-      `SELECT id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference
+      `SELECT id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind
        FROM transactions WHERE phone = ? ORDER BY createdAt DESC LIMIT 200`,
       phone,
     );
     if (!byPhone.has(phone) && rows.length > 0) {
-      const items = rows.map((r) => ({
-        id: r.id,
-        reference: r.reference || fallbackTxReference(r.id),
-        type: r.type as "sent" | "received",
-        amountFcfa: r.amountFcfa,
-        counterpartyName: r.counterpartyName,
-        counterpartyPhone: r.counterpartyPhone,
-        createdAt: r.createdAt,
-      }));
+      const items = rows.map((r) =>
+        normalizeTransactionItem({
+          id: r.id,
+          reference: r.reference || fallbackTxReference(r.id),
+          type: r.type as "sent" | "received",
+          kind: r.kind ?? null,
+          amountFcfa: r.amountFcfa,
+          counterpartyName: r.counterpartyName,
+          counterpartyPhone: r.counterpartyPhone,
+          createdAt: r.createdAt,
+        }),
+      );
       byPhone.set(phone, items);
       publishUi(phone, items);
     }
@@ -142,7 +180,11 @@ export function hydrateTransactionsCache(phone: string): Promise<void> {
       phone,
     );
     if (meta?.cursor) cursorByPhone.set(phone, meta.cursor);
-  })().finally(() => {
+  })()
+    .catch(() => {
+      /* SQLite indispo / verrou : le sync réseau remplit la RAM */
+    })
+    .finally(() => {
     hydratePromises.delete(phone);
   });
 
@@ -155,7 +197,7 @@ export function setTransactionsSnapshot(
   items: TransactionItem[],
 ) {
   if (!phone) return;
-  const sorted = sortTx(items).slice(0, 200);
+  const sorted = sortTx(items.map(normalizeTransactionItem)).slice(0, 200);
   const prev = byPhone.get(phone);
   if (prev && listsEqual(prev, sorted)) {
     publishUi(phone, prev);
@@ -169,21 +211,7 @@ export function setTransactionsSnapshot(
   void runDbWrite(async (db) => {
     await db.withTransactionAsync(async () => {
       await db.runAsync(`DELETE FROM transactions WHERE phone = ?`, phone);
-      for (const t of sorted) {
-        await db.runAsync(
-          `INSERT INTO transactions
-            (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          phone,
-          t.id,
-          t.type,
-          t.amountFcfa,
-          t.counterpartyName,
-          t.counterpartyPhone,
-          t.createdAt,
-          t.reference || fallbackTxReference(t.id),
-        );
-      }
+      for (const t of sorted) await insertTxRow(db, phone, t);
       if (cursor) {
         await db.runAsync(
           `INSERT OR REPLACE INTO sync_meta (phone, cursor) VALUES (?, ?)`,

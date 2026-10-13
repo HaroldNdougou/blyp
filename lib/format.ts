@@ -101,6 +101,72 @@ export function formatMessageTime(iso: string): string {
   });
 }
 
+function startOfLocalDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** Clé jour local — séparateurs de fil. */
+export function messageDayKey(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/** Pastille WhatsApp : Aujourd’hui / Hier / jour de la semaine / date. */
+export function formatMessageDayLabel(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffDays = Math.round(
+    (startOfLocalDay(now) - startOfLocalDay(d)) / 86_400_000,
+  );
+  if (diffDays === 0) return i18n.t("dates.today");
+  if (diffDays === 1) return i18n.t("dates.yesterday");
+  const locale = currentNumberLocale();
+  if (diffDays > 1 && diffDays < 7) {
+    const weekday = d.toLocaleDateString(locale, { weekday: "long" });
+    return weekday ? weekday.charAt(0).toUpperCase() + weekday.slice(1) : "";
+  }
+  return d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "long",
+    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+}
+
+/** Message Money en attente : « 12 oct. » / « Oct 12, 2026 » si autre année. */
+export function formatMoneyExpiresDate(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const locale = currentNumberLocale();
+  return d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+}
+
+/** Liste des discussions : heure / Hier / date courte. */
+export function formatConversationWhen(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffDays = Math.round(
+    (startOfLocalDay(now) - startOfLocalDay(d)) / 86_400_000,
+  );
+  if (diffDays === 0) return formatMessageTime(iso);
+  if (diffDays === 1) return i18n.t("dates.yesterday");
+  const locale = currentNumberLocale();
+  return d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+}
+
 export function formatTransactionDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

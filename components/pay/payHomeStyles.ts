@@ -213,6 +213,14 @@ export function createPayHomeStyles(c: ThemeColors) {
     recipientRowPressed: {
       opacity: 0.72,
     },
+    receiveNearbyRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "flex-end",
+      flexShrink: 0,
+      minWidth: 44,
+      minHeight: 44,
+    },
     recipientThumb: {
       width: 52,
       height: 52,
@@ -269,17 +277,38 @@ export function createPayHomeStyles(c: ThemeColors) {
       letterSpacing: 0.8,
       textAlign: "center",
     },
+    inputLabelActive: {
+      color: c.accent,
+      fontWeight: "700",
+    },
     inputWrapper: {
       alignItems: "center",
       justifyContent: "center",
       width: "100%",
-      paddingHorizontal: 18,
+      paddingHorizontal: 0,
       paddingTop: 8,
       paddingBottom: 4,
     },
     amountRow: {
       flexDirection: "row",
       alignItems: "center",
+      width: "100%",
+    },
+    amountRowSide: {
+      width: 52,
+      flexShrink: 0,
+    },
+    amountRowCenter: {
+      flex: 1,
+      minWidth: 0,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    amountRowEnd: {
+      width: 52,
+      flexShrink: 0,
+      alignItems: "flex-end",
       justifyContent: "center",
     },
     amountDisplayWrap: {
@@ -320,13 +349,6 @@ export function createPayHomeStyles(c: ThemeColors) {
         android: { includeFontPadding: false },
         default: {},
       }),
-    },
-    quickAmountsRow: {
-      flexDirection: "row",
-      justifyContent: "center",
-      alignItems: "center",
-      marginBottom: 10,
-      gap: 10,
     },
     quickAmountBtn: {
       minHeight: 36,
@@ -400,6 +422,55 @@ export function createPayHomeStyles(c: ThemeColors) {
       fontVariant: ["tabular-nums"],
     },
     quickAmountChipTextSelected: {
+      color: c.accent,
+    },
+    regularsRow: {
+      flexDirection: "row",
+      justifyContent: "center",
+      flexWrap: "nowrap",
+      gap: 8,
+      marginTop: 8,
+      paddingHorizontal: 4,
+    },
+    regularChip: {
+      width: "31.5%",
+      flexDirection: "row",
+      alignItems: "center",
+      minHeight: 38,
+      paddingLeft: 4,
+      paddingRight: 6,
+      borderRadius: 19,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+      backgroundColor: c.surfaceMuted,
+    },
+    regularChipSelected: {
+      borderWidth: 1,
+      borderColor: c.accent,
+      backgroundColor: "transparent",
+    },
+    regularChipPressed: {
+      opacity: 0.75,
+    },
+    /** Même rendu que l’avatar de la liste Messages. */
+    regularAvatar: {
+      marginRight: 5,
+    },
+    regularAvatarText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.avatarText,
+    },
+    regularAvatarTextSelected: {
+      color: c.accentOn,
+    },
+    regularName: {
+      flexShrink: 1,
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.text,
+    },
+    regularNameSelected: {
       color: c.accent,
     },
     payButton: {

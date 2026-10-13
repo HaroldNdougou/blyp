@@ -1,3 +1,5 @@
+import { kickImageOutbox } from "@/lib/image/outbox";
+import { kickVoiceOutbox } from "@/lib/voice/outbox";
 import { useAuth } from "@/contexts/authContextBase";
 import { useNetwork } from "@/contexts/NetworkContext";
 import { useEffect, useRef } from "react";
@@ -53,6 +55,9 @@ export function RealtimeSync() {
           await syncTransactionsFromNetwork(token, phone);
           if (cancelled) return;
           await drainOfflineQueue({ token, phone });
+          if (cancelled) return;
+          kickVoiceOutbox(token);
+          kickImageOutbox(token);
         } catch {
           /* silencieux */
         }

@@ -3,6 +3,10 @@ import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useNearbyTaxi } from "@/hooks/useNearbyTaxi";
+import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
+import { fallbackAccountId } from "@/lib/accountId";
+import { resolveP2pReceiveBroadcastAccount } from "@/lib/ble/broadcastAccount";
+import { waitForNearbyPayPeer } from "@/lib/ble/waitPayPeer";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
 import {
   initiateWalletDeposit,
@@ -20,7 +24,7 @@ import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import { fallbackTxReference } from "@/lib/txReference";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
-import { router, Stack } from "expo-router";
+import { router, Stack, usePathname } from "expo-router";
 import React, {
   lazy,
   Suspense,
@@ -45,21 +49,64 @@ import {
   View,
 } from "react-native";
 
+import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
+import { PeerAvatar } from "@/components/peers/PeerAvatar";
+import { IncomingPaymentFlashSheet } from "@/components/pay/IncomingPaymentFlashSheet";
 import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
 import { PayAmountEntry } from "@/components/pay/PayAmountEntry";
-import { CheckGlyph } from "@/components/pay/PayGlyphs";
+import { CheckGlyph, ReceiveNearbyGlyph } from "@/components/pay/PayGlyphs";
 import {
   PayOutcomeSheet,
   type PayOutcomeSheetData,
 } from "@/components/pay/PayOutcomeSheet";
 import { createPayHomeStyles } from "@/components/pay/payHomeStyles";
 import { PayRegisterOverlayFallback } from "@/components/pay/PayRegisterOverlayFallback";
+import {
+  subscribeIncomingPaymentFlash,
+  type IncomingPaymentFlash,
+} from "@/lib/pay/incomingFlash";
+import {
+  DEFAULT_QUICK_AMOUNTS,
+  getQuickAmounts,
+  startQuickAmountsEngine,
+  subscribeQuickAmounts,
+} from "@/lib/pay/quickAmounts";
+import { demoAvatarUrlForPhone, isDemoPhone } from "@/lib/dev/demoProfiles";
+import {
+  getRegularRecipients,
+  startRegularRecipientsEngine,
+  subscribeRegularRecipients,
+  type RegularRecipient,
+} from "@/lib/pay/regularRecipients";
 import { Trans, useTranslation } from "react-i18next";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
 const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
 const PayRegisterOverlay = lazy(importPayRegisterOverlay);
+
+/** Ne pas se détecter soi-même (BLE-U / tel). */
+function isOwnNearbyPeer(
+  peer: { accountId: string; phoneDigits: string },
+  user: { id?: string; personalAccountId?: string | null; phone?: string | null } | null,
+): boolean {
+  if (!user) return false;
+  const peerId = peer.accountId.trim().toUpperCase();
+  const personal = String(user.personalAccountId ?? "")
+    .trim()
+    .toUpperCase();
+  if (personal && peerId === personal) return true;
+  if (user.id) {
+    const derived = fallbackAccountId(user.id).toUpperCase();
+    if (peerId === derived) return true;
+  }
+  const mine = String(user.phone ?? "")
+    .replace(/\D/g, "")
+    .slice(-9);
+  return mine.length === 9 && peer.phoneDigits === mine;
+}
+
+const RECEIVED_FLASH_MS = 10000;
 
 const ONBOARDING_PIN_LEN = 4;
 
@@ -81,7 +128,22 @@ type PayRecipient = {
   accountId: string | null;
   name: string;
   phoneDigits: string;
+  /** Proche fréquent : envoi par message money (pas BLE). */
+  viaMoneyMessage?: boolean;
 };
+
+function newMoneyClientId() {
+  return `c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function regularToRecipient(r: RegularRecipient): PayRecipient {
+  return {
+    accountId: null,
+    name: r.name,
+    phoneDigits: r.phone,
+    viaMoneyMessage: true,
+  };
+}
 
 export default function PayHomeScreen() {
   useMarkRootShellReady();
@@ -93,8 +155,11 @@ export default function PayHomeScreen() {
     return () => cancelAnimationFrame(id);
   }, []);
   const [depositChrome, setDepositChrome] = useState(false);
+  const pathname = usePathname();
   /** Montant pad Pay — pour recharge + sans passer par le modal dépôt. */
   const [payAmountFcfa, setPayAmountFcfa] = useState<number | null>(null);
+  /** Incrémenté à la fermeture feuille succès/erreur → vide le pad (état local PayAmountEntry). */
+  const [amountPadResetSeq, setAmountPadResetSeq] = useState(0);
   const [topUpPhase, setTopUpPhase] = useState<
     "idle" | "loading" | "awaiting" | "success"
   >("idle");
@@ -110,6 +175,11 @@ export default function PayHomeScreen() {
     setDepositChrome(true);
     openDepositRoute();
   }, []);
+  /** La vraie feuille /deposit est un transparentModal : retirer la coquille
+   *  dès qu’elle est montée, sinon on voit 2 overlays (coquille + modal). */
+  useEffect(() => {
+    if (pathname === "/deposit") setDepositChrome(false);
+  }, [pathname]);
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
@@ -123,25 +193,88 @@ export default function PayHomeScreen() {
     refresh: refreshNearbyTaxi,
     resyncOnFocus: resyncNearbyTaxiOnFocus,
   } = useNearbyTaxi(true);
+  const p2pBroadcastAccount = useMemo(
+    () => resolveP2pReceiveBroadcastAccount(user),
+    [user],
+  );
+  const receiveBroadcast = useTaxiBroadcast(p2pBroadcastAccount);
+  const [quickAmounts, setQuickAmounts] = useState<readonly number[]>(
+    () => DEFAULT_QUICK_AMOUNTS,
+  );
+  const spendCategory = nearbyPeer?.category ?? null;
+
   const recipient = useMemo<PayRecipient | null>(() => {
     if (!nearbyPeer) return null;
-    /** Ne pas se détecter soi-même. */
-    if (user?.id && nearbyPeer.accountId === user.id) return null;
+    if (isOwnNearbyPeer(nearbyPeer, user)) return null;
     return {
       accountId: nearbyPeer.accountId,
       name: nearbyPeer.displayName,
       phoneDigits: nearbyPeer.phoneDigits,
     };
-  }, [nearbyPeer, user?.id]);
+  }, [nearbyPeer, user]);
   const recipientRef = useRef(recipient);
   recipientRef.current = recipient;
+  /** Figé à l’ouverture du PIN — le render ne doit pas l’effacer pendant le handoff BLE. */
+  const payRecipientAtPinRef = useRef<PayRecipient | null>(null);
+  const userRef = useRef(user);
+  userRef.current = user;
+  const [payHandoff, setPayHandoff] = useState(false);
+  const payHandoffRef = useRef(false);
+
+  const [receivedFlash, setReceivedFlash] =
+    useState<IncomingPaymentFlash | null>(null);
+  const payFocusedRef = useRef(false);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const dismissReceivedFlash = useCallback(() => {
+    if (flashTimerRef.current) {
+      clearTimeout(flashTimerRef.current);
+      flashTimerRef.current = null;
+    }
+    setReceivedFlash(null);
+  }, []);
+
+  const showReceivedFlash = useCallback((event: IncomingPaymentFlash) => {
+    if (flashTimerRef.current) {
+      clearTimeout(flashTimerRef.current);
+    }
+    setReceivedFlash(event);
+    flashTimerRef.current = setTimeout(() => {
+      flashTimerRef.current = null;
+      setReceivedFlash(null);
+    }, RECEIVED_FLASH_MS);
+    void import("expo-haptics")
+      .then((H) => H.notificationAsync(H.NotificationFeedbackType.Success))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    return subscribeIncomingPaymentFlash((event) => {
+      if (!payFocusedRef.current) return;
+      if (event.contextType === "commerce") return;
+      showReceivedFlash(event);
+    });
+  }, [showReceivedFlash]);
+
+  useEffect(() => {
+    return () => {
+      if (flashTimerRef.current) {
+        clearTimeout(flashTimerRef.current);
+        flashTimerRef.current = null;
+      }
+    };
+  }, []);
 
   /**
-   * Soft UX BLE : micro-pulse « Recherche… » à l’ouverture / refresh,
-   * puis état calme « Aucun à proximité » sans spinner — le scan continue.
+   * Soft UX BLE : pulse « Recherche… » au 1er affichage / tap refresh,
+   * puis « Aucun taxi détecté ». Le scan continue. Le timer ne doit
+   * jamais être clear sans passer à l’état calme (sinon spinner infini).
    */
   const [bleSearchPulse, setBleSearchPulse] = useState(true);
   const blePulseGenRef = useRef(0);
+  const blePulseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bleSearchSettledRef = useRef(false);
+  const wasBleHardRef = useRef(false);
 
   const bleHardBlock =
     bleBroadcasting ||
@@ -149,42 +282,65 @@ export default function PayHomeScreen() {
     bleStatus === "powered_off" ||
     bleStatus === "unavailable";
 
+  const stopBleSearchPulse = useCallback(() => {
+    blePulseGenRef.current += 1;
+    if (blePulseTimerRef.current) {
+      clearTimeout(blePulseTimerRef.current);
+      blePulseTimerRef.current = null;
+    }
+    setBleSearchPulse(false);
+  }, []);
+
   const armBleSearchPulse = useCallback(() => {
     const gen = ++blePulseGenRef.current;
+    bleSearchSettledRef.current = false;
     setBleSearchPulse(true);
-    const id = setTimeout(() => {
-      if (blePulseGenRef.current === gen) setBleSearchPulse(false);
+    if (blePulseTimerRef.current) clearTimeout(blePulseTimerRef.current);
+    blePulseTimerRef.current = setTimeout(() => {
+      if (blePulseGenRef.current !== gen) return;
+      blePulseTimerRef.current = null;
+      bleSearchSettledRef.current = true;
+      setBleSearchPulse(false);
     }, BLE_SEARCH_PULSE_MS);
+  }, []);
+
+  useEffect(() => {
     return () => {
-      clearTimeout(id);
+      if (blePulseTimerRef.current) clearTimeout(blePulseTimerRef.current);
     };
   }, []);
 
   useEffect(() => {
     if (recipient || bleHardBlock) {
-      blePulseGenRef.current += 1;
-      setBleSearchPulse(false);
+      stopBleSearchPulse();
+      if (recipient) bleSearchSettledRef.current = true;
+      wasBleHardRef.current = bleHardBlock;
       return;
     }
-    return armBleSearchPulse();
-  }, [recipient, bleHardBlock, armBleSearchPulse]);
+    if (wasBleHardRef.current) {
+      wasBleHardRef.current = false;
+      armBleSearchPulse();
+    }
+  }, [recipient, bleHardBlock, armBleSearchPulse, stopBleSearchPulse]);
 
   useEffect(() => {
-    if (!bleRefreshing || recipient || bleHardBlock) return;
-    return armBleSearchPulse();
-  }, [bleRefreshing, recipient, bleHardBlock, armBleSearchPulse]);
+    if (bleSearchSettledRef.current || recipient || bleHardBlock) return;
+    armBleSearchPulse();
+  }, [armBleSearchPulse, recipient, bleHardBlock]);
 
   const bleShowSearchChrome =
-    !recipient && !bleHardBlock && (bleSearchPulse || bleRefreshing);
+    !recipient &&
+    (payHandoff ||
+      (!bleHardBlock && (bleSearchPulse || bleStatus === "starting")));
 
   const bleHeaderTitle = recipient
     ? recipient.name
+    : payHandoff
+      ? t("ble.searchingTaxi")
     : bleBroadcasting
       ? t("ble.broadcastingShort")
-      : bleStatus === "denied"
-        ? t("ble.permissionDeniedShort")
-        : bleStatus === "powered_off"
-          ? t("ble.bluetoothOffShort")
+      : bleStatus === "denied" || bleStatus === "powered_off"
+        ? t("ble.bluetoothOffShort")
           : bleStatus === "unavailable"
             ? t("ble.nativeUnavailableShort")
             : bleShowSearchChrome
@@ -192,12 +348,14 @@ export default function PayHomeScreen() {
               : t("ble.noneNearby");
   const bleHeaderSubtitle = recipient
     ? formatCameroonPhoneDisplay(recipient.phoneDigits)
+    : payHandoff
+      ? t("ble.searchingHint")
     : bleBroadcasting
       ? t("ble.broadcastingHint")
-      : bleStatus === "denied" ||
-          bleStatus === "powered_off" ||
-          bleStatus === "unavailable"
-        ? t("ble.noTaxiHint")
+      : bleStatus === "denied" || bleStatus === "powered_off"
+        ? t("ble.bluetoothOffHint")
+        : bleStatus === "unavailable"
+          ? t("ble.noTaxiHint")
         : bleShowSearchChrome
           ? bleRefreshing
             ? t("ble.refreshingHint")
@@ -207,10 +365,39 @@ export default function PayHomeScreen() {
     if (bleBroadcasting) return;
     const started = refreshNearbyTaxi();
     if (!started) return;
+    armBleSearchPulse();
     void import("expo-haptics")
       .then((H) => H.impactAsync(H.ImpactFeedbackStyle.Light))
       .catch(() => {});
-  }, [bleBroadcasting, refreshNearbyTaxi]);
+  }, [bleBroadcasting, refreshNearbyTaxi, armBleSearchPulse]);
+
+  const onReceiveNearbyToggle = useCallback(
+    async (enabled: boolean) => {
+      if (!token) {
+        Keyboard.dismiss();
+        void importPayRegisterOverlay();
+        setConnexionPromptKind("pay");
+        return;
+      }
+      const { status, message } = await receiveBroadcast.setEnabled(enabled);
+      if (!enabled || status === "broadcasting") return;
+      const msg =
+        status === "denied"
+          ? t("profile.broadcastDenied")
+          : status === "unavailable"
+            ? t("profile.broadcastUnavailable")
+            : status === "powered_off"
+              ? t("profile.broadcastOffBt")
+              : message === "INVALID_ACCOUNT"
+                ? t("profile.broadcastInvalidAccount")
+                : message && __DEV__
+                  ? `${t("profile.broadcastError")}\n${message}`
+                  : t("profile.broadcastError");
+      Alert.alert(t("pay.receiveNearbyLabel"), msg);
+    },
+    [token, receiveBroadcast.setEnabled, t],
+  );
+
   const showTopUpSuccessBanner = useCallback(
     (amountFcfa: number) => {
       if (topUpBannerTimerRef.current) {
@@ -226,14 +413,37 @@ export default function PayHomeScreen() {
     },
     [t],
   );
+  const resyncNearbyTaxiOnFocusRef = useRef(resyncNearbyTaxiOnFocus);
+  resyncNearbyTaxiOnFocusRef.current = resyncNearbyTaxiOnFocus;
+  const armBleSearchPulseRef = useRef(armBleSearchPulse);
+  armBleSearchPulseRef.current = armBleSearchPulse;
+  const showTopUpSuccessBannerRef = useRef(showTopUpSuccessBanner);
+  showTopUpSuccessBannerRef.current = showTopUpSuccessBanner;
+  const refreshUserRef = useRef(refreshUser);
+  refreshUserRef.current = refreshUser;
+  const tRef = useRef(t);
+  tRef.current = t;
+
+  useFocusEffect(
+    useCallback(() => {
+      payFocusedRef.current = true;
+      return () => {
+        payFocusedRef.current = false;
+      };
+    }, []),
+  );
+
   useFocusEffect(
     useCallback(() => {
       setDepositChrome(false);
-      resyncNearbyTaxiOnFocus();
-      armBleSearchPulse();
+      resyncNearbyTaxiOnFocusRef.current();
+      /** Retour modal / autre onglet : pas de nouveau spinner si déjà tranché. */
+      if (!bleSearchSettledRef.current) {
+        armBleSearchPulseRef.current();
+      }
       const flashed = takeTopUpSuccessFlash();
       if (flashed != null) {
-        showTopUpSuccessBanner(flashed);
+        showTopUpSuccessBannerRef.current(flashed);
       }
       const pending = takePendingDepositWatch();
       if (pending == null) return;
@@ -248,8 +458,8 @@ export default function PayHomeScreen() {
           });
           if (pollAbort.signal.aborted) return;
           setTopUpPhase("success");
-          showTopUpSuccessBanner(pending.amountFcfa);
-          void refreshUser();
+          showTopUpSuccessBannerRef.current(pending.amountFcfa);
+          void refreshUserRef.current();
           await new Promise<void>((r) => setTimeout(r, 500));
           setTopUpPhase("idle");
         } catch (e) {
@@ -257,18 +467,14 @@ export default function PayHomeScreen() {
           setTopUpPhase("idle");
           setTopUpSuccessMessage(null);
           Alert.alert(
-            t("deposit.topUpTitle"),
-            e instanceof ApiError ? e.message : t("deposit.creditFailed"),
+            tRef.current("deposit.topUpTitle"),
+            e instanceof ApiError
+              ? e.message
+              : tRef.current("deposit.creditFailed"),
           );
         }
       })();
-    }, [
-      showTopUpSuccessBanner,
-      refreshUser,
-      t,
-      resyncNearbyTaxiOnFocus,
-      armBleSearchPulse,
-    ]),
+    }, []),
   );
   useEffect(() => {
     return () => {
@@ -279,6 +485,100 @@ export default function PayHomeScreen() {
     };
   }, []);
   const userPhone = user?.phone ?? "";
+  const spendCategoryRef = useRef(spendCategory);
+  spendCategoryRef.current = spendCategory;
+
+  useEffect(() => {
+    if (!userPhone) return;
+    return startQuickAmountsEngine(userPhone);
+  }, [userPhone]);
+
+  const [regulars, setRegulars] = useState<readonly RegularRecipient[]>(
+    getRegularRecipients,
+  );
+  const [selectedRegularPhone, setSelectedRegularPhone] = useState<
+    string | null
+  >(null);
+  const selectedRegularRef = useRef<RegularRecipient | null>(null);
+  /** conversationId résolu en fond dès la sélection (cache → sinon POST). */
+  const regularConvRef = useRef<{
+    phone: string;
+    promise: Promise<string>;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!userPhone) return;
+    const stop = startRegularRecipientsEngine(userPhone);
+    setRegulars(getRegularRecipients());
+    const unsub = subscribeRegularRecipients(() =>
+      setRegulars(getRegularRecipients()),
+    );
+    return () => {
+      unsub();
+      stop();
+    };
+  }, [userPhone]);
+
+  useEffect(() => {
+    const sel = selectedRegularRef.current;
+    if (sel && !regulars.some((r) => r.phone === sel.phone)) {
+      selectedRegularRef.current = null;
+      setSelectedRegularPhone(null);
+    }
+  }, [regulars]);
+
+  const resolveRegularConversation = useCallback(
+    (phone: string): Promise<string> => {
+      const hit = regularConvRef.current;
+      if (hit && hit.phone === phone) return hit.promise;
+      const access = token;
+      const promise = (async () => {
+        if (!access) throw new ApiError(t("common.genericError"), 401);
+        const cache = await import("@/lib/messagesCache");
+        const convs = cache.getConversationsSnapshot(access) ?? [];
+        const cached = convs.find(
+          (c) =>
+            String(c.peerPhone ?? "")
+              .replace(/\D/g, "")
+              .slice(-9) === phone,
+        );
+        if (cached) return cached.id;
+        if (isDemoPhone(phone)) throw new ApiError(t("demo.readOnly"), 400);
+        const api = await import("@/lib/api/client");
+        const { conversation } = await api.openConversation(access, phone);
+        cache.setConversationsSnapshot(access, [
+          conversation,
+          ...convs.filter((c) => c.id !== conversation.id),
+        ]);
+        return conversation.id;
+      })();
+      promise.catch(() => {
+        if (regularConvRef.current?.promise === promise) {
+          regularConvRef.current = null;
+        }
+      });
+      regularConvRef.current = { phone, promise };
+      return promise;
+    },
+    [token, t],
+  );
+
+  useEffect(() => {
+    const apply = () => {
+      const next = getQuickAmounts(spendCategory);
+      setQuickAmounts((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.every((v, i) => v === next[i])
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    };
+    apply();
+    return subscribeQuickAmounts(apply);
+  }, [spendCategory]);
   /** Module API préchargé pendant la saisie PIN (pas au moment du POST). */
   const payApiRef = useRef<typeof import("@/lib/api/client") | null>(null);
   const warmPayApi = useCallback(() => {
@@ -310,6 +610,8 @@ export default function PayHomeScreen() {
   const [payOutcomeSheet, setPayOutcomeSheet] =
     useState<PayOutcomeSheetData | null>(null);
   const payPinFailedRef = useRef(0);
+  /** Une clé par ouverture PIN : double tap / retry réseau = un seul débit. */
+  const moneyIdemRef = useRef<string | null>(null);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
   /** null = fermé ; même UI que la connexion rapide, message selon le contexte. */
@@ -324,6 +626,12 @@ export default function PayHomeScreen() {
   const payPinFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Une seule rafale de focus auto par ouverture du sheet. */
   const payPinOpenFocusGenRef = useRef(0);
+  const confirmPayWithPinRef = useRef<
+    (
+      pinRaw?: string,
+      opts?: { deviceAuthDone?: boolean },
+    ) => Promise<void>
+  >(async () => {});
   /** Remount TextInput → autoFocus fiable (Modal RN cassait le clavier). */
   const [payPinInputKey, setPayPinInputKey] = useState(0);
   const showRegisterOverlay =
@@ -524,81 +832,245 @@ export default function PayHomeScreen() {
     t,
   ]);
 
-  const handlePay = useCallback((n: number) => {
-    if (n <= 0 || paymentStatus === "SENDING") return;
-    /** Pendant le PIN : module + JWT prêts → POST quasi immédiat. */
-    warmPayApi();
-    if (!token) {
-      Keyboard.dismiss();
-      void importPayRegisterOverlay();
-      setConnexionPromptKind("pay");
-      return;
-    }
-    if (user?.activeContext?.type === "commerce") {
-      Alert.alert(t("commerce.payAsPersonalTitle"), t("commerce.payAsPersonalMessage"));
-      return;
-    }
-    if (!recipientRef.current) {
-      Alert.alert(t("ble.noTaxiTitle"), t("ble.noTaxiMessage"));
-      return;
-    }
-    if (!recipientRef.current.accountId) {
-      Alert.alert(t("ble.noTaxiTitle"), t("ble.noTaxiMessage"));
-      return;
-    }
-    if (user?.needsOnboarding) {
-      Alert.alert(
-        t("pay.onboardingRequiredTitle"),
-        t("pay.onboardingRequiredMessage"),
-      );
-      return;
-    }
-    /**
-     * Contrôle local instantané (même solde qu’en haut à droite). L’API reste
-     * la seule autorité : un solde obsolète côté app ne permet pas de payer en excédent.
-     */
-    if (user != null && n > balance) {
-      Keyboard.dismiss();
-      setInsufficientAttemptFcfa(n);
-      setInsufficientBalanceVisible(true);
-      return;
-    }
-    const now = Date.now();
-    const lockUntil = payPinLockoutUntil;
-    if (lockUntil != null && now >= lockUntil) {
-      setPayPinLockoutUntil(null);
-    }
-    const stillLocked = lockUntil != null && now < lockUntil;
-    if (stillLocked) {
-      const sec = Math.ceil((lockUntil - now) / 1000);
-      const min = Math.floor(sec / 60);
-      const s = sec % 60;
-      Alert.alert(
-        t("pay.securePaymentTitle"),
-        min > 0
-          ? t("pay.retryInMinSec", { min, sec: s })
-          : t("pay.retryInSec", { sec: s }),
-      );
-      return;
-    }
-    // Ne pas Keyboard.dismiss() ici : ça empêche souvent l’IME de se rouvrir juste après.
-    payPinFailedRef.current = 0;
-    setPayPinErrorLine(null);
-    setPayPinSelection(undefined);
-    setPayPinUi("idle");
-    setPayPendingAmount(n);
-    setPayPinDraft("");
-    payPinOpenFocusGenRef.current += 1;
-    setPayPinInputKey((k) => k + 1);
-    setPayPinModalVisible(true);
+  const openPayPinForAmount = useCallback(
+    (n: number, to: PayRecipient) => {
+      if (!to.accountId && !to.viaMoneyMessage) {
+        Alert.alert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
+        return;
+      }
+      const u = userRef.current;
+      if (u?.needsOnboarding) {
+        Alert.alert(
+          t("pay.onboardingRequiredTitle"),
+          t("pay.onboardingRequiredMessage"),
+        );
+        return;
+      }
+      if (u != null && n > balance) {
+        Keyboard.dismiss();
+        setInsufficientAttemptFcfa(n);
+        setInsufficientBalanceVisible(true);
+        return;
+      }
+      const now = Date.now();
+      const lockUntil = payPinLockoutUntil;
+      if (lockUntil != null && now >= lockUntil) {
+        setPayPinLockoutUntil(null);
+      }
+      const stillLocked = lockUntil != null && now < lockUntil;
+      if (stillLocked) {
+        const sec = Math.ceil((lockUntil - now) / 1000);
+        const min = Math.floor(sec / 60);
+        const s = sec % 60;
+        Alert.alert(
+          t("pay.securePaymentTitle"),
+          min > 0
+            ? t("pay.retryInMinSec", { min, sec: s })
+            : t("pay.retryInSec", { sec: s }),
+        );
+        return;
+      }
+      payRecipientAtPinRef.current = to;
+      if (to.viaMoneyMessage) {
+        moneyIdemRef.current = newMoneyClientId();
+        void resolveRegularConversation(to.phoneDigits).catch(() => {});
+      } else {
+        recipientRef.current = to;
+      }
+      payPinFailedRef.current = 0;
+      setPayPinErrorLine(null);
+      setPayPinSelection(undefined);
+      setPayPinUi("idle");
+      setPayPendingAmount(n);
+      setPayPinDraft("");
+      payPinOpenFocusGenRef.current += 1;
+      setPayPinInputKey((k) => k + 1);
+      void (async () => {
+        const { tryUnlockTransactionPinVault } = await import(
+          "@/lib/security/transactionPinVault"
+        );
+        const vaulted = await tryUnlockTransactionPinVault(
+          t("pay.deviceAuthPrompt"),
+        );
+        if (vaulted) {
+          void confirmPayWithPinRef.current(vaulted, { deviceAuthDone: true });
+          return;
+        }
+        setPayPinModalVisible(true);
+      })();
+    },
+    [balance, payPinLockoutUntil, t, resolveRegularConversation],
+  );
+
+  const handlePay = useCallback(
+    (n: number) => {
+      if (n <= 0 || paymentStatus === "SENDING" || payHandoffRef.current) {
+        return;
+      }
+      warmPayApi();
+      if (!token) {
+        Keyboard.dismiss();
+        void importPayRegisterOverlay();
+        setConnexionPromptKind("pay");
+        return;
+      }
+      if (user?.activeContext?.type === "commerce") {
+        Alert.alert(
+          t("commerce.payAsPersonalTitle"),
+          t("commerce.payAsPersonalMessage"),
+        );
+        return;
+      }
+
+      const regular = selectedRegularRef.current;
+      if (regular) {
+        if (isDemoPhone(regular.phone)) {
+          Alert.alert(t("demo.title"), t("demo.readOnly"));
+          return;
+        }
+        openPayPinForAmount(n, regularToRecipient(regular));
+        return;
+      }
+
+      const proceed = (to: PayRecipient | null) => {
+        if (!to?.accountId) {
+          Alert.alert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
+          return;
+        }
+        openPayPinForAmount(n, to);
+      };
+
+      if (!bleBroadcasting && !receiveBroadcast.on) {
+        proceed(recipientRef.current);
+        return;
+      }
+
+      payHandoffRef.current = true;
+      setPayHandoff(true);
+      armBleSearchPulse();
+      void (async () => {
+        try {
+          await receiveBroadcast.setEnabled(false);
+          const peer = await waitForNearbyPayPeer({
+            isOwn: (p) => isOwnNearbyPeer(p, userRef.current),
+          });
+          if (!peer) {
+            proceed(null);
+            return;
+          }
+          proceed({
+            accountId: peer.accountId,
+            name: peer.displayName,
+            phoneDigits: peer.phoneDigits,
+          });
+        } finally {
+          payHandoffRef.current = false;
+          setPayHandoff(false);
+        }
+      })();
+    },
+    [
+      paymentStatus,
+      token,
+      user,
+      t,
+      warmPayApi,
+      bleBroadcasting,
+      receiveBroadcast.on,
+      receiveBroadcast.setEnabled,
+      openPayPinForAmount,
+      armBleSearchPulse,
+    ],
+  );
+
+  const handlePayRef = useRef(handlePay);
+  handlePayRef.current = handlePay;
+  const payAmountFcfaRef = useRef(payAmountFcfa);
+  payAmountFcfaRef.current = payAmountFcfa;
+
+  /** Tap proche : montant déjà saisi → PIN direct ; sinon sélection (↑ / montant rapide). */
+  const onRegularPress = useCallback(
+    (r: RegularRecipient) => {
+      if (selectedRegularRef.current?.phone === r.phone) {
+        selectedRegularRef.current = null;
+        setSelectedRegularPhone(null);
+        return;
+      }
+      selectedRegularRef.current = r;
+      setSelectedRegularPhone(r.phone);
+      warmPayApi();
+      void resolveRegularConversation(r.phone).catch(() => {});
+      const n = payAmountFcfaRef.current;
+      if (n != null && n > 0) handlePayRef.current(n);
+    },
+    [warmPayApi, resolveRegularConversation],
+  );
+
+  const selectedRegularLabel = useMemo(() => {
+    if (!selectedRegularPhone) return null;
+    const r = regulars.find((x) => x.phone === selectedRegularPhone);
+    return r ? t("pay.amountLabelTo", { name: r.firstName }) : null;
+  }, [selectedRegularPhone, regulars, t]);
+
+  const regularsBusy = paymentStatus === "SENDING" || payHandoff;
+  const regularsRow = useMemo(() => {
+    if (!token || regulars.length === 0) return null;
+    return (
+      <View style={styles.regularsRow}>
+        {regulars.map((r) => {
+          const selected = selectedRegularPhone === r.phone;
+          return (
+            <Pressable
+              key={r.phone}
+              style={({ pressed }) => [
+                styles.regularChip,
+                selected && styles.regularChipSelected,
+                pressed && !regularsBusy && styles.regularChipPressed,
+              ]}
+              onPress={() => onRegularPress(r)}
+              unstable_pressDelay={0}
+              hitSlop={4}
+              disabled={regularsBusy}
+              accessibilityRole="button"
+              accessibilityState={{ selected, disabled: regularsBusy }}
+              accessibilityLabel={t("pay.regularA11y", { name: r.name })}
+            >
+              <PeerAvatar
+                name={r.name}
+                phone={r.phone}
+                remoteUrl={demoAvatarUrlForPhone(r.phone)}
+                localUri={contactPhotoUriForPhone(r.phone)}
+                size={28}
+                selected={selected}
+                style={styles.regularAvatar}
+                textStyle={
+                  selected ? styles.regularAvatarTextSelected : styles.regularAvatarText
+                }
+              />
+              <Text
+                style={[
+                  styles.regularName,
+                  selected && styles.regularNameSelected,
+                ]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.7}
+              >
+                {r.firstName}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
   }, [
-    paymentStatus,
     token,
-    user,
-    balance,
-    payPinLockoutUntil,
+    regulars,
+    selectedRegularPhone,
+    regularsBusy,
+    styles,
+    onRegularPress,
     t,
-    warmPayApi,
   ]);
 
   const cancelPayPin = useCallback(() => {
@@ -628,28 +1100,69 @@ export default function PayHomeScreen() {
     return () => back.remove();
   }, [payPinModalVisible, paymentStatus, cancelPayPin]);
 
-  const confirmPayWithPin = useCallback(async (pinRaw?: string) => {
+  const confirmPayWithPin = useCallback(
+    async (pinRaw?: string, opts?: { deviceAuthDone?: boolean }) => {
     const pin = (pinRaw ?? payPinDraft).replace(/\D/g, "");
     if (pin.length !== ONBOARDING_PIN_LEN || !token) return;
     if (paymentStatus === "SENDING" || payPinUi !== "idle") return;
+    if (!opts?.deviceAuthDone) {
+      const { authenticateForPayment } = await import(
+        "@/lib/security/deviceAuth"
+      );
+      const auth = await authenticateForPayment(t("pay.deviceAuthPrompt"));
+      if (auth === "cancel") return;
+    }
     setPayPinErrorLine(null);
     setPaymentStatus("SENDING");
     setPayPinUi("sending");
     try {
       const api = payApiRef.current ?? (await import("@/lib/api/client"));
       payApiRef.current = api;
-      const to = recipientRef.current;
+      const to = payRecipientAtPinRef.current ?? recipientRef.current;
       if (!to) {
         throw new ApiError(t("ble.noTaxiMessage"), 409);
       }
-      const payRes = await api.pay(
-        token,
-        payPendingAmount,
-        to.name,
-        to.phoneDigits || null,
-        pin,
-        to.accountId,
-      );
+      let payRes: {
+        balanceFcfa: number;
+        transactionId: string | null;
+        reference: string | null;
+      };
+      let txKind = "PAYMENT";
+      if (to.viaMoneyMessage) {
+        const conversationId = await resolveRegularConversation(
+          to.phoneDigits,
+        );
+        const idem = moneyIdemRef.current ?? newMoneyClientId();
+        moneyIdemRef.current = idem;
+        const res = await api.sendMoneyMessage(
+          token,
+          conversationId,
+          payPendingAmount,
+          newMoneyClientId(),
+          idem,
+          pin,
+        );
+        payRes = {
+          balanceFcfa: res.balanceFcfa,
+          transactionId: res.message.moneyTransfer?.transferId ?? null,
+          reference: null,
+        };
+        txKind = "MONEY_SEND";
+        void import("@/lib/messagesCache").then((m) => {
+          m.upsertPushedMessage(token, res.message);
+        });
+        selectedRegularRef.current = null;
+        setSelectedRegularPhone(null);
+      } else {
+        payRes = await api.pay(
+          token,
+          payPendingAmount,
+          to.name,
+          to.phoneDigits || null,
+          pin,
+          to.accountId,
+        );
+      }
       if (payPinFocusTimerRef.current) {
         clearTimeout(payPinFocusTimerRef.current);
         payPinFocusTimerRef.current = null;
@@ -672,6 +1185,7 @@ export default function PayHomeScreen() {
             id: payRes.transactionId,
             reference,
             type: "sent",
+            kind: txKind,
             amountFcfa: payPendingAmount,
             counterpartyName: to.name,
             counterpartyPhone: to.phoneDigits || null,
@@ -689,10 +1203,20 @@ export default function PayHomeScreen() {
         kind: "success",
         amountFcfa: payPendingAmount,
         recipientName: to.name,
+        copy:
+          to.viaMoneyMessage || spendCategoryRef.current === "other"
+            ? "transfer"
+            : "payment",
       });
       if (to.accountId && to.name) {
         void import("@/lib/peers/displayNameCache").then((m) => {
           m.rememberPeerDisplayName(to.accountId!, to.name);
+        });
+      }
+      const cat = to.viaMoneyMessage ? null : spendCategoryRef.current;
+      if (cat) {
+        void import("@/lib/peers/peerCategoryCache").then((m) => {
+          m.rememberPeerCategory(to.accountId ?? "", cat, to.phoneDigits);
         });
       }
       /** Confirmations réseau en fond (ne bloquent pas l’UI). */
@@ -702,6 +1226,9 @@ export default function PayHomeScreen() {
           void m.syncTransactionsFromNetwork(token, userPhone);
         });
       }
+      void import("@/lib/security/transactionPinVault").then((m) => {
+        void m.saveTransactionPinVault(pin);
+      });
     } catch (e) {
       setPaymentStatus("IDLE");
       setPayPinUi("idle");
@@ -749,8 +1276,8 @@ export default function PayHomeScreen() {
         setPayPinSelection(undefined);
         // Réseau down → file offline (rejeu au reconnect)
         if (e instanceof ApiError && e.status === 0) {
-          const to = recipientRef.current;
-          if (to) {
+          const to = payRecipientAtPinRef.current ?? recipientRef.current;
+          if (to && !to.viaMoneyMessage) {
             void import("@/lib/offline/queue").then((m) => {
               void m.enqueueOfflineOp("pay", {
                 amountFcfa: payPendingAmount,
@@ -763,28 +1290,42 @@ export default function PayHomeScreen() {
         }
         setPayOutcomeSheet({
           kind: "error",
-          title: t("pay.paymentTitle"),
+          title:
+            payRecipientAtPinRef.current?.viaMoneyMessage ||
+            spendCategoryRef.current === "other"
+              ? t("pay.transferTitle")
+              : t("pay.paymentTitle"),
           message:
             e instanceof ApiError ? e.message : t("common.genericError"),
-          recipientName: recipientRef.current?.name,
+          recipientName: (payRecipientAtPinRef.current ?? recipientRef.current)
+            ?.name,
         });
       }
     }
-  }, [
-    payPinDraft,
-    payPinUi,
-    paymentStatus,
-    token,
-    payPendingAmount,
-    refreshUser,
-    updateBalance,
-    schedulePayPinFieldFocus,
-    t,
-    userPhone,
-  ]);
+  },
+    [
+      payPinDraft,
+      payPinUi,
+      paymentStatus,
+      token,
+      payPendingAmount,
+      refreshUser,
+      updateBalance,
+      schedulePayPinFieldFocus,
+      t,
+      userPhone,
+      resolveRegularConversation,
+    ],
+  );
+
+  useEffect(() => {
+    confirmPayWithPinRef.current = confirmPayWithPin;
+  }, [confirmPayWithPin]);
 
   const dismissPayOutcomeSheet = useCallback(() => {
     setPayOutcomeSheet(null);
+    setPayAmountFcfa(null);
+    setAmountPadResetSeq((n) => n + 1);
   }, []);
 
   useEffect(() => {
@@ -833,9 +1374,12 @@ export default function PayHomeScreen() {
                       {bleShowSearchChrome ? (
                         <ActivityIndicator color={colors.accent} size="small" />
                       ) : recipient ? (
-                        <Text style={styles.recipientThumbLetter}>
-                          {recipient.name.charAt(0).toUpperCase()}
-                        </Text>
+                        <PeerAvatar
+                          name={recipient.name}
+                          phone={recipient.phoneDigits}
+                          localUri={contactPhotoUriForPhone(recipient.phoneDigits)}
+                          size={52}
+                        />
                       ) : bleBroadcasting ? (
                         <Ionicons
                           name="radio"
@@ -848,7 +1392,13 @@ export default function PayHomeScreen() {
                     </View>
                     <View style={styles.recipientTexts}>
                       <Text
-                        style={styles.driverName}
+                        style={[
+                          styles.driverName,
+                          (bleStatus === "denied" ||
+                            bleStatus === "powered_off") && {
+                            color: colors.text,
+                          },
+                        ]}
                         numberOfLines={1}
                         ellipsizeMode="tail"
                       >
@@ -900,16 +1450,51 @@ export default function PayHomeScreen() {
 
               <PayAmountEntry
                 styles={styles}
-                /** Identité stable — pas le JWT (refresh → sinon montant remis à 0). */
-                resetKey={user?.personalAccountId ?? user?.phone ?? "anon"}
+                /** Identité stable + seq (fermeture feuille → vide le pad sans refresh JWT). */
+                resetKey={`${user?.personalAccountId ?? user?.phone ?? "anon"}-${amountPadResetSeq}`}
                 keypadDisabled={
-                  paymentStatus === "SENDING" || showRegisterOverlay
+                  paymentStatus === "SENDING" ||
+                  payHandoff ||
+                  showRegisterOverlay
                 }
-                payBusy={paymentStatus === "SENDING"}
+                payBusy={paymentStatus === "SENDING" || payHandoff}
                 onPay={handlePay}
                 onAmountFcfaChange={setPayAmountFcfa}
                 topUpSuccessMessage={topUpSuccessMessage}
                 balanceFcfa={user && balance <= 1000 ? balance : null}
+                quickAmounts={quickAmounts}
+                belowQuickAmounts={regularsRow}
+                amountLabel={selectedRegularLabel}
+                amountFooter={
+                  <Pressable
+                    style={styles.receiveNearbyRow}
+                    onPress={() => {
+                      if (receiveBroadcast.busy || payHandoff) return;
+                      void onReceiveNearbyToggle(!receiveBroadcast.on);
+                    }}
+                    disabled={receiveBroadcast.busy || payHandoff}
+                    accessibilityRole="switch"
+                    accessibilityState={{
+                      checked: receiveBroadcast.on,
+                      disabled: receiveBroadcast.busy || payHandoff,
+                    }}
+                    accessibilityLabel={t("pay.receiveNearbyLabel")}
+                    hitSlop={8}
+                  >
+                    {receiveBroadcast.busy || payHandoff ? (
+                      <ActivityIndicator color={colors.accent} size="small" />
+                    ) : (
+                      <ReceiveNearbyGlyph
+                        color={
+                          receiveBroadcast.on
+                            ? colors.accent
+                            : colors.textMuted
+                        }
+                        size={30}
+                      />
+                    )}
+                  </Pressable>
+                }
               />
             </View>
           </SafeAreaView>
@@ -1064,10 +1649,18 @@ export default function PayHomeScreen() {
                 <Text style={styles.payPinModalTitle}>{t("pay.pinTitle")}</Text>
                 <Text style={styles.payPinModalSub}>
                   <Trans
-                    i18nKey="pay.pinConfirmPayment"
+                    i18nKey={
+                      payRecipientAtPinRef.current?.viaMoneyMessage ||
+                      spendCategory === "other"
+                        ? "pay.pinConfirmTransfer"
+                        : "pay.pinConfirmPayment"
+                    }
                     values={{
                       amount: formatFcfa(payPendingAmount),
-                      name: recipientRef.current?.name ?? t("ble.driverDefaultName"),
+                      name:
+                        payRecipientAtPinRef.current?.name ??
+                        recipient?.name ??
+                        t("ble.driverDefaultName"),
                     }}
                     components={{
                       amount: <Text style={styles.payPinModalSubAmount} />,
@@ -1118,7 +1711,7 @@ export default function PayHomeScreen() {
             </KeyboardAvoidingView>
           ) : null}
 
-          {depositChrome ? (
+          {depositChrome && pathname !== "/deposit" ? (
             <DepositOpenChrome
               onClose={() => {
                 setDepositChrome(false);
@@ -1131,6 +1724,14 @@ export default function PayHomeScreen() {
             <PayOutcomeSheet
               outcome={payOutcomeSheet}
               onDismiss={dismissPayOutcomeSheet}
+            />
+          ) : null}
+
+          {receivedFlash ? (
+            <IncomingPaymentFlashSheet
+              amountFcfa={receivedFlash.amountFcfa}
+              onDismiss={dismissReceivedFlash}
+              copy="transfer"
             />
           ) : null}
       </View>

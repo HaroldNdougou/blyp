@@ -15,7 +15,7 @@ export async function drainOfflineQueue(opts: {
   token: string;
   phone: string;
 }): Promise<void> {
-  const ops = await listOfflineOps();
+  const ops = await listOfflineOps().catch(() => []);
   for (const op of ops) {
     if (op.attempts >= MAX_ATTEMPTS) {
       await removeOfflineOp(op.id);
@@ -51,5 +51,15 @@ export async function drainOfflineQueue(opts: {
     } catch {
       await bumpOfflineOpAttempt(op.id);
     }
+  }
+  try {
+    const { hydrateMessagesCache } = await import("@/lib/messagesCache");
+    await hydrateMessagesCache(opts.phone, opts.token);
+    const { kickVoiceOutbox } = await import("@/lib/voice/outbox");
+    const { kickImageOutbox } = await import("@/lib/image/outbox");
+    kickVoiceOutbox(opts.token);
+    kickImageOutbox(opts.token);
+  } catch {
+    /* vocaux : prochain reconnect */
   }
 }

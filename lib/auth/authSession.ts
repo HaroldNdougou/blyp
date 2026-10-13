@@ -198,8 +198,16 @@ export async function hydrateAuthSession(): Promise<void> {
     } catch {
       cache = { access: null, refresh: null, userSnapshot: null };
     }
+    syncApiSessionToNative(cache.access);
   })();
   await hydratePromise;
+}
+
+function syncApiSessionToNative(accessToken: string | null): void {
+  if (Platform.OS === "web") return;
+  void import("@/lib/push/announceNative").then((m) => {
+    void m.syncApiSessionNative(accessToken);
+  });
 }
 
 /**
@@ -221,6 +229,7 @@ export async function setAuthSession(
   if (cache.userSnapshot) payload.userSnapshot = cache.userSnapshot;
   await writeRaw(JSON.stringify(payload));
   emit();
+  syncApiSessionToNative(accessToken);
 }
 
 export async function clearAuthSession(): Promise<void> {
@@ -235,4 +244,5 @@ export async function clearAuthSession(): Promise<void> {
     }
   }
   emit();
+  syncApiSessionToNative(null);
 }

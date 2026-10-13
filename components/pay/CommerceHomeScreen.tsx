@@ -1,3 +1,4 @@
+import { IncomingPaymentFlashSheet } from "@/components/pay/IncomingPaymentFlashSheet";
 import { createCommerceHomeStyles } from "@/components/pay/commerceHomeStyles";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -236,13 +237,13 @@ export function CommerceHomeScreen() {
               <Switch
                 value={broadcast.on}
                 trackColor={{
-                  false: colors.border,
-                  true: colors.avatarBackground,
+                  false: colors.switchTrackOff,
+                  true: colors.switchTrackOn,
                 }}
                 thumbColor={
-                  broadcast.on ? colors.accent : colors.textSecondary
+                  broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
                 }
-                ios_backgroundColor={colors.border}
+                ios_backgroundColor={colors.switchTrackOff}
               />
             </View>
           )}
@@ -336,39 +337,10 @@ export function CommerceHomeScreen() {
       </SafeAreaView>
 
       {receivedFlash ? (
-        <View
-          style={styles.flashOverlay}
-          accessibilityViewIsModal
-          accessibilityLabel={t("commerce.receivedFlashA11y", {
-            amount: formatFcfa(receivedFlash.amountFcfa),
-          })}
-        >
-          <Pressable
-            style={styles.flashBackdrop}
-            onPress={dismissReceivedFlash}
-            accessibilityRole="button"
-            accessibilityLabel={t("common.close")}
-          />
-          <Pressable
-            style={[
-              styles.flashSheet,
-              { paddingBottom: Math.max(insets.bottom, 16) + 10 },
-            ]}
-            onPress={dismissReceivedFlash}
-          >
-            <Text style={styles.flashTitle}>{t("pay.received")}</Text>
-            <Text
-              style={styles.flashAmount}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.35}
-              allowFontScaling={false}
-            >
-              +{formatFcfa(receivedFlash.amountFcfa)}
-            </Text>
-            <Text style={styles.flashCurrency}>{t("common.fcfa")}</Text>
-          </Pressable>
-        </View>
+        <IncomingPaymentFlashSheet
+          amountFcfa={receivedFlash.amountFcfa}
+          onDismiss={dismissReceivedFlash}
+        />
       ) : null}
     </View>
   );

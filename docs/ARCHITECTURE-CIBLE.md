@@ -163,7 +163,7 @@ GSI selon besoins (ex. liste tx par statut admin — limité).
 2. Auth téléphone + OTP (DynamoDB TTL + Redis rate limit) + JWT.
 3. Wallet : solde, dépôt, idempotence, webhooks partenaires.
 4. App mobile : cache local + UI optimiste + `EXPO_PUBLIC_API_URL` → API GW.
-5. CloudFront/S3 si assets.
+5. CloudFront/S3 si assets (images : `infra/assets-cdn.snippet.yaml`). Vocaux : **`docs/VOICE-MESSAGES.md`** — pas encore, seau media à part.
 6. Durcissement : WAF, alarmes, tests charge, runbooks, test restauration PITR.
 7. **DAX** si métriques lectures DynamoDB le justifient.
 
@@ -177,7 +177,7 @@ GSI selon besoins (ex. liste tx par statut admin — limité).
 
 ## 10. Phrase pour reprendre une session
 
-> « On continue Blyp : lis `docs/ARCHITECTURE-CIBLE.md` et la règle `.cursor/rules/blyp-architecture-cible.mdc` — full AWS, latence Google, sécurité ultra. »
+> « On continue Blyp : lis `docs/ARCHITECTURE-CIBLE.md` et la règle `.cursor/rules/blyp-architecture-cible.mdc` — full AWS, latence Google, sécurité ultra. Vocaux plus tard : `docs/VOICE-MESSAGES.md`. »
 
 ---
 

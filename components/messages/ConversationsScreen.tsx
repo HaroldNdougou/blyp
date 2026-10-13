@@ -1,139 +1,251 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
-import { ApiError } from "@/lib/api/errors";
 import { getAccessToken } from "@/lib/auth/authSession";
+import { formatConversationWhen } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import {
+  conversationsEqual,
   getConversationsSnapshot,
+  hydrateMessagesCache,
   setConversationsSnapshot,
 } from "@/lib/messagesCache";
-import { subscribeIncomingMessage } from "@/lib/messages/live";
+import {
+  getTypingSnapshot,
+  subscribeConversationTyping,
+  subscribeConversationReceipt,
+  subscribeIncomingMessage,
+  subscribeMessageDeleted,
+} from "@/lib/messages/live";
+import { parseReactionListPreview } from "@/lib/messages/reactionSync";
 import { getUnread, subscribeUnread } from "@/lib/messages/unread";
 import type { Conversation } from "@/lib/api/types";
+import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
+import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
+import { PeerAvatar } from "@/components/peers/PeerAvatar";
+import {
+  DeletedMessageTick,
+  MessageTicks,
+} from "@/components/messages/MessageTicks";
+import {
+  lastDeletedMessageInThread,
+  messageFromSelf,
+} from "@/lib/messages/deletedListPreview";
 import { createMessagesStyles } from "@/components/messages/messagesStyles";
+import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
+import { previewTickForConversation } from "@/lib/messages/previewTicks";
+import { prefetchChatThreadOnPressIn } from "@/lib/messages/prefetchChatThread";
+import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
+import type { ThemeColors } from "@/lib/theme/colors";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
-  Dimensions,
   FlatList,
-  Keyboard,
-  Modal,
-  Platform,
+  InteractionManager,
   Pressable,
   Text,
-  TextInput,
   View,
-  type KeyboardEvent,
 } from "react-native";
-import {
-  SafeAreaView,
-  useSafeAreaInsets,
-} from "react-native-safe-area-context";
-import { normalizeCameroonPhoneDigits } from "@/lib/format";
+import { SafeAreaView } from "react-native-safe-area-context";
 
-/** Même lift que le chat : MIUI sous-estime souvent la hauteur du clavier. */
-function imeLiftPx(e: KeyboardEvent): number {
-  const screenH = Dimensions.get("screen").height;
-  const winH = Dimensions.get("window").height;
-  const { height, screenY } = e.endCoordinates;
-  if (height <= 0) return 0;
-  const fromScreen = screenH - screenY;
-  const fromWindow = winH - screenY;
-  const frameLift = Math.max(fromScreen, fromWindow);
-  let lift =
-    screenY > 40 && frameLift >= height - 8
-      ? Math.max(height, frameLift)
-      : height;
-  if (Platform.OS === "android" && frameLift <= height + 12) {
-    lift += 48;
-  }
-  return Math.round(Math.min(lift, screenH * 0.75));
-}
+type ConversationRowProps = {
+  item: Conversation;
+  styles: ReturnType<typeof createMessagesStyles>;
+  colors: ThemeColors;
+  myId: string;
+  unread: number;
+  typing: boolean;
+  previewTick: "sent" | "delivered" | "read" | null;
+  previewDeleted: boolean;
+  previewText: string;
+  onOpen: (id: string) => void;
+  onPressIn: (id: string) => void;
+  unreadLabel: string;
+};
+
+const ConversationRow = React.memo(function ConversationRow({
+  item,
+  styles,
+  colors,
+  unread,
+  typing,
+  previewTick,
+  previewDeleted,
+  previewText,
+  onOpen,
+  onPressIn,
+  unreadLabel,
+}: ConversationRowProps) {
+  const previewStyle = typing
+    ? styles.rowPreviewTyping
+    : unread > 0
+      ? styles.rowPreviewUnread
+      : styles.rowPreview;
+
+  return (
+    <Pressable
+      style={styles.row}
+      android_ripple={{ color: colors.borderLight }}
+      onPressIn={() => onPressIn(item.id)}
+      onPress={() => onOpen(item.id)}
+    >
+      <PeerAvatar
+        name={item.peerName}
+        phone={item.peerPhone}
+        remoteUrl={
+          item.peerAvatarUrl ?? demoAvatarUrlForPhone(item.peerPhone)
+        }
+        localUri={contactPhotoUriForPhone(item.peerPhone)}
+        size={48}
+        style={styles.avatarSlot}
+        recyclingKey={item.id}
+      />
+      <View style={styles.rowBody}>
+        <Text style={styles.rowTitle} numberOfLines={1}>
+          {item.peerName}
+        </Text>
+        <View style={styles.rowPreviewLine}>
+          {previewDeleted ? (
+            <DeletedMessageTick compact color={colors.tickSent} />
+          ) : previewTick ? (
+            <MessageTicks
+              compact
+              color={
+                previewTick === "read" ? colors.tickRead : colors.tickSent
+              }
+              double={
+                previewTick === "delivered" || previewTick === "read"
+              }
+            />
+          ) : null}
+          <Text
+            style={[
+              previewStyle,
+              styles.rowPreviewText,
+              previewDeleted && { fontStyle: "italic" },
+            ]}
+          >
+            {previewText}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.rowAside}>
+        {item.lastMessageAt ? (
+          <Text style={styles.rowTime}>
+            {formatConversationWhen(item.lastMessageAt)}
+          </Text>
+        ) : null}
+        {unread > 0 ? (
+          <View
+            style={[styles.unreadBadge, styles.unreadBadgeSpaced]}
+            accessibilityLabel={unreadLabel}
+          >
+            <Text style={styles.unreadBadgeText}>
+              {unread > 99 ? "99+" : String(unread)}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+});
 
 export default function ConversationsScreen() {
   const { t } = useTranslation();
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createMessagesStyles(colors), [colors]);
-  const { token } = useAuth();
-  const [items, setItems] = useState<Conversation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [newOpen, setNewOpen] = useState(false);
-  const [phone, setPhone] = useState("");
-  const [opening, setOpening] = useState(false);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
+  const { token, user } = useAuth();
+  const ownerPhone = user?.phone ?? "";
+  const cachedInit = token ? getConversationsSnapshot(token) : null;
+  const [items, setItems] = useState<Conversation[]>(cachedInit ?? []);
+  const [loading, setLoading] = useState(!cachedInit);
   const [unreadTick, setUnreadTick] = useState(0);
-
-  useEffect(() => {
-    if (!newOpen) {
-      setKeyboardHeight(0);
-      return;
-    }
-    const showEvent =
-      Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
-    const hideEvent =
-      Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide";
-    const onShow = (e: KeyboardEvent) => setKeyboardHeight(imeLiftPx(e));
-    const onHide = () => setKeyboardHeight(0);
-    const onFrame = (e: KeyboardEvent) => {
-      if (e.endCoordinates.height <= 0) {
-        setKeyboardHeight(0);
-        return;
-      }
-      setKeyboardHeight(imeLiftPx(e));
-    };
-    const subShow = Keyboard.addListener(showEvent, onShow);
-    const subHide = Keyboard.addListener(hideEvent, onHide);
-    const subFrame = Keyboard.addListener("keyboardDidChangeFrame", onFrame);
-    return () => {
-      subShow.remove();
-      subHide.remove();
-      subFrame.remove();
-    };
-  }, [newOpen]);
+  const [typingTick, setTypingTick] = useState(0);
+  const [receiptTick, setReceiptTick] = useState(0);
+  const [threadTick, setThreadTick] = useState(0);
+  const myId = useMemo(() => accessTokenSubject(token), [token]);
 
   useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
+  useEffect(
+    () => subscribeConversationReceipt(() => setReceiptTick((n) => n + 1)),
+    [],
+  );
+  useEffect(
+    () => subscribeConversationTyping(() => setTypingTick((n) => n + 1)),
+    [],
+  );
+  useEffect(
+    () => subscribeMessageDeleted(() => setThreadTick((n) => n + 1)),
+    [],
+  );
 
   useEffect(() => {
     if (!token) return;
     return subscribeIncomingMessage(() => {
-      void (async () => {
-        try {
-          const { ensureSessionFresh, listConversations } = await import(
-            "@/lib/api/client"
-          );
-          await ensureSessionFresh();
-          const access = getAccessToken();
-          if (!access) return;
-          const { items: next } = await listConversations(access);
-          setConversationsSnapshot(access, next);
-          setItems(next);
-        } catch {
-          /* garde la liste déjà affichée */
-        }
-      })();
+      const snap = getConversationsSnapshot(token);
+      if (snap) {
+        setItems((prev) => (conversationsEqual(prev, snap) ? prev : snap));
+      }
+      InteractionManager.runAfterInteractions(() => {
+        void (async () => {
+          try {
+            const { ensureSessionFresh, listConversations } = await import(
+              "@/lib/api/client"
+            );
+            await ensureSessionFresh();
+            const access = getAccessToken();
+            if (!access) return;
+            const { items: next } = await listConversations(access);
+            setConversationsSnapshot(access, next);
+            const stored = getConversationsSnapshot(access) ?? next;
+            setItems((prev) =>
+              conversationsEqual(prev, stored) ? prev : stored,
+            );
+          } catch {
+            /* garde la liste déjà affichée */
+          }
+        })();
+      });
     });
   }, [token]);
 
   useFocusEffect(
     useCallback(() => {
+      perfMarkStart("tab_messages");
+      const endMark = () => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => perfMarkEnd("tab_messages"));
+        });
+      };
+      void import("@/lib/messages/chatEmojiCatalog").then((m) =>
+        m.loadChatEmojiCategories(),
+      );
       if (!token) {
         setItems([]);
         setLoading(false);
+        endMark();
         return;
       }
-      const cached = getConversationsSnapshot(token);
-      if (cached) {
-        setItems(cached);
-        setLoading(false);
-      } else {
-        setLoading(true);
-      }
       let cancelled = false;
+      const applyLocal = (list: Conversation[] | null) => {
+        if (!list) return false;
+        setItems((prev) => (conversationsEqual(prev, list) ? prev : list));
+        setLoading(false);
+        endMark();
+        return true;
+      };
+      if (!applyLocal(getConversationsSnapshot(token))) {
+        void (async () => {
+          if (ownerPhone) {
+            await hydrateMessagesCache(ownerPhone, token);
+            if (cancelled) return;
+            if (applyLocal(getConversationsSnapshot(token))) return;
+          }
+          if (!cancelled) setLoading(true);
+        })();
+      }
       void (async () => {
         try {
           const { ensureSessionFresh, listConversations } = await import(
@@ -145,63 +257,55 @@ export default function ConversationsScreen() {
           const { items: next } = await listConversations(access);
           if (cancelled) return;
           setConversationsSnapshot(access, next);
-          setItems(next);
+          const stored = getConversationsSnapshot(access) ?? next;
+          setItems((prev) =>
+            conversationsEqual(prev, stored) ? prev : stored,
+          );
         } catch {
-          // Échec de chargement : on garde l’état vide, sans texte d’erreur.
+          // hors-ligne : on garde la copie locale
         } finally {
-          if (!cancelled) setLoading(false);
+          if (!cancelled) {
+            setLoading(false);
+            endMark();
+          }
         }
       })();
       return () => {
         cancelled = true;
       };
-    }, [token]),
+    }, [token, ownerPhone]),
   );
 
-  const openNew = async () => {
-    if (!token || phone.length !== 9 || opening) return;
-    setOpening(true);
-    setError(null);
-    try {
-      const { ensureSessionFresh, openConversation } = await import(
-        "@/lib/api/client"
-      );
-      await ensureSessionFresh();
-      const access = getAccessToken();
-      if (!access) {
-        setError(t("messages.signInRequired"));
-        return;
-      }
-      const { conversation } = await openConversation(access, phone);
-      const next = [
-        conversation,
-        ...items.filter((c) => c.id !== conversation.id),
-      ];
-      setConversationsSnapshot(access, next);
-      setItems(next);
-      setNewOpen(false);
-      setPhone("");
-      router.push(`/chat/${encodeURIComponent(conversation.id)}`);
-    } catch (e) {
-      if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-        setError(t("messages.sessionExpired"));
-      } else if (
-        e instanceof ApiError &&
-        e.status > 0 &&
-        e.status < 500 &&
-        e.message.trim() &&
-        !/^session invalide$/i.test(e.message.trim())
-      ) {
-        setError(e.message.trim());
-      } else {
-        setError(t("messages.openFailed"));
-      }
-    } finally {
-      setOpening(false);
+  const previewFor = useCallback(
+    (c: Conversation) => {
+    const typing = getTypingSnapshot(c.id);
+    if (typing) {
+      const name =
+        (c.peerName || "").trim().split(/\s+/)[0] || t("messages.someone");
+      return t("messages.typing", { name });
     }
-  };
-
-  const previewFor = (c: Conversation) => {
+    if (token) {
+      const tomb = lastDeletedMessageInThread(token, c.id);
+      if (tomb) {
+        return messageFromSelf(tomb, myId)
+          ? t("messages.deletedForAllMine")
+          : t("messages.deletedForAllTheirs");
+      }
+    }
+    if (c.lastMessageType === "voice") {
+      return t("messages.voicePreview");
+    }
+    if (c.lastMessageType === "image") {
+      const p = String(c.lastMessagePreview ?? "").trim();
+      if (p && p !== "IMAGE" && p !== "📷") return p;
+      return t("messages.imagePreview");
+    }
+    if (c.lastMessageType === "reaction") {
+      const { mine, emoji } = parseReactionListPreview(c.lastMessagePreview);
+      if (!emoji) return t("messages.reactionPreviewBare");
+      if (mine) return t("messages.reactionPreviewYou", { emoji });
+      return t("messages.reactionPreview", { emoji });
+    }
     if (c.lastMessageType === "money") {
       const n = parseInt(c.lastMessagePreview.replace(/\D/g, ""), 10);
       if (Number.isFinite(n) && n > 0) {
@@ -209,7 +313,33 @@ export default function ConversationsScreen() {
       }
     }
     return c.lastMessagePreview || t("messages.emptyHint");
-  };
+  },
+    [t, token, myId],
+  );
+
+  const openChat = useCallback((id: string) => {
+    router.push(`/chat/${encodeURIComponent(id)}`);
+  }, []);
+
+  const warmChatOnPressIn = useCallback(
+    (id: string) => {
+      if (!token || !ownerPhone) return;
+      prefetchChatThreadOnPressIn({
+        conversationId: id,
+        phone: ownerPhone,
+        token,
+      });
+    },
+    [token, ownerPhone],
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      void import("@/lib/image/pickFromLibrary").then((m) =>
+        m.warmImageLibraryPermission(),
+      );
+    }, []),
+  );
 
   if (!token) {
     return (
@@ -230,7 +360,7 @@ export default function ConversationsScreen() {
         <Text style={styles.title}>{t("messages.title")}</Text>
         <Pressable
           style={styles.headerBtn}
-          onPress={() => setNewOpen(true)}
+          onPress={() => router.push("/new-chat")}
           accessibilityLabel={t("messages.newChat")}
         >
           <Ionicons name="create-outline" size={24} color={colors.accent} />
@@ -248,107 +378,40 @@ export default function ConversationsScreen() {
         </View>
       ) : (
         <FlatList
-          extraData={unreadTick}
+          extraData={`${unreadTick}|${typingTick}|${receiptTick}|${threadTick}`}
           data={items}
           keyExtractor={(c) => c.id}
           initialNumToRender={12}
           windowSize={7}
           renderItem={({ item }) => {
             const unread = getUnread(item.id);
+            const typing = Boolean(getTypingSnapshot(item.id));
+            const previewDeleted =
+              Boolean(token && lastDeletedMessageInThread(token, item.id));
+            const previewTick =
+              !typing && !previewDeleted && token
+                ? previewTickForConversation(item, token, myId)
+                : null;
             return (
-            <Pressable
-              style={styles.row}
-              onPress={() =>
-                router.push(`/chat/${encodeURIComponent(item.id)}`)
-              }
-            >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {(item.peerName.trim().charAt(0) || "?").toUpperCase()}
-                </Text>
-              </View>
-              <View style={styles.rowBody}>
-                <Text style={styles.rowTitle} numberOfLines={1}>
-                  {item.peerName}
-                </Text>
-                <Text
-                  style={
-                    unread > 0 ? styles.rowPreviewUnread : styles.rowPreview
-                  }
-                  numberOfLines={1}
-                >
-                  {previewFor(item)}
-                </Text>
-              </View>
-              {unread > 0 ? (
-                <View
-                  style={styles.unreadBadge}
-                  accessibilityLabel={t("messages.unreadCount", {
-                    count: unread,
-                  })}
-                >
-                  <Text style={styles.unreadBadgeText}>
-                    {unread > 99 ? "99+" : String(unread)}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
+              <ConversationRow
+                item={item}
+                styles={styles}
+                colors={colors}
+                myId={myId}
+                unread={unread}
+                typing={typing}
+                previewTick={previewTick}
+                previewDeleted={previewDeleted}
+                previewText={previewFor(item)}
+                onOpen={openChat}
+                onPressIn={warmChatOnPressIn}
+                unreadLabel={t("messages.unreadCount", { count: unread })}
+              />
             );
           }}
         />
       )}
 
-      <Modal visible={newOpen} transparent animationType="fade">
-        <Pressable
-          style={styles.sheetBackdrop}
-          onPress={() => setNewOpen(false)}
-        />
-        <View
-          style={[
-            styles.sheet,
-            {
-              bottom: keyboardHeight,
-              paddingBottom:
-                keyboardHeight > 0 ? 16 : Math.max(insets.bottom, 16),
-            },
-          ]}
-        >
-          <Text style={styles.sheetTitle}>{t("messages.newChat")}</Text>
-          <Text style={[styles.rowPreview, { marginBottom: 8 }]}>
-            {t("messages.phoneLabel")}
-          </Text>
-          <View style={styles.inputWrap}>
-            <Text style={styles.prefix}>+237</Text>
-            <TextInput
-              style={styles.input}
-              placeholder={t("messages.phonePlaceholder")}
-              placeholderTextColor={colors.placeholder}
-              keyboardType="number-pad"
-              maxLength={9}
-              value={phone}
-              onChangeText={(v) => setPhone(normalizeCameroonPhoneDigits(v))}
-              autoFocus
-            />
-          </View>
-          <Pressable
-            style={[
-              styles.primaryBtn,
-              (phone.length !== 9 || opening) && styles.primaryBtnDisabled,
-            ]}
-            disabled={phone.length !== 9 || opening}
-            onPress={() => void openNew()}
-          >
-            {opening ? (
-              <ActivityIndicator color={colors.accentOn} />
-            ) : (
-              <Text style={styles.primaryBtnText}>{t("messages.openChat")}</Text>
-            )}
-          </Pressable>
-          {error ? (
-            <Text style={[styles.emptyHint, { marginTop: 12 }]}>{error}</Text>
-          ) : null}
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

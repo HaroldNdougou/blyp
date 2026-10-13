@@ -1,0 +1,48 @@
+  MessagingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-messaging-${Stage}"
+      Description: Message Money — conversations, messages, escrow claim
+      CodeUri: ../aws/
+      Handler: handlers/messaging/index.handler
+      Timeout: 15
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JwtSecret
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+      Events:
+        ListConversations:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations
+            Method: GET
+        OpenConversation:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations
+            Method: POST
+        ListMessages:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations/{id}/messages
+            Method: GET
+        SendMessage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations/{id}/messages
+            Method: POST
+        ClaimMoney:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /money-transfers/{id}/claim
+            Method: POST
+  MessagingFunctionArn:
+    Description: ARN de la Lambda messaging
+    Value: !GetAtt MessagingFunction.Arn

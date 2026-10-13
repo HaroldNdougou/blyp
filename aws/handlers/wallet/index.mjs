@@ -40,6 +40,14 @@ import {
   updateDepositIntent,
 } from "../../lib/wallet.mjs";
 import { getUserBalance, getUserProfile } from "../../lib/user.mjs";
+import {
+  createPocket,
+  deletePocket,
+  listPocketTransactions,
+  listPockets,
+  movePocketFunds,
+  renamePocket,
+} from "../../lib/pockets.mjs";
 import { randomUUID } from "node:crypto";
 
 async function requireUserId(event) {
@@ -282,6 +290,75 @@ async function handlePay(userId, body, event) {
   });
 }
 
+const POCKET_ERRORS = {
+  NAME_INVALID: () => badRequest("Nom de poche invalide"),
+  AMOUNT_INVALID: () =>
+    badRequest(`Montant invalide (max ${MAX_TX_AMOUNT_FCFA.toLocaleString("fr-FR")} FCFA)`),
+  INSUFFICIENT_BALANCE: () => badRequest("Solde disponible insuffisant"),
+  POCKET_INSUFFICIENT: () => badRequest("Montant supérieur au solde de la poche"),
+  POCKET_NOT_FOUND: () => notFound("Poche introuvable"),
+  DIRECTION_INVALID: () => badRequest("Action invalide"),
+  TOO_MANY: () => badRequest("Nombre maximum de poches atteint"),
+  CONFLICT: () => conflict("Opération en conflit, réessayez"),
+};
+
+function pocketResult(result) {
+  if (result?.error) {
+    return (POCKET_ERRORS[result.error] ?? POCKET_ERRORS.CONFLICT)();
+  }
+  return ok(result);
+}
+
+async function handlePocketsRoute(userId, method, path, event) {
+  if (path === "/pockets") {
+    if (method === "GET") {
+      return ok({ items: await listPockets(userId) });
+    }
+    if (method === "POST") {
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return pocketResult(
+        await createPocket(
+          userId,
+          body?.name,
+          body?.initialAmount ?? 0,
+          getIdempotencyKey(event),
+        ),
+      );
+    }
+    return null;
+  }
+  const m = path.match(/^\/pockets\/([^/]+)(\/[a-z]+)?$/);
+  if (!m) return null;
+  const pocketId = decodeURIComponent(m[1]);
+  const sub = m[2] ?? "";
+  if (sub === "/transactions" && method === "GET") {
+    return ok({ items: await listPocketTransactions(userId, pocketId) });
+  }
+  if (sub === "/move" && method === "POST") {
+    const body = parseJsonBody(event);
+    if (body === null) return badRequest("Corps JSON invalide");
+    return pocketResult(
+      await movePocketFunds(
+        userId,
+        pocketId,
+        body?.direction,
+        parseInt(String(body?.amount), 10),
+        getIdempotencyKey(event),
+      ),
+    );
+  }
+  if (sub === "" && method === "PUT") {
+    const body = parseJsonBody(event);
+    if (body === null) return badRequest("Corps JSON invalide");
+    return pocketResult(await renamePocket(userId, pocketId, body?.name));
+  }
+  if (sub === "" && method === "DELETE") {
+    return pocketResult(await deletePocket(userId, pocketId));
+  }
+  return null;
+}
+
 async function handleTransactions(userId, event) {
   const q = event.queryStringParameters ?? {};
   const since = q.since ? String(q.since) : null;
@@ -325,6 +402,13 @@ export async function handler(event) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handleTransactions(auth.userId, event);
+    }
+
+    if (path === "/pockets" || path.startsWith("/pockets/")) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const res = await handlePocketsRoute(auth.userId, method, path, event);
+      if (res) return res;
     }
 
     return badRequest("Route introuvable");

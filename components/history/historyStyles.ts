@@ -38,6 +38,22 @@ export function createHistoryStyles(c: ThemeColors) {
       paddingHorizontal: 12,
       paddingVertical: 12,
     },
+    summaryCardActive: {
+      backgroundColor: c.depositHighlightBackground,
+      borderColor: c.depositHighlightBorder,
+      borderWidth: 1,
+    },
+    summaryCardPressed: {
+      opacity: 0.88,
+    },
+    summaryCardActive: {
+      backgroundColor: c.depositHighlightBackground,
+      borderColor: c.depositHighlightBorder,
+      borderWidth: 1,
+    },
+    summaryCardPressed: {
+      opacity: 0.88,
+    },
     summaryLabel: {
       fontSize: 11,
       fontWeight: "700",

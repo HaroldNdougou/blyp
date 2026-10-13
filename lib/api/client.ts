@@ -5,10 +5,19 @@ import {
   setAuthSession,
 } from "@/lib/auth/authSession";
 import i18n from "@/lib/i18n";
+import {
+  demoApiResponse,
+  isDemoPath,
+  withDemoConversations,
+} from "@/lib/dev/demoProfiles";
+import { withNormalizedReplyTo } from "@/lib/messages/replyPreview";
 import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
 import type {
   ApiUser,
+  Pocket,
+  PocketMoveResponse,
+  PocketTransaction,
   TransactionItem,
   WalletDepositResponse,
   WalletDepositStatusResponse,
@@ -135,13 +144,12 @@ export async function ensureSessionFresh(): Promise<boolean> {
 }
 
 function errorMessageFromResponse(_res: Response, data: unknown): string {
-  if (typeof data === "object" && data !== null && "error" in data) {
-    const msg = String((data as { error?: unknown }).error ?? "").trim();
-    if (
-      msg &&
-      !/^réponse http \d+/i.test(msg) &&
-      !/^session invalide$/i.test(msg)
-    ) {
+  if (typeof data === "object" && data !== null) {
+    const o = data as { error?: unknown; message?: unknown };
+    const fromError = String(o.error ?? "").trim();
+    const fromMessage = String(o.message ?? "").trim();
+    const msg = fromError || fromMessage;
+    if (msg && !/^internal server error$/i.test(msg)) {
       return msg;
     }
   }
@@ -163,6 +171,9 @@ async function request<T>(
     ? (tokenOpt ?? null)
     : getAccessToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  if (isDemoPath(path)) {
+    return demoApiResponse<T>(path, rest.method ?? "GET", rest.body, token);
+  }
   const url = `${API_BASE_URL}${path}`;
   let res: Response;
   try {
@@ -321,6 +332,39 @@ export async function getMe(token: string): Promise<ApiUser> {
   return request("/me", { token });
 }
 
+export async function presignProfileAvatar(
+  token: string,
+  contentType: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockPresignProfileAvatar(token, contentType);
+  }
+  return request("/me/avatar/presign", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ contentType }),
+  });
+}
+
+export async function confirmProfileAvatar(
+  token: string,
+  key: string,
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockConfirmProfileAvatar(token, key);
+  }
+  return request("/me/avatar/confirm", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ key }),
+  });
+}
+
 export async function setOnboardingTransactionPin(
   token: string,
   pin: string,
@@ -469,7 +513,12 @@ export async function listCommerces(
 export async function lookupAccountPublic(
   token: string,
   accountId: string,
-): Promise<{ accountId: string; displayName: string; kind: string }> {
+): Promise<{
+  accountId: string;
+  displayName: string;
+  kind: string;
+  category?: string | null;
+}> {
   const id = String(accountId ?? "")
     .trim()
     .toUpperCase();
@@ -544,11 +593,90 @@ export async function listTransactions(
   return request(`/transactions${q}`, { token });
 }
 
+export async function listPockets(
+  token: string,
+): Promise<{ items: Pocket[] }> {
+  if (USE_MOCK_API) return (await loadMock()).mockListPockets(token);
+  return request("/pockets", { token });
+}
+
+export async function createPocket(
+  token: string,
+  input: { name: string; initialAmount?: number },
+  idempotencyKey: string,
+): Promise<PocketMoveResponse> {
+  if (USE_MOCK_API) return (await loadMock()).mockCreatePocket(token, input);
+  return request("/pockets", {
+    method: "POST",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function movePocketFunds(
+  token: string,
+  pocketId: string,
+  direction: "in" | "out",
+  amount: number,
+  idempotencyKey: string,
+): Promise<PocketMoveResponse> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockMovePocketFunds(token, pocketId, direction, amount);
+  }
+  return request(`/pockets/${encodeURIComponent(pocketId)}/move`, {
+    method: "POST",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: JSON.stringify({ direction, amount }),
+  });
+}
+
+export async function renamePocket(
+  token: string,
+  pocketId: string,
+  name: string,
+): Promise<{ pocket: Pocket | null }> {
+  if (USE_MOCK_API) return (await loadMock()).mockRenamePocket(token, pocketId, name);
+  return request(`/pockets/${encodeURIComponent(pocketId)}`, {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function deletePocket(
+  token: string,
+  pocketId: string,
+): Promise<{ ok: boolean; balanceFcfa: number }> {
+  if (USE_MOCK_API) return (await loadMock()).mockDeletePocket(token, pocketId);
+  return request(`/pockets/${encodeURIComponent(pocketId)}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function listPocketTransactions(
+  token: string,
+  pocketId: string,
+): Promise<{ items: PocketTransaction[] }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListPocketTransactions(token, pocketId);
+  }
+  return request(`/pockets/${encodeURIComponent(pocketId)}/transactions`, {
+    token,
+  });
+}
+
 export async function listConversations(
   token: string,
 ): Promise<{ items: import("./types").Conversation[] }> {
   if (USE_MOCK_API) return (await loadMock()).mockListConversations(token);
-  return request("/conversations", { token });
+  const data = await request<{ items: import("./types").Conversation[] }>(
+    "/conversations",
+    { token },
+  );
+  return { ...data, items: withDemoConversations(data.items ?? []) };
 }
 
 export async function openConversation(
@@ -563,16 +691,310 @@ export async function openConversation(
   });
 }
 
+export async function lookupBlypPhones(
+  token: string,
+  phones: string[],
+): Promise<{ items: import("./types").BlypPhoneLookupItem[] }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockLookupBlypPhones(token, phones);
+  }
+  return request("/contacts/blyp-lookup", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ phones }),
+  });
+}
+
 export async function listMessages(
   token: string,
   conversationId: string,
-): Promise<{ items: import("./types").ChatMessage[] }> {
+): Promise<{
+  items: import("./types").ChatMessage[];
+  peerLastReadAt?: string | null;
+  peerLastDeliveredAt?: string | null;
+}> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockListMessages(token, conversationId);
   }
+  const data = await request<{
+    items?: import("./types").ChatMessage[];
+    messages?: import("./types").ChatMessage[];
+    peerLastReadAt?: string | null;
+    peerLastDeliveredAt?: string | null;
+  }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    token,
+  });
+  const raw = Array.isArray(data.items)
+    ? data.items
+    : Array.isArray(data.messages)
+      ? data.messages
+      : [];
+  const items = raw.map((m) => {
+    const id = String(
+      m.id || (m as { messageId?: string }).messageId || "",
+    ).trim();
+    return withNormalizedReplyTo({ ...m, id });
+  });
+  return {
+    items,
+    peerLastReadAt: data.peerLastReadAt ?? null,
+    peerLastDeliveredAt: data.peerLastDeliveredAt ?? null,
+  };
+}
+
+export async function markConversationRead(
+  token: string,
+  conversationId: string,
+): Promise<{ ok: boolean; at?: string }> {
+  if (USE_MOCK_API) return { ok: true, at: new Date().toISOString() };
   return request(
     `/conversations/${encodeURIComponent(conversationId)}/messages`,
-    { token },
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "read" }),
+    },
+  );
+}
+
+export async function markConversationDelivered(
+  token: string,
+  conversationId: string,
+): Promise<{ ok: boolean; at?: string }> {
+  if (USE_MOCK_API) return { ok: true, at: new Date().toISOString() };
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "delivered" }),
+    },
+  );
+}
+
+export async function presignVoiceUpload(
+  token: string,
+  conversationId: string,
+): Promise<{ uploadUrl: string; key: string; expiresIn: number }> {
+  if (USE_MOCK_API) {
+    return {
+      uploadUrl: "mock://voice",
+      key: `voice/${conversationId}/me/mock.m4a`,
+      expiresIn: 300,
+    };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "voice-presign" }),
+    },
+  );
+}
+
+export async function presignVoicePlay(
+  token: string,
+  conversationId: string,
+  key: string,
+): Promise<{ url: string; expiresIn?: number }> {
+  if (USE_MOCK_API) {
+    return { url: key, expiresIn: 600 };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "voice-play", key }),
+    },
+  );
+}
+
+export async function sendVoiceMessage(
+  token: string,
+  conversationId: string,
+  key: string,
+  durationMs: number,
+  clientId: string,
+  replyToMessageId?: string | null,
+): Promise<{ message: import("./types").ChatMessage }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSendVoiceMessage(
+      token,
+      conversationId,
+      key,
+      durationMs,
+      clientId,
+      replyToMessageId,
+    );
+  }
+  const payload: Record<string, unknown> = {
+    type: "voice",
+    key,
+    durationMs,
+    clientId,
+  };
+  const replyId = String(replyToMessageId ?? "").trim();
+  if (replyId) payload.replyToMessageId = replyId;
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function presignImageUpload(
+  token: string,
+  conversationId: string,
+  contentType?: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return {
+      uploadUrl: "mock://image",
+      key: `image/${conversationId}/me/mock.jpg`,
+      contentType: "image/jpeg",
+      expiresIn: 300,
+    };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        type: "image-presign",
+        contentType: contentType ?? "image/jpeg",
+      }),
+    },
+  );
+}
+
+export async function presignImagePlay(
+  token: string,
+  conversationId: string,
+  key: string,
+): Promise<{ url: string; expiresIn?: number }> {
+  if (USE_MOCK_API) {
+    return { url: key, expiresIn: 600 };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "image-play", key }),
+    },
+  );
+}
+
+export async function sendImageMessage(
+  token: string,
+  conversationId: string,
+  key: string,
+  width: number,
+  height: number,
+  clientId: string,
+  caption?: string | null,
+  replyToMessageId?: string | null,
+): Promise<{ message: import("./types").ChatMessage }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSendImageMessage(
+      token,
+      conversationId,
+      key,
+      width,
+      height,
+      clientId,
+      caption,
+      replyToMessageId,
+    );
+  }
+  const cap = String(caption ?? "").trim();
+  const payload: Record<string, unknown> = {
+    type: "image",
+    key,
+    width,
+    height,
+    clientId,
+    caption: cap || undefined,
+  };
+  const replyId = String(replyToMessageId ?? "").trim();
+  if (replyId) payload.replyToMessageId = replyId;
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export type DeleteMessageScope = "me" | "everyone";
+
+export async function deleteChatMessage(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  scope: DeleteMessageScope,
+): Promise<{
+  ok: boolean;
+  scope: DeleteMessageScope;
+  messageId: string;
+  message?: import("./types").ChatMessage;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockDeleteChatMessage(
+      token,
+      conversationId,
+      messageId,
+      scope,
+    );
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "delete", messageId, scope }),
+    },
+  );
+}
+
+export async function reactToMessage(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  emoji: string | null,
+): Promise<{
+  ok: boolean;
+  messageId: string;
+  reactions: import("./types").MessageReaction[];
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockReactToMessage(
+      token,
+      conversationId,
+      messageId,
+      emoji,
+    );
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "react", messageId, emoji }),
+    },
   );
 }
 
@@ -581,6 +1003,7 @@ export async function sendTextMessage(
   conversationId: string,
   body: string,
   clientId: string,
+  replyToMessageId?: string | null,
 ): Promise<{ message: import("./types").ChatMessage }> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockSendTextMessage(
@@ -588,16 +1011,25 @@ export async function sendTextMessage(
       conversationId,
       body,
       clientId,
+      replyToMessageId,
     );
   }
-  return request(
+  const payload: Record<string, unknown> = {
+    type: "text",
+    body,
+    clientId,
+  };
+  const replyId = String(replyToMessageId ?? "").trim();
+  if (replyId) payload.replyToMessageId = replyId;
+  const res = await request<{ message: import("./types").ChatMessage }>(
     `/conversations/${encodeURIComponent(conversationId)}/messages`,
     {
       method: "POST",
       token,
-      body: JSON.stringify({ type: "text", body, clientId }),
+      body: JSON.stringify(payload),
     },
   );
+  return { message: withNormalizedReplyTo(res.message) };
 }
 
 export async function sendMoneyMessage(
@@ -607,6 +1039,7 @@ export async function sendMoneyMessage(
   clientId: string,
   idempotencyKey: string,
   transactionPin: string,
+  replyToMessageId?: string | null,
 ): Promise<{
   message: import("./types").ChatMessage;
   balanceFcfa: number;
@@ -619,6 +1052,65 @@ export async function sendMoneyMessage(
       clientId,
       idempotencyKey,
       transactionPin,
+      replyToMessageId,
+    );
+  }
+  const payload: Record<string, unknown> = {
+    type: "money",
+    amount,
+    clientId,
+    idempotencyKey,
+    transactionPin,
+  };
+  const replyId = String(replyToMessageId ?? "").trim();
+  if (replyId) payload.replyToMessageId = replyId;
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export type MoneyTransferAction = "claim" | "recall";
+
+export async function claimMoneyTransfer(
+  token: string,
+  transferId: string,
+  action: MoneyTransferAction = "claim",
+): Promise<{
+  transfer: import("./types").MoneyTransfer;
+  balanceFcfa: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockClaimMoneyTransfer(token, transferId, action);
+  }
+  return request(
+    `/money-transfers/${encodeURIComponent(transferId)}/claim`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ action }),
+    },
+  );
+}
+
+export async function thankMoneyTransfer(
+  token: string,
+  conversationId: string,
+  transferId: string,
+): Promise<{
+  ok: boolean;
+  transfer: import("./types").MoneyTransfer;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockThankMoneyTransfer(
+      token,
+      conversationId,
+      transferId,
     );
   }
   return request(
@@ -626,30 +1118,29 @@ export async function sendMoneyMessage(
     {
       method: "POST",
       token,
-      headers: { "Idempotency-Key": idempotencyKey },
-      body: JSON.stringify({
-        type: "money",
-        amount,
-        clientId,
-        idempotencyKey,
-        transactionPin,
-      }),
+      body: JSON.stringify({ type: "money-thanks", transferId }),
     },
   );
 }
 
-export async function claimMoneyTransfer(
+export async function sendConversationTyping(
   token: string,
-  transferId: string,
-): Promise<{
-  transfer: import("./types").MoneyTransfer;
-  balanceFcfa: number;
-}> {
+  conversationId: string,
+  on: boolean,
+): Promise<{ ok: boolean }> {
   if (USE_MOCK_API) {
-    return (await loadMock()).mockClaimMoneyTransfer(token, transferId);
+    return (await loadMock()).mockMarkConversationTyping(
+      token,
+      conversationId,
+      on,
+    );
   }
   return request(
-    `/money-transfers/${encodeURIComponent(transferId)}/claim`,
-    { method: "POST", token },
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "typing", on }),
+    },
   );
 }

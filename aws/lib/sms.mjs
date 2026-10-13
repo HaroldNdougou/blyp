@@ -209,11 +209,13 @@ function twilioConfigured() {
   return Boolean(sid && token && (from || ms));
 }
 
-async function sendViaTwilio(toE164, text) {
+async function sendViaTwilio(toE164, text, fromOverride) {
   const sid = process.env.TWILIO_ACCOUNT_SID;
   const token = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = process.env.TWILIO_PHONE_NUMBER;
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const fromNumber = fromOverride ?? process.env.TWILIO_PHONE_NUMBER;
+  const messagingServiceSid = fromOverride
+    ? null
+    : process.env.TWILIO_MESSAGING_SERVICE_SID;
 
   const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
   const auth = Buffer.from(`${sid}:${token}`).toString("base64");
@@ -239,6 +241,22 @@ async function sendViaTwilio(toE164, text) {
     return { ok: false, detail: errBody };
   }
   return { ok: true };
+}
+
+function twilioWhatsAppConfigured() {
+  return Boolean(
+    twilioConfigured() && process.env.TWILIO_WHATSAPP_FROM?.trim(),
+  );
+}
+
+async function sendViaTwilioWhatsApp(toE164, text) {
+  const from = process.env.TWILIO_WHATSAPP_FROM.trim();
+  if (!twilioWhatsAppConfigured()) {
+    return { ok: false, reason: "whatsapp_not_configured" };
+  }
+  const to = toE164.startsWith("whatsapp:") ? toE164 : `whatsapp:${toE164}`;
+  const r = await sendViaTwilio(to, text, from);
+  return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
 }
 
 function smsProviderExplicit() {
@@ -326,53 +344,54 @@ export function describeSmsSetup() {
 
 /**
  * @param {string} phoneE164 ex. +237612345678
- * @param {string} code 6 chiffres
+ * @param {string} text
  * @returns {Promise<{ ok: boolean, reason?: string }>}
  */
-export async function deliverOtpSms(phoneE164, code) {
-  const text = otpMessage(code);
+export async function deliverSms(phoneE164, text) {
+  const body = String(text ?? "").trim();
+  if (!body) return { ok: false, reason: "empty" };
   const explicit = smsProviderExplicit();
 
   const trySend = async () => {
     if (explicit === "obitsms") {
       if (!obitsmsConfigured())
         return { ok: false, reason: "sms_not_configured" };
-      const r = await sendViaObitsms(phoneE164, text);
+      const r = await sendViaObitsms(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (explicit === "africastalking") {
       if (!africasTalkingConfigured())
         return { ok: false, reason: "sms_not_configured" };
-      const r = await sendViaAfricasTalking(phoneE164, text);
+      const r = await sendViaAfricasTalking(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (explicit === "webhook") {
       if (!webhookConfigured())
         return { ok: false, reason: "sms_not_configured" };
-      const r = await sendViaWebhook(phoneE164, text);
+      const r = await sendViaWebhook(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (explicit === "twilio") {
       if (!twilioConfigured())
         return { ok: false, reason: "sms_not_configured" };
-      const r = await sendViaTwilio(phoneE164, text);
+      const r = await sendViaTwilio(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
 
     if (obitsmsConfigured()) {
-      const r = await sendViaObitsms(phoneE164, text);
+      const r = await sendViaObitsms(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (africasTalkingConfigured()) {
-      const r = await sendViaAfricasTalking(phoneE164, text);
+      const r = await sendViaAfricasTalking(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (webhookConfigured()) {
-      const r = await sendViaWebhook(phoneE164, text);
+      const r = await sendViaWebhook(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     if (twilioConfigured()) {
-      const r = await sendViaTwilio(phoneE164, text);
+      const r = await sendViaTwilio(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
     return { ok: false, reason: "sms_not_configured" };
@@ -389,11 +408,35 @@ export async function deliverOtpSms(phoneE164, code) {
       );
       return { ok: false, reason: "sms_not_configured" };
     }
-    console.log(`[OTP dev] ${phoneE164} → ${code}`);
+    console.log(`[SMS dev] ${phoneE164} → ${body}`);
     return { ok: true };
   }
 
   return result;
+}
+
+/**
+ * @param {string} phoneE164 ex. +237612345678
+ * @param {string} code 6 chiffres
+ * @returns {Promise<{ ok: boolean, reason?: string }>}
+ */
+export async function deliverOtpSms(phoneE164, code) {
+  return deliverSms(phoneE164, otpMessage(code));
+}
+
+/**
+ * Invitation peer sans compte : SMS (Obit / etc.), ou WhatsApp Twilio si SMS indisponible.
+ * @param {string} phoneE164
+ * @param {string} text
+ */
+export async function deliverPeerInvite(phoneE164, text) {
+  const sms = await deliverSms(phoneE164, text);
+  if (sms.ok) return { ok: true, channel: "sms" };
+  if (twilioWhatsAppConfigured()) {
+    const wa = await sendViaTwilioWhatsApp(phoneE164, text);
+    if (wa.ok) return { ok: true, channel: "whatsapp" };
+  }
+  return sms;
 }
 
 export { anySmsConfigured };

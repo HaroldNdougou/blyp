@@ -1,5 +1,12 @@
 import {
+  sendConversationReceiptPush,
+  sendConversationTypingPush,
+  sendMessageReactionPush,
+  sendMessageDeletedPush,
   sendMessageReceivedPush,
+  sendMoneyClaimedPush,
+  sendMoneyTrayPush,
+  sendMoneyUpdatedPush,
   sendPaymentReceivedPush,
 } from "../../lib/pushSend.mjs";
 
@@ -20,6 +27,67 @@ export async function handler(event) {
           console.log("[push] message skipped", result.reason, msg.messageId);
         } else {
           console.log("[push] message sent", msg.messageId, result?.count);
+        }
+        continue;
+      }
+      if (msg?.type === "money_claimed") {
+        const result = await sendMoneyClaimedPush(msg);
+        if (result?.skipped) {
+          console.log("[push] money claimed skipped", result.reason, msg.transferId);
+        } else {
+          console.log("[push] money claimed sent", msg.transferId, result?.count);
+        }
+        continue;
+      }
+      if (msg?.type === "money_thanks") {
+        const result = await sendMoneyTrayPush(msg);
+        if (result?.skipped) {
+          console.log("[push] money tray skipped", result.reason, msg.transferId);
+        } else {
+          console.log("[push] money tray sent", msg.type, msg.transferId, result?.count);
+        }
+        continue;
+      }
+      if (msg?.type === "conversation_receipt") {
+        const result = await sendConversationReceiptPush(msg);
+        if (result?.skipped) {
+          console.log("[push] receipt skipped", result.reason, msg.conversationId);
+        } else {
+          console.log("[push] receipt sent", msg.kind, msg.conversationId);
+        }
+        continue;
+      }
+      if (msg?.type === "message_reaction") {
+        const result = await sendMessageReactionPush(msg);
+        if (result?.skipped) {
+          console.log("[push] reaction skipped", result.reason, msg.messageId);
+        } else {
+          console.log("[push] reaction sent", msg.messageId, result?.count);
+        }
+        continue;
+      }
+      if (msg?.type === "message_deleted") {
+        const result = await sendMessageDeletedPush(msg);
+        if (result?.skipped) {
+          console.log("[push] delete skipped", result.reason, msg.messageId);
+        } else {
+          console.log("[push] delete sent", msg.messageId, result?.count);
+        }
+        continue;
+      }
+      if (msg?.type === "conversation_typing") {
+        const result = await sendConversationTypingPush(msg);
+        if (result?.skipped) {
+          console.log("[push] typing skipped", result.reason, msg.conversationId);
+        }
+        continue;
+      }
+      if (msg?.type === "money_updated") {
+        const result = await sendMoneyUpdatedPush(msg);
+        if (result?.skipped) {
+          console.log("[push] money updated skipped", result.reason, msg.transferId);
+        } else {
+          console.log("[push] money updated sent", msg.transferId, result?.count);
         }
         continue;
       }

@@ -1,5 +1,5 @@
 import type { BlePermissionStatus } from "@/lib/ble/types";
-import * as Location from "expo-location";
+import { withTimeout } from "@/lib/ble/timeout";
 import { PermissionsAndroid, Platform } from "react-native";
 
 function androidApiLevel(): number {
@@ -7,8 +7,44 @@ function androidApiLevel(): number {
   return parseInt(String(Platform.Version), 10) || 0;
 }
 
+function androidPerms(wantAdvertise: boolean): string[] {
+  const api = androidApiLevel();
+  const perms: string[] = [
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+  ];
+  if (api >= 31) {
+    perms.push(
+      "android.permission.BLUETOOTH_SCAN",
+      "android.permission.BLUETOOTH_CONNECT",
+    );
+    if (wantAdvertise) perms.push("android.permission.BLUETOOTH_ADVERTISE");
+  }
+  return perms;
+}
+
+/** Lecture seule — aucun dialogue système. */
+export async function checkBlePermissions(opts?: {
+  advertise?: boolean;
+}): Promise<BlePermissionStatus> {
+  if (Platform.OS === "web") return "unavailable";
+  if (Platform.OS !== "android") return "granted";
+  try {
+    for (const p of androidPerms(Boolean(opts?.advertise))) {
+      const ok = await PermissionsAndroid.check(
+        p as (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS],
+      );
+      if (!ok) return "denied";
+    }
+    return "granted";
+  } catch {
+    return "unavailable";
+  }
+}
+
 /**
  * Permissions BLE scan (+ advertise si demandé).
+ * Un seul passage : pas de 2ᵉ popup Expo Location si Android a déjà refusé.
  */
 export async function requestBlePermissions(opts?: {
   advertise?: boolean;
@@ -20,23 +56,16 @@ export async function requestBlePermissions(opts?: {
   const wantAdvertise = Boolean(opts?.advertise);
 
   try {
-    const perms: string[] = [
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-    ];
-    if (api >= 31) {
-      perms.push(
-        "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_CONNECT",
-      );
-      if (wantAdvertise) {
-        perms.push("android.permission.BLUETOOTH_ADVERTISE");
-      }
-    }
+    const perms = androidPerms(wantAdvertise);
 
-    const result = await PermissionsAndroid.requestMultiple(
-      perms as (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS][],
+    const result = await withTimeout(
+      PermissionsAndroid.requestMultiple(
+        perms as (typeof PermissionsAndroid.PERMISSIONS)[keyof typeof PermissionsAndroid.PERMISSIONS][],
+      ),
+      12_000,
+      null,
     );
+    if (!result) return "denied";
 
     const fine =
       result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
@@ -45,10 +74,7 @@ export async function requestBlePermissions(opts?: {
       result[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
       PermissionsAndroid.RESULTS.GRANTED;
     if (!fine && !coarse) {
-      const loc = await Location.requestForegroundPermissionsAsync();
-      if (loc.status !== "granted") {
-        return loc.canAskAgain === false ? "blocked" : "denied";
-      }
+      return "denied";
     }
 
     if (api >= 31) {
@@ -68,12 +94,7 @@ export async function requestBlePermissions(opts?: {
       }
     }
   } catch {
-    try {
-      const loc = await Location.requestForegroundPermissionsAsync();
-      if (loc.status !== "granted") return "denied";
-    } catch {
-      return "unavailable";
-    }
+    return "denied";
   }
 
   return "granted";

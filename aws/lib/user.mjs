@@ -12,6 +12,7 @@ import {
   makeAccountId,
   resolveAccountId,
 } from "./accountId.mjs";
+import { publicAvatarUrl } from "./avatar.mjs";
 import { getDocClient, getTableName, ttlFromNowMs } from "./dynamodb.mjs";
 
 const doc = getDocClient();
@@ -77,6 +78,9 @@ export function userToApi(profile, walletOrBalance = 0) {
       profile.isMerchant === true || (wallet.commerces?.length ?? 0) > 0,
     activeContext: wallet.activeContext ?? { type: "personal" },
     commerces: wallet.commerces ?? [],
+    avatarUrl: profile.avatarUpdatedAt
+      ? publicAvatarUrl(profile.phone, Date.parse(profile.avatarUpdatedAt))
+      : null,
   };
 }
 
@@ -254,6 +258,7 @@ export async function getOtpChallenge(phone) {
     new GetCommand({
       TableName: getTableName(),
       Key: { PK: otpPk(phone), SK: "CHALLENGE" },
+      ConsistentRead: true,
     }),
   );
   return res.Item ?? null;
@@ -418,6 +423,20 @@ export async function setTransactionPin(userId, pinHash) {
       },
     }),
   );
+}
+
+export async function touchAvatarUpdated(userId) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression: "SET avatarUpdatedAt = :now, updatedAt = :now",
+      ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeValues: { ":now": now },
+    }),
+  );
+  return now;
 }
 
 export async function updateProfileNames(userId, firstName, lastName) {

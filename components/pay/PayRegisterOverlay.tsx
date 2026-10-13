@@ -94,6 +94,10 @@ export default function PayRegisterOverlay({
   const phoneAutoSubmittedRef = useRef<string | null>(null);
   const otpAutoSubmittedRef = useRef<string | null>(null);
   const otpVerifyInFlightRef = useRef(false);
+  /** `request-otp` a bien écrit le challenge — sans ça, 1234 est rejeté trop tôt. */
+  const otpChallengeReadyRef = useRef(false);
+  const otpRequestReadyRef = useRef<Promise<boolean>>(Promise.resolve(false));
+  const otpRequestResolveRef = useRef<(ok: boolean) => void>(() => {});
   const pinFirstAutoSubmittedRef = useRef<string | null>(null);
   const pinConfirmAutoSubmittedRef = useRef<string | null>(null);
   const pinConfirmVerifyInFlightRef = useRef(false);
@@ -193,15 +197,24 @@ export default function PayRegisterOverlay({
     setBusy(true);
     /** Instantané : passer à l’écran code sans attendre Obit/réseau. */
     if (mode === "initial") {
+      otpChallengeReadyRef.current = false;
+      otpRequestReadyRef.current = new Promise<boolean>((resolve) => {
+        otpRequestResolveRef.current = resolve;
+      });
       setWelcomePhone(phone);
       setWelcomeStep("otp");
       setWelcomeOtp("");
+      otpAutoSubmittedRef.current = null;
     }
     try {
       await requestOtp(phone);
+      otpChallengeReadyRef.current = true;
+      if (mode === "initial") otpRequestResolveRef.current(true);
       setOtpSendCount((c) => c + 1);
       setOtpResendCooldown(OTP_RESEND_COOLDOWN_SEC);
     } catch (e) {
+      otpChallengeReadyRef.current = false;
+      if (mode === "initial") otpRequestResolveRef.current(false);
       const msg =
         e instanceof ApiError ? e.message : t("common.sendCodeFailed");
       if (e instanceof ApiError && e.retryAfterSeconds != null) {
@@ -224,6 +237,10 @@ export default function PayRegisterOverlay({
     Keyboard.dismiss();
     setAuthVerifySending(true);
     try {
+      if (!otpChallengeReadyRef.current) {
+        const ready = await otpRequestReadyRef.current;
+        if (!ready) return;
+      }
       const u = await verifyAndSignIn(welcomePhone, welcomeOtp);
       setWelcomeOtp("");
       if (!u.needsOnboarding) {
@@ -302,6 +319,10 @@ export default function PayRegisterOverlay({
     setAuthPinSaving(true);
     try {
       await setOnboardingTransactionPin(token, b);
+      const { saveTransactionPinVault } = await import(
+        "@/lib/security/transactionPinVault"
+      );
+      await saveTransactionPinVault(b);
       await refreshUser();
       setWelcomeStep("profile");
       setOnboardingPin("");

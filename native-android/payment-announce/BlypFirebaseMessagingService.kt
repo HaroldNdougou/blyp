@@ -27,6 +27,40 @@ class BlypFirebaseMessagingService : ExpoFirebaseMessagingService() {
       MessagePushPresenter.handle(applicationContext, message)
       return
     }
+    val claimed = PaymentPushParser.parseMoneyClaimed(remoteMessage.data)
+    if (claimed != null) {
+      if (BuildConfig.DEBUG) {
+        Log.d(TAG, "money claimed tx=${claimed["transferId"]}")
+      }
+      MessagePushPresenter.handleMoneyClaimed(applicationContext, claimed)
+      return
+    }
+    val moneyTray = PaymentPushParser.parseMoneyTray(remoteMessage.data)
+    if (moneyTray != null) {
+      if (BuildConfig.DEBUG) {
+        Log.d(TAG, "money tray ${moneyTray["type"]} tx=${moneyTray["transferId"]}")
+      }
+      MessagePushPresenter.handleMoneyTray(applicationContext, moneyTray)
+      return
+    }
+    val receipt = PaymentPushParser.parseConversationReceipt(remoteMessage.data)
+    if (receipt != null) {
+      if (BuildConfig.DEBUG) {
+        Log.d(TAG, "receipt ${receipt["kind"]} conv=${receipt["conversationId"]}")
+      }
+      PaymentAnnounceModule.emitConversationReceipt(receipt)
+      return
+    }
+    val typing = PaymentPushParser.parseConversationTyping(remoteMessage.data)
+    if (typing != null) {
+      PaymentAnnounceModule.emitConversationTyping(typing)
+      return
+    }
+    val moneyUpdated = PaymentPushParser.parseMoneyUpdated(remoteMessage.data)
+    if (moneyUpdated != null) {
+      PaymentAnnounceModule.emitMoneyUpdated(moneyUpdated)
+      return
+    }
     super.onMessageReceived(remoteMessage)
   }
 

@@ -5,6 +5,7 @@ type PaymentAnnounceNative = {
   setEnabled: (enabled: boolean) => Promise<void>;
   setLanguage: (lang: string) => Promise<void>;
   setActiveConversation?: (conversationId: string | null) => Promise<void>;
+  setApiSession?: (apiBase: string, accessToken: string) => Promise<void>;
   announce: (
     amountFcfa: number,
     lang: string,
@@ -31,6 +32,16 @@ export async function syncAnnouncePrefNative(
   if (!native?.setEnabled) return;
   await native.setEnabled(enabled);
   await native.setLanguage?.(lang ?? resolveAppLanguage());
+}
+
+/** Token + URL API pour ack `delivered` app tuée — jamais le PIN. */
+export async function syncApiSessionNative(
+  accessToken: string | null,
+): Promise<void> {
+  const native = module();
+  if (!native?.setApiSession) return;
+  const { API_BASE_URL } = await import("@/lib/config");
+  await native.setApiSession(API_BASE_URL, accessToken ?? "");
 }
 
 export async function setActiveConversationNative(

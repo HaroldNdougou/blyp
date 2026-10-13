@@ -4,13 +4,15 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api/errors";
 import type { TransactionItem } from "@/lib/api/types";
-import { assetUrl } from "@/lib/assets/cdn";
+import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
+import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { formatFcfa } from "@/lib/format";
 import {
   ensureHistoryUiRows,
   getHistoryUiRows,
   type HistoryUiRow,
 } from "@/lib/history/historyUiCache";
+import { historyTxTypeLabel } from "@/lib/history/historyTypeLabel";
 import i18n, { getNumberLocale, type AppLanguage } from "@/lib/i18n";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { syncTransactionsFromNetwork } from "@/lib/sync/transactionsSync";
@@ -22,7 +24,6 @@ import {
 } from "@/lib/transactionsCache";
 import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
-import { Image } from "expo-image";
 import { useFocusEffect } from "@react-navigation/native";
 import React, {
   memo,
@@ -35,7 +36,6 @@ import React, {
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
-  InteractionManager,
   Pressable,
   StyleSheet,
   Text,
@@ -54,6 +54,8 @@ type ListRow =
 
 /** Fenêtre UI : 10 au départ, +10 à chaque « Voir plus ». */
 const HISTORY_PAGE_SIZE = 10;
+
+type HistoryFilter = "all" | "sent" | "received";
 
 function dayKey(iso: string): string {
   const d = new Date(iso);
@@ -118,12 +120,8 @@ const HistoryRowItem = memo(function HistoryRowItem({
   onPress: (row: HistoryRow) => void;
   typeLabel: string;
 }) {
-  const uri =
-    item.type === "sent" && item.phone
-      ? assetUrl(`avatars/${item.phone.replace(/\D/g, "")}.jpg`)
-      : null;
-  const initial = (item.name.trim().charAt(0) || "?").toUpperCase();
   const isReceived = item.type === "received";
+  const initial = (item.name.trim().charAt(0) || "?").toUpperCase();
 
   return (
     <Pressable
@@ -136,16 +134,15 @@ const HistoryRowItem = memo(function HistoryRowItem({
       accessibilityLabel={`${typeLabel}, ${item.name}, ${isReceived ? "+" : "-"}${item.amountLabel}`}
     >
       <View style={styles.leftContent}>
-        {uri ? (
-          <View style={styles.avatarSmall}>
-            <Image
-              source={{ uri }}
-              style={{ width: 36, height: 36, borderRadius: 18 }}
-              cachePolicy="memory-disk"
-              recyclingKey={item.id}
-              transition={0}
-            />
-          </View>
+        {item.type === "sent" && item.phone ? (
+          <PeerAvatar
+            name={item.name}
+            phone={item.phone}
+            localUri={contactPhotoUriForPhone(item.phone)}
+            size={36}
+            style={styles.avatarSmall}
+            recyclingKey={item.id}
+          />
         ) : (
           <View
             style={[
@@ -216,6 +213,7 @@ export default function HistoryScreen() {
     );
   });
   const [visibleCount, setVisibleCount] = useState(HISTORY_PAGE_SIZE);
+  const [filter, setFilter] = useState<HistoryFilter>("all");
   const [loading, setLoading] = useState(() => {
     if (!phone) return false;
     return getHistoryUiRows(phone) == null && getTransactionsSnapshot(phone) == null;
@@ -252,6 +250,7 @@ export default function HistoryScreen() {
     if (phoneRef.current !== phone) {
       phoneRef.current = phone;
       setVisibleCount(HISTORY_PAGE_SIZE);
+      setFilter("all");
     }
   }, [phone]);
 
@@ -272,6 +271,7 @@ export default function HistoryScreen() {
         snapshotRef.current = null;
         setRows([]);
         setVisibleCount(HISTORY_PAGE_SIZE);
+        setFilter("all");
         setError(null);
         setLoading(false);
         setSelected(null);
@@ -291,66 +291,73 @@ export default function HistoryScreen() {
         perfMarkEnd("history_open");
       }
 
-      const task = InteractionManager.runAfterInteractions(() => {
-        void (async () => {
-          if (!ram) {
-            await hydrateTransactionsCache(phone);
-            if (cancelled) return;
-            const cached = getTransactionsSnapshot(phone);
-            if (cached) {
-              applySnapshot(cached);
-              setLoading(false);
-              setError(null);
-              perfMarkEnd("history_open");
-            } else {
-              setLoading(true);
-            }
-          }
-
-          try {
-            const items = await syncTransactionsFromNetwork(token, phone);
-            if (cancelled) return;
-            applySnapshot(items);
+      void (async () => {
+        if (!ram) {
+          await hydrateTransactionsCache(phone);
+          if (cancelled) return;
+          const cached = getTransactionsSnapshot(phone);
+          if (cached) {
+            applySnapshot(cached);
+            setLoading(false);
             setError(null);
-          } catch (e) {
-            if (
-              !cancelled &&
-              !getTransactionsSnapshot(phone) &&
-              !ram
-            ) {
-              setError(
-                e instanceof ApiError ? e.message : t("history.loadFailed"),
-              );
-              setRows([]);
-              snapshotRef.current = null;
-            }
-          } finally {
-            if (!cancelled) {
-              setLoading(false);
-              perfMarkEnd("history_open");
-            }
+            perfMarkEnd("history_open");
+          } else {
+            setLoading(true);
           }
-        })();
-      });
+        }
+
+        try {
+          const items = await syncTransactionsFromNetwork(token, phone);
+          if (cancelled) return;
+          applySnapshot(items);
+          setError(null);
+        } catch (e) {
+          if (
+            !cancelled &&
+            !getTransactionsSnapshot(phone) &&
+            !ram
+          ) {
+            setError(
+              e instanceof ApiError ? e.message : t("history.loadFailed"),
+            );
+            setRows([]);
+            snapshotRef.current = null;
+          }
+        } finally {
+          if (!cancelled) {
+            setLoading(false);
+            perfMarkEnd("history_open");
+          }
+        }
+      })();
 
       return () => {
         cancelled = true;
-        task.cancel();
       };
     }, [token, phone, t, applySnapshot]),
   );
 
+  const filteredRows = useMemo(() => {
+    if (filter === "all") return rows;
+    return rows.filter((r) => r.type === filter);
+  }, [rows, filter]);
   const visibleRows = useMemo(
-    () => rows.slice(0, visibleCount),
-    [rows, visibleCount],
+    () => filteredRows.slice(0, visibleCount),
+    [filteredRows, visibleCount],
   );
-  const hasMore = visibleCount < rows.length;
+  const hasMore = visibleCount < filteredRows.length;
   const listData = useMemo(() => buildListRows(visibleRows), [visibleRows]);
+
+  const onFilterPress = useCallback((next: "sent" | "received") => {
+    setFilter((prev) => (prev === next ? "all" : next));
+    setVisibleCount(HISTORY_PAGE_SIZE);
+  }, []);
 
   const totals = useMemo(() => {
     let sent = 0;
     let received = 0;
     for (const r of rows) {
+      if (r.internal) continue;
       if (r.type === "sent") sent += r.amountFcfa;
       else received += r.amountFcfa;
     }
@@ -384,11 +391,7 @@ export default function HistoryScreen() {
           styles={styles}
           colors={colors}
           onPress={openDetail}
-          typeLabel={
-            item.tx.type === "received"
-              ? t("history.typeReceived")
-              : t("history.typeSent")
-          }
+          typeLabel={historyTxTypeLabel(item.tx, t)}
         />
       );
     },
@@ -451,6 +454,36 @@ export default function HistoryScreen() {
         </View>
       );
     }
+    if (filter === "sent") {
+      return (
+        <View style={styles.emptyWrap}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons
+              name="arrow-up-outline"
+              size={28}
+              color={colors.textMuted}
+            />
+          </View>
+          <Text style={styles.emptyTitle}>{t("history.emptySent")}</Text>
+          <Text style={styles.emptyText}>{t("history.emptySentHint")}</Text>
+        </View>
+      );
+    }
+    if (filter === "received") {
+      return (
+        <View style={styles.emptyWrap}>
+          <View style={styles.emptyIconWrap}>
+            <Ionicons
+              name="arrow-down-outline"
+              size={28}
+              color={colors.textMuted}
+            />
+          </View>
+          <Text style={styles.emptyTitle}>{t("history.emptyReceived")}</Text>
+          <Text style={styles.emptyText}>{t("history.emptyReceivedHint")}</Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.emptyWrap}>
         <View style={styles.emptyIconWrap}>
@@ -464,7 +497,7 @@ export default function HistoryScreen() {
         <Text style={styles.emptyText}>{t("history.emptyHint")}</Text>
       </View>
     );
-  }, [error, loading, token, styles, colors, t]);
+  }, [error, loading, token, filter, styles, colors, t]);
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -472,20 +505,40 @@ export default function HistoryScreen() {
       <View style={styles.header}>
         <Text style={styles.title}>{t("history.title")}</Text>
         <Text style={styles.subtitle}>
-          {rows.length > 0
+          {filteredRows.length > 0
             ? t("history.subtitle", { count: visibleRows.length })
             : t("history.subtitleEmpty")}
         </Text>
         {rows.length > 0 ? (
           <View style={styles.summaryRow}>
-            <View style={styles.summaryCard}>
+            <Pressable
+              style={({ pressed }) => [
+                styles.summaryCard,
+                filter === "sent" && styles.summaryCardActive,
+                pressed && styles.summaryCardPressed,
+              ]}
+              onPress={() => onFilterPress("sent")}
+              accessibilityRole="button"
+              accessibilityState={{ selected: filter === "sent" }}
+              accessibilityLabel={t("history.filterSentA11y")}
+            >
               <Text style={styles.summaryLabel}>{t("history.summarySent")}</Text>
               <Text style={styles.summaryValue} numberOfLines={1}>
                 {formatFcfa(totals.sent)}
               </Text>
               <Text style={styles.summaryCurrency}>{t("common.fcfa")}</Text>
-            </View>
-            <View style={styles.summaryCard}>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [
+                styles.summaryCard,
+                filter === "received" && styles.summaryCardActive,
+                pressed && styles.summaryCardPressed,
+              ]}
+              onPress={() => onFilterPress("received")}
+              accessibilityRole="button"
+              accessibilityState={{ selected: filter === "received" }}
+              accessibilityLabel={t("history.filterReceivedA11y")}
+            >
               <Text style={styles.summaryLabel}>
                 {t("history.summaryReceived")}
               </Text>
@@ -496,7 +549,7 @@ export default function HistoryScreen() {
                 {formatFcfa(totals.received)}
               </Text>
               <Text style={styles.summaryCurrency}>{t("common.fcfa")}</Text>
-            </View>
+            </Pressable>
           </View>
         ) : null}
       </View>

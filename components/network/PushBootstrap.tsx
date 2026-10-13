@@ -5,9 +5,20 @@ import {
   softHydrateAfterPaymentPush,
 } from "@/lib/push/handleIncoming";
 import {
+  ingestIncomingPush,
+  ingestSilentChatPush,
   isViewingConversation,
-  notifyIncomingMessage,
+  notifyConversationReceipt,
+  notifyMessageDeleted,
+  notifyMessageReaction,
+  notifyMoneyClaimed,
+  notifyMoneyTray,
+  parseConversationReceiptPush,
   parseMessagePush,
+  parseMessageDeletedPush,
+  parseMessageReactionPush,
+  parseMoneyClaimedPush,
+  parseMoneyTrayPush,
   startMessageLiveBridge,
 } from "@/lib/messages/live";
 import { useRouter } from "expo-router";
@@ -78,20 +89,91 @@ export function PushBootstrap() {
       if (cancelled) return;
       Notifications.setNotificationHandler({
         handleNotification: async (notification) => {
-          const message = parseMessagePush(
-            notification.request.content.data as Record<string, unknown>,
-          );
-          if (
-            message &&
-            isViewingConversation(message.conversationId)
-          ) {
-            notifyIncomingMessage(message.conversationId, message.messageId);
+          const raw = notification.request.content.data as Record<
+            string,
+            unknown
+          >;
+          if (ingestSilentChatPush(raw)) {
             return {
               shouldShowAlert: false,
               shouldPlaySound: false,
               shouldSetBadge: false,
               shouldShowBanner: false,
               shouldShowList: false,
+            };
+          }
+          const tray = parseMoneyTrayPush(raw);
+          if (tray && tray.kind !== "claimed") {
+            notifyMoneyTray(tray);
+            const hide =
+              Platform.OS === "android" ||
+              isViewingConversation(tray.conversationId);
+            return {
+              shouldShowAlert: !hide,
+              shouldPlaySound: !hide,
+              shouldSetBadge: false,
+              shouldShowBanner: !hide,
+              shouldShowList: !hide,
+            };
+          }
+          const claimed = parseMoneyClaimedPush(raw);
+          if (claimed) {
+            notifyMoneyClaimed(claimed);
+            const hide =
+              Platform.OS === "android" ||
+              isViewingConversation(claimed.conversationId);
+            return {
+              shouldShowAlert: !hide,
+              shouldPlaySound: !hide,
+              shouldSetBadge: false,
+              shouldShowBanner: !hide,
+              shouldShowList: !hide,
+            };
+          }
+          const receipt = parseConversationReceiptPush(raw);
+          if (receipt) {
+            notifyConversationReceipt(receipt);
+            return {
+              shouldShowAlert: false,
+              shouldPlaySound: false,
+              shouldSetBadge: false,
+              shouldShowBanner: false,
+              shouldShowList: false,
+            };
+          }
+          const reaction = parseMessageReactionPush(raw);
+          if (reaction) {
+            notifyMessageReaction(reaction);
+            return {
+              shouldShowAlert: false,
+              shouldPlaySound: false,
+              shouldSetBadge: false,
+              shouldShowBanner: false,
+              shouldShowList: false,
+            };
+          }
+          const deleted = parseMessageDeletedPush(raw);
+          if (deleted) {
+            notifyMessageDeleted(deleted);
+            return {
+              shouldShowAlert: false,
+              shouldPlaySound: false,
+              shouldSetBadge: false,
+              shouldShowBanner: false,
+              shouldShowList: false,
+            };
+          }
+          const message = parseMessagePush(raw);
+          if (message) {
+            ingestIncomingPush(raw);
+            const hide =
+              message.silent || isViewingConversation(message.conversationId);
+            return {
+              shouldShowAlert: !hide,
+              shouldPlaySound: !hide,
+              shouldSetBadge: false,
+              shouldShowBanner: !hide,
+              shouldShowList: !hide,
             };
           }
           return {
@@ -114,17 +196,22 @@ export function PushBootstrap() {
   useEffect(() => {
     if (!token) {
       registeredFor.current = null;
+      void import("@/lib/contacts/postLoginBootstrap").then((m) => {
+        m.resetPostLoginBootstrap();
+      });
+      void import("@/lib/contacts/permissions").then((m) => {
+        m.resetContactsPermissionSession();
+      });
       return;
     }
-    if (registeredFor.current === token) return;
 
     let cancelled = false;
     const task = InteractionManager.runAfterInteractions(() => {
       setTimeout(() => {
         if (cancelled) return;
-        void import("@/lib/push/register").then((m) => {
-          void m.registerPushToken(token).then((ok) => {
-            if (!cancelled && ok) registeredFor.current = token;
+        void import("@/lib/contacts/postLoginBootstrap").then((m) => {
+          void m.runPostLoginBootstrap(token).then(() => {
+            if (!cancelled) registeredFor.current = token;
           });
         });
       }, BOOT_DELAY_MS);
@@ -147,9 +234,35 @@ export function PushBootstrap() {
 
       subReceived = Notifications.addNotificationReceivedListener((n) => {
         const raw = n.request.content.data as Record<string, unknown>;
+        if (ingestSilentChatPush(raw)) return;
+        const tray = parseMoneyTrayPush(raw);
+        if (tray && tray.kind !== "claimed") {
+          notifyMoneyTray(tray);
+          return;
+        }
+        const claimed = parseMoneyClaimedPush(raw);
+        if (claimed) {
+          notifyMoneyClaimed(claimed);
+          return;
+        }
+        const receipt = parseConversationReceiptPush(raw);
+        if (receipt) {
+          notifyConversationReceipt(receipt);
+          return;
+        }
+        const reaction = parseMessageReactionPush(raw);
+        if (reaction) {
+          notifyMessageReaction(reaction);
+          return;
+        }
+        const deletedMsg = parseMessageDeletedPush(raw);
+        if (deletedMsg) {
+          notifyMessageDeleted(deletedMsg);
+          return;
+        }
         const incoming = parseMessagePush(raw);
         if (incoming) {
-          notifyIncomingMessage(incoming.conversationId, incoming.messageId);
+          ingestIncomingPush(raw);
           return;
         }
         const data = parsePushData(raw);
@@ -167,8 +280,57 @@ export function PushBootstrap() {
             string,
             unknown
           >;
+          if (ingestSilentChatPush(raw)) return;
+          const trayTap = parseMoneyTrayPush(raw);
+          if (trayTap && trayTap.kind !== "claimed") {
+            notifyMoneyTray(trayTap);
+            try {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: trayTap.conversationId,
+                  transferId: trayTap.transferId,
+                },
+              });
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          const claimedTap = parseMoneyClaimedPush(raw);
+          if (claimedTap) {
+            notifyMoneyClaimed(claimedTap);
+            try {
+              router.push({
+                pathname: "/chat/[id]",
+                params: {
+                  id: claimedTap.conversationId,
+                  transferId: claimedTap.transferId,
+                },
+              });
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          const receiptTap = parseConversationReceiptPush(raw);
+          if (receiptTap) {
+            notifyConversationReceipt(receiptTap);
+            return;
+          }
+          const reactionTap = parseMessageReactionPush(raw);
+          if (reactionTap) {
+            notifyMessageReaction(reactionTap);
+            return;
+          }
+          const deletedTap = parseMessageDeletedPush(raw);
+          if (deletedTap) {
+            notifyMessageDeleted(deletedTap);
+            return;
+          }
           const incoming = parseMessagePush(raw);
           if (incoming) {
+            ingestIncomingPush(raw);
             try {
               router.push(
                 `/chat/${encodeURIComponent(incoming.conversationId)}`,
@@ -176,7 +338,6 @@ export function PushBootstrap() {
             } catch {
               /* ignore */
             }
-            notifyIncomingMessage(incoming.conversationId, incoming.messageId);
             return;
           }
           const data = parsePushData(raw);
@@ -196,9 +357,67 @@ export function PushBootstrap() {
           string,
           unknown
         >;
+        const trayOpen = parseMoneyTrayPush(raw);
+        if (trayOpen && trayOpen.kind !== "claimed") {
+          const id =
+            last.notification.request.identifier ||
+            `${trayOpen.kind}:${trayOpen.transferId}`;
+          try {
+            const SecureStore = await import("expo-secure-store");
+            const key = "blyp_push_last_response";
+            const prev = await SecureStore.getItemAsync(key);
+            if (prev === id) return;
+            await SecureStore.setItemAsync(key, id);
+          } catch {
+            /* ignore */
+          }
+          if (cancelled) return;
+          notifyMoneyTray(trayOpen);
+          try {
+            router.push({
+              pathname: "/chat/[id]",
+              params: {
+                id: trayOpen.conversationId,
+                transferId: trayOpen.transferId,
+              },
+            });
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
+        const claimedOpen = parseMoneyClaimedPush(raw);
+        if (claimedOpen) {
+          const id =
+            last.notification.request.identifier || claimedOpen.transferId;
+          try {
+            const SecureStore = await import("expo-secure-store");
+            const key = "blyp_push_last_response";
+            const prev = await SecureStore.getItemAsync(key);
+            if (prev === id) return;
+            await SecureStore.setItemAsync(key, id);
+          } catch {
+            /* ignore */
+          }
+          if (cancelled) return;
+          notifyMoneyClaimed(claimedOpen);
+          try {
+            router.push({
+              pathname: "/chat/[id]",
+              params: {
+                id: claimedOpen.conversationId,
+                transferId: claimedOpen.transferId,
+              },
+            });
+          } catch {
+            /* ignore */
+          }
+          return;
+        }
         const incoming = parseMessagePush(raw);
         if (incoming) {
           const id = last.notification.request.identifier || incoming.messageId;
+          ingestIncomingPush(raw);
           try {
             const SecureStore = await import("expo-secure-store");
             const key = "blyp_push_last_response";

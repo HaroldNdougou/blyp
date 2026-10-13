@@ -1,6 +1,6 @@
 /**
  * Payload BLE (manufacturer, ≤ ~24 octets) :
- *   B + (P|C) (2) | accountCode (10) | phone9 (9)  = 21 octets
+ *   B + (P|C) (2) | accountCode (10) | phone9 (9) [+ T|S|O]  = 21–22 octets
  * P = perso (BLYP-U-), C = commerce (BLYP-C-).
  */
 import { base64ToBytes } from "@/lib/ble/base64";
@@ -11,6 +11,8 @@ import {
   BLYP_BLE_NAME_PREFIX,
 } from "@/lib/ble/constants";
 import type { BleTaxiPeer } from "@/lib/ble/types";
+import type { SpendCategory } from "@/lib/pay/spendCategory";
+import { getPeerCategoryCached } from "@/lib/peers/peerCategoryCache";
 
 const USER_PREFIX = "BLYP-U-";
 const COMMERCE_PREFIX = "BLYP-C-";
@@ -20,6 +22,23 @@ const MAGIC_COMMERCE = 0x43; // C
 const CODE_LEN = 10;
 const PHONE_LEN = 9;
 const BINARY_LEN = 2 + CODE_LEN + PHONE_LEN;
+const CAT_TAXI = 0x54; // T
+const CAT_SHOP = 0x53; // S
+const CAT_OTHER = 0x4f; // O
+
+function categoryToByte(category: SpendCategory | null | undefined): number | null {
+  if (category === "taxi") return CAT_TAXI;
+  if (category === "shop") return CAT_SHOP;
+  if (category === "other") return CAT_OTHER;
+  return null;
+}
+
+function byteToCategory(b: number | undefined): SpendCategory | null {
+  if (b === CAT_TAXI) return "taxi";
+  if (b === CAT_SHOP) return "shop";
+  if (b === CAT_OTHER) return "other";
+  return null;
+}
 
 type AccountKind = "user" | "commerce";
 
@@ -61,6 +80,7 @@ export function normalizePhoneDigits(phone: string): string | null {
 export function encodeBleTaxiManufBytes(input: {
   accountId: string;
   phone: string;
+  category?: SpendCategory | null;
 }): number[] | null {
   const parsed = accountIdToCode(input.accountId);
   const phone = normalizePhoneDigits(input.phone);
@@ -69,6 +89,8 @@ export function encodeBleTaxiManufBytes(input: {
   const bytes: number[] = [MAGIC0, magic1];
   for (let i = 0; i < CODE_LEN; i++) bytes.push(parsed.code.charCodeAt(i));
   for (let i = 0; i < PHONE_LEN; i++) bytes.push(phone.charCodeAt(i));
+  const catByte = categoryToByte(input.category);
+  if (catByte != null) bytes.push(catByte);
   return bytes;
 }
 
@@ -87,14 +109,27 @@ function peerFromCodePhone(
   phoneDigits: string,
   rssi: number | null,
   kind: AccountKind = "user",
+  category?: SpendCategory | null,
 ): Omit<BleTaxiPeer, "lastSeenAt"> | null {
   if (!/^[0-9A-HJKMNP-TV-Z]{10}$/.test(code)) return null;
   if (!/^6\d{8}$/.test(phoneDigits)) return null;
   const tag = code.slice(-4);
+  const accountId = codeToAccountId(code, kind);
+  const resolved =
+    category ??
+    getPeerCategoryCached(accountId) ??
+    (kind === "user" ? "taxi" : null);
+  const displayName =
+    kind === "commerce"
+      ? `Pro ${tag}`
+      : resolved === "other"
+        ? `Blyp ${tag}`
+        : `Taxi ${tag}`;
   return {
-    accountId: codeToAccountId(code, kind),
+    accountId,
     phoneDigits,
-    displayName: kind === "commerce" ? `Pro ${tag}` : `Taxi ${tag}`,
+    displayName,
+    category: resolved,
     rssi: rssi ?? -100,
   };
 }
@@ -113,7 +148,9 @@ function decodeBinaryPayload(
   else return null;
   const code = readAscii(bytes, offset + 2, CODE_LEN);
   const phone = readAscii(bytes, offset + 2 + CODE_LEN, PHONE_LEN);
-  return peerFromCodePhone(code, phone, rssi, kind);
+  const extra = bytes[offset + BINARY_LEN];
+  const category = byteToCategory(extra);
+  return peerFromCodePhone(code, phone, rssi, kind, category);
 }
 
 /** AD 0x08 / 0x09 = local name. */
@@ -173,6 +210,7 @@ export function parseBleTaxiName(
       accountId: BLYP_BLE_DEMO_ACCOUNT_ID,
       phoneDigits: BLYP_BLE_DEMO_PHONE,
       displayName: "Taxi",
+      category: "taxi",
       rssi: rssi ?? -100,
     };
   }
@@ -202,6 +240,7 @@ export function parseBleTaxiName(
     accountId: BLYP_BLE_DEMO_ACCOUNT_ID,
     phoneDigits: BLYP_BLE_DEMO_PHONE,
     displayName: "Taxi",
+    category: "taxi",
     rssi: rssi ?? -100,
   };
 }

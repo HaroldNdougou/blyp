@@ -56,6 +56,20 @@ export type ThemeColors = {
   moneyAmountPending: string;
   moneyAmountClaimed: string;
   moneyAmountExpired: string;
+  /** Mot « Récupérer » sur une bulle money en attente. */
+  moneyClaimAction: string;
+  moneyHighlightBackground: string;
+  moneyHighlightBorder: string;
+  /** Appui long — bande pleine largeur (style WhatsApp). */
+  messageSelectRowBackground: string;
+  tickSent: string;
+  tickRead: string;
+  /** Dégradé bas des photos (heure / coches). */
+  imageMetaScrim: string;
+  switchTrackOff: string;
+  switchTrackOn: string;
+  switchThumbOff: string;
+  switchThumbOn: string;
 };
 
 const accent = "#5dc705";
@@ -105,16 +119,27 @@ export const lightColors: ThemeColors = {
   signOutBorder: "#FFCDD2",
   depositHighlightBackground: "#F4FFF0",
   depositHighlightBorder: "#E0F5D5",
-  bubbleMine: accent,
+  bubbleMine: "#DCF8C6",
   bubbleTheirs: "#F0F0F0",
-  bubbleMineText: "#FFFFFF",
+  bubbleMineText: "#111111",
   bubbleTheirsText: "#111111",
   moneyBubbleBackground: "#F4FFF0",
   moneyBubbleBorder: "#E0F5D5",
   moneyAmountSent: "#111111",
-  moneyAmountPending: "#5dc705",
-  moneyAmountClaimed: "#4CAF50",
+  moneyAmountPending: accent,
+  moneyAmountClaimed: "#8E24AA",
   moneyAmountExpired: "#8E8E93",
+  moneyClaimAction: "#1E88E5",
+  moneyHighlightBackground: "#E8F8D8",
+  moneyHighlightBorder: accent,
+  messageSelectRowBackground: "rgba(93, 199, 5, 0.30)",
+  tickSent: "#8E8E93",
+  tickRead: "#53BDEB",
+  imageMetaScrim: "rgba(0,0,0,0.38)",
+  switchTrackOff: "#D1D1D6",
+  switchTrackOn: "#A8E07A",
+  switchThumbOff: "#FFFFFF",
+  switchThumbOn: "#FFFFFF",
 };
 
 export const darkColors: ThemeColors = {
@@ -161,16 +186,27 @@ export const darkColors: ThemeColors = {
   signOutBorder: "#5C2B32",
   depositHighlightBackground: "#152016",
   depositHighlightBorder: "#2A4030",
-  bubbleMine: "#3D7A12",
+  bubbleMine: "#005C4B",
   bubbleTheirs: "#2C2C2E",
-  bubbleMineText: "#FFFFFF",
+  bubbleMineText: "#F5F5F7",
   bubbleTheirsText: "#F5F5F7",
   moneyBubbleBackground: "#152016",
   moneyBubbleBorder: "#2A4030",
   moneyAmountSent: "#F5F5F7",
-  moneyAmountPending: "#5dc705",
-  moneyAmountClaimed: "#5dc705",
+  moneyAmountPending: accent,
+  moneyAmountClaimed: "#CE93D8",
   moneyAmountExpired: "#8E8E93",
+  moneyClaimAction: "#64B5F6",
+  moneyHighlightBackground: "#1A2E18",
+  moneyHighlightBorder: accent,
+  messageSelectRowBackground: "rgba(93, 199, 5, 0.36)",
+  tickSent: "#8E8E93",
+  tickRead: "#53BDEB",
+  imageMetaScrim: "rgba(0,0,0,0.45)",
+  switchTrackOff: "#636366",
+  switchTrackOn: "#4BB004",
+  switchThumbOff: "#F5F5F7",
+  switchThumbOn: "#FFFFFF",
 };
 
 export function getThemeColors(scheme: ColorScheme | null | undefined): ThemeColors {

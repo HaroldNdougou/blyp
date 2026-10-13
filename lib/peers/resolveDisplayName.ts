@@ -41,6 +41,14 @@ export async function resolvePeerDisplayName(
         .slice(0, 48);
       if (name.length < 2) return null;
       rememberPeerDisplayName(id, name);
+      if (res?.category) {
+        void import("@/lib/peers/peerCategoryCache").then((m) => {
+          m.rememberPeerCategory(id, res.category);
+          void import("@/lib/pay/quickAmounts").then((q) => {
+            q.refreshQuickAmountsIndex();
+          });
+        });
+      }
       return name;
     } catch {
       return null;

@@ -7,12 +7,18 @@ import { encodeBleTaxiManufBytes } from "@/lib/ble/payload";
 import { prepareBleRadio } from "@/lib/ble/prepareRadio";
 import { setBleBroadcasting } from "@/lib/ble/radioMode";
 import { stopBleBroadcastForeground } from "@/lib/ble/foregroundService";
+import {
+  enqueueBroadcastStop,
+  waitTaxiBroadcastStopped,
+} from "@/lib/ble/broadcastStopGate";
+import { withTimeout } from "@/lib/ble/timeout";
 import { stopTaxiScan } from "@/lib/ble/scan";
 import type { BleAdvertiseStatus } from "@/lib/ble/types";
 
 export type StartAdvertiseInput = {
   accountId: string;
   phone: string;
+  category?: import("@/lib/pay/spendCategory").SpendCategory | null;
 };
 
 export type StartAdvertiseResult =
@@ -23,9 +29,6 @@ export type StartAdvertiseResult =
 let broadcastGeneration = 0;
 /** Purge OEM orpheline une fois au boot — pas à chaque ouverture Profil (casse le scan). */
 let orphanPurgeDone = false;
-
-/** Chaîne les stops (toggle rapide / remount) sans empiler le travail OEM. */
-let stopChain: Promise<void> = Promise.resolve();
 
 const STOP_GAP_MS = [0, 55, 140] as const;
 
@@ -46,7 +49,7 @@ async function nativeStop(
   adv: typeof import("react-native-ble-advertiser"),
 ): Promise<void> {
   try {
-    await adv.stopBroadcast();
+    await withTimeout(adv.stopBroadcast(), 400, undefined);
   } catch (e) {
     if (__DEV__) {
       console.warn(
@@ -78,7 +81,7 @@ export async function startTaxiBroadcast(
   input: StartAdvertiseInput,
 ): Promise<StartAdvertiseResult> {
   /** Purge boot / toggle OFF — attendre avant start (sinon MIUI → erreur ou idle). */
-  await stopChain;
+  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
 
   const adv = await loadAdvertiser();
   if (!adv) {
@@ -89,7 +92,11 @@ export async function startTaxiBroadcast(
     };
   }
 
-  const radio = await prepareBleRadio({ advertise: true });
+  const radio = await withTimeout(
+    prepareBleRadio({ advertise: true, forcePrompt: true }),
+    8_000,
+    "denied",
+  );
   if (radio === "powered_off") {
     return { ok: false, status: "powered_off" };
   }
@@ -118,21 +125,30 @@ export async function startTaxiBroadcast(
   /** Coupe toute pub orpheline puis le scan. */
   await nativeStop(adv);
   await stopTaxiScan();
-  await stopChain;
+  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
 
   const gen = ++broadcastGeneration;
   setBleBroadcasting(true);
 
   try {
     adv.setCompanyId(BLYP_BLE_COMPANY_ID);
-    await adv.broadcast(BLYP_BLE_SERVICE_UUID, manuf, {
-      connectable: false,
-      includeDeviceName: false,
-      includeTxPowerLevel: false,
-      includeServiceUuid: false,
-      advertiseMode: 2, // LOW_LATENCY
-      txPowerLevel: 3, // HIGH
-    } as Parameters<typeof adv.broadcast>[2]);
+    const started = await withTimeout(
+      adv.broadcast(BLYP_BLE_SERVICE_UUID, manuf, {
+        connectable: false,
+        includeDeviceName: false,
+        includeTxPowerLevel: false,
+        includeServiceUuid: false,
+        advertiseMode: 2, // LOW_LATENCY
+        txPowerLevel: 3, // HIGH
+      } as Parameters<typeof adv.broadcast>[2]).then(() => true as const),
+      4_000,
+      false as const,
+    );
+    if (!started) {
+      setBleBroadcasting(false);
+      await stopTaxiBroadcast();
+      return { ok: false, status: "error", message: "BROADCAST_TIMEOUT" };
+    }
 
     /** OFF pendant le await → ne pas laisser la pub active. */
     if (gen !== broadcastGeneration) {
@@ -177,8 +193,7 @@ export function stopTaxiBroadcast(): Promise<void> {
   setBleBroadcasting(false);
   void stopBleBroadcastForeground();
 
-  const next = stopChain.then(async () => {
-    /** Un stop plus récent (ou un start) a pris le relais. */
+  return enqueueBroadcastStop(async () => {
     if (gen !== broadcastGeneration) return;
     const adv = await loadAdvertiser();
     if (!adv) {
@@ -190,9 +205,4 @@ export function stopTaxiBroadcast(): Promise<void> {
       console.log("[ble] broadcast OFF");
     }
   });
-  stopChain = next.then(
-    () => undefined,
-    () => undefined,
-  );
-  return next;
 }

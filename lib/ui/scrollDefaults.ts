@@ -2,6 +2,7 @@
  * Barres de défilement ultra discrètes (invisibles) partout.
  * À importer une fois au boot (app/_layout).
  */
+import { FlashList } from "@shopify/flash-list";
 import { FlatList, ScrollView, SectionList } from "react-native";
 import {
   FlatList as GHFlatList,
@@ -25,3 +26,4 @@ hideScrollbars(FlatList as WithScrollDefaults);
 hideScrollbars(SectionList as WithScrollDefaults);
 hideScrollbars(GHScrollView as WithScrollDefaults);
 hideScrollbars(GHFlatList as WithScrollDefaults);
+hideScrollbars(FlashList as unknown as WithScrollDefaults);

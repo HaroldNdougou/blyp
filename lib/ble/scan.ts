@@ -10,6 +10,15 @@ import {
 import { base64ToBytes, bytesToHex } from "@/lib/ble/base64";
 import { isBlePlxNativeAvailable } from "@/lib/ble/nativeAvailable";
 import { resolveTaxiFromScan } from "@/lib/ble/payload";
+import { waitTaxiBroadcastStopped } from "@/lib/ble/broadcastStopGate";
+import {
+  allowBleAutoPromptAgain,
+  isBleAutoPromptDeclined,
+  markBleAutoPromptDeclined,
+  subscribeBleConsent,
+} from "@/lib/ble/consent";
+import { isPayScanFocused } from "@/lib/ble/payScanGate";
+import { withTimeout } from "@/lib/ble/timeout";
 import { prepareBleRadio } from "@/lib/ble/prepareRadio";
 import { isBleBroadcasting } from "@/lib/ble/radioMode";
 import { createBlePeerSelector } from "@/lib/ble/selectPeer";
@@ -21,6 +30,7 @@ type StatusListener = (status: BleScanStatus) => void;
 
 let manager: import("react-native-ble-plx").BleManager | null = null;
 let scanning = false;
+let adapterWatchOn = false;
 let bestPeer: BleTaxiPeer | null = null;
 let staleTimer: ReturnType<typeof setInterval> | null = null;
 let authWarnLogged = false;
@@ -29,6 +39,7 @@ const hexLogged = new Set<string>();
 const peerListeners = new Set<PeerListener>();
 const statusListeners = new Set<StatusListener>();
 let lastStatus: BleScanStatus = "idle";
+let lastScanStartAt = 0;
 
 const selector = createBlePeerSelector({
   staleMs: BLYP_PEER_STALE_MS,
@@ -40,6 +51,33 @@ function emitStatus(status: BleScanStatus) {
   lastStatus = status;
   statusListeners.forEach((l) => l(status));
 }
+
+function watchBleAdapter(
+  mgr: import("react-native-ble-plx").BleManager,
+): void {
+  if (adapterWatchOn) return;
+  adapterWatchOn = true;
+  mgr.onStateChange((s) => {
+    if (s === "PoweredOff") {
+      haltScanEngine();
+      emitStatus("powered_off");
+      return;
+    }
+    if (s === "Unauthorized") {
+      haltUnauthorized("onStateChange=Unauthorized");
+      return;
+    }
+    if (s !== "PoweredOn") return;
+    if (isBleBroadcasting() || isBleAutoPromptDeclined()) return;
+    if (!isPayScanFocused()) return;
+    if (lastStatus !== "powered_off") return;
+    void startTaxiScan();
+  }, false);
+}
+
+subscribeBleConsent((status) => {
+  emitStatus(status);
+});
 
 function emitPeer(peer: BleTaxiPeer | null) {
   bestPeer = peer;
@@ -128,6 +166,7 @@ function haltUnauthorized(reason: string) {
   }
   selector.clear();
   emitPeer(null);
+  markBleAutoPromptDeclined();
   emitStatus("denied");
 }
 
@@ -208,6 +247,15 @@ export function getBleTaxiPeerSnapshot(): BleTaxiPeer | null {
   return bestPeer;
 }
 
+export function getBleScanStatus(): BleScanStatus {
+  return lastStatus;
+}
+
+/** Scan déjà lancé il y a peu — ne pas halt+restart (switch pro→perso). */
+export function isTaxiScanFresh(maxAgeMs = 2500): boolean {
+  return scanning && Date.now() - lastScanStartAt < maxAgeMs;
+}
+
 /** Arrête le moteur de scan sans publier `idle` (évite un flash UI au refresh). */
 function haltScanEngine() {
   scanning = false;
@@ -226,10 +274,21 @@ function haltScanEngine() {
   emitPeer(null);
 }
 
-export async function startTaxiScan(): Promise<BleScanStatus> {
+export async function startTaxiScan(opts?: {
+  forcePrompt?: boolean;
+}): Promise<BleScanStatus> {
+  if (!opts?.forcePrompt && !isPayScanFocused()) {
+    return lastStatus;
+  }
   if (isBleBroadcasting()) {
     if (__DEV__) console.log("[ble] scan skipped — diffusion active");
     await stopTaxiScan();
+    emitStatus("idle");
+    return "idle";
+  }
+
+  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
+  if (isBleBroadcasting()) {
     emitStatus("idle");
     return "idle";
   }
@@ -239,10 +298,13 @@ export async function startTaxiScan(): Promise<BleScanStatus> {
     emitStatus("unavailable");
     return "unavailable";
   }
+  watchBleAdapter(mgr);
 
   emitStatus("starting");
   authWarnLogged = false;
-  const radio = await prepareBleRadio();
+  const radio = await prepareBleRadio({
+    forcePrompt: Boolean(opts?.forcePrompt),
+  });
   if (radio !== "granted") {
     console.warn("[ble] prepareRadio=", radio);
     const status: BleScanStatus =
@@ -279,6 +341,7 @@ export async function startTaxiScan(): Promise<BleScanStatus> {
   selector.clear();
   emitPeer(null);
   scanning = true;
+  lastScanStartAt = Date.now();
   if (__DEV__) {
     devLogLeft = 40;
     hexLogged.clear();
@@ -307,17 +370,39 @@ export async function startTaxiScan(): Promise<BleScanStatus> {
  * Relance légère : re-check permissions / BT, purge la sélection, reprend le scan
  * pour le signal le plus fort actuel. Pas de passage par `idle`.
  */
-export async function refreshTaxiScan(): Promise<BleScanStatus> {
+export async function refreshTaxiScan(opts?: {
+  forcePrompt?: boolean;
+}): Promise<BleScanStatus> {
+  if (opts?.forcePrompt) allowBleAutoPromptAgain();
   if (isBleBroadcasting()) {
     if (__DEV__) console.log("[ble] refresh skipped — diffusion active");
     return lastStatus === "idle" ? "idle" : lastStatus;
   }
+  if (!opts?.forcePrompt && isBleAutoPromptDeclined()) {
+    emitStatus(
+      lastStatus === "powered_off" || lastStatus === "denied"
+        ? lastStatus
+        : "denied",
+    );
+    return lastStatus === "powered_off" ? "powered_off" : "denied";
+  }
+  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
+  if (isBleBroadcasting()) {
+    return lastStatus === "idle" ? "idle" : lastStatus;
+  }
   if (__DEV__) console.log("[ble] scan REFRESH");
   haltScanEngine();
-  return startTaxiScan();
+  return startTaxiScan({ forcePrompt: Boolean(opts?.forcePrompt) });
 }
 
 export async function stopTaxiScan(): Promise<void> {
   haltScanEngine();
+  if (
+    lastStatus === "denied" ||
+    lastStatus === "powered_off" ||
+    lastStatus === "unavailable"
+  ) {
+    return;
+  }
   emitStatus("idle");
 }

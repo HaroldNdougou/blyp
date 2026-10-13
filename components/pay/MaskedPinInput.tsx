@@ -48,6 +48,7 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
       placeholder,
       placeholderTextColor,
       editable = true,
+      onTouchStart,
       ...inputProps
     },
     ref,
@@ -69,7 +70,28 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
           variant === "circles" ? styles.circlesBox : styles.box,
           style as StyleProp<ViewStyle>,
         ]}
+        onTouchStart={onTouchStart}
       >
+        <TextInput
+          {...inputProps}
+          ref={ref}
+          value={safeDigits}
+          onChangeText={(text) => {
+            onDigitsChange(text.replace(/\D/g, "").slice(0, maxLength));
+          }}
+          style={styles.hiddenInput}
+          caretHidden
+          secureTextEntry={false}
+          keyboardType="number-pad"
+          maxLength={maxLength}
+          autoCapitalize="none"
+          autoCorrect={false}
+          spellCheck={false}
+          editable={editable}
+          contextMenuHidden
+          underlineColorAndroid="transparent"
+          onTouchStart={onTouchStart}
+        />
         {variant === "circles" ? (
           <View style={styles.circlesRow} pointerEvents="none">
             {Array.from({ length: maxLength }, (_, i) => {
@@ -106,24 +128,6 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
             {filledCount > 0 ? maskChar.repeat(filledCount) : emptyMask}
           </Text>
         )}
-        <TextInput
-          {...inputProps}
-          ref={ref}
-          value={safeDigits}
-          onChangeText={(text) => {
-            onDigitsChange(text.replace(/\D/g, "").slice(0, maxLength));
-          }}
-          style={styles.hiddenInput}
-          caretHidden
-          secureTextEntry={false}
-          keyboardType="number-pad"
-          maxLength={maxLength}
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-          editable={editable}
-          contextMenuHidden
-        />
       </View>
     );
   },
@@ -139,11 +143,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     minHeight: 52,
     overflow: "visible",
-  },
-  circlesRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
   },
   circle: {
     width: CIRCLE,
@@ -162,5 +161,14 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     opacity: 0,
     color: "transparent",
+    backgroundColor: "transparent",
+    zIndex: 1,
+  },
+  circlesRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 2,
+    elevation: 2,
   },
 });

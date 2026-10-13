@@ -1,0 +1,372 @@
+import { StyleSheet } from "react-native";
+import type { ThemeColors } from "@/lib/theme/colors";
+
+export function createPocketStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    setAsideLine: {
+      marginTop: 8,
+      fontSize: 13,
+      fontWeight: "700",
+      color: c.textSecondary,
+    },
+    listCard: {
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 16,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+      paddingHorizontal: 14,
+      paddingVertical: 4,
+      marginBottom: 18,
+    },
+    row: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 12,
+    },
+    rowBorder: {
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: c.borderLight,
+    },
+    rowPressed: {
+      opacity: 0.7,
+    },
+    rowIcon: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: c.depositHighlightBackground,
+      borderWidth: 1,
+      borderColor: c.depositHighlightBorder,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    rowIconText: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: c.accent,
+    },
+    rowTexts: {
+      flex: 1,
+      minWidth: 0,
+    },
+    rowName: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: c.text,
+    },
+    rowAmount: {
+      fontSize: 15,
+      fontWeight: "800",
+      color: c.text,
+    },
+    rowAmountZero: {
+      color: c.textFaint,
+    },
+    emptyHint: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.textMuted,
+      lineHeight: 18,
+      paddingVertical: 12,
+    },
+
+    sheetRoot: {
+      flex: 1,
+      justifyContent: "flex-end",
+    },
+    sheetBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: c.overlay,
+    },
+    sheetCard: {
+      backgroundColor: c.modal,
+      borderTopLeftRadius: 18,
+      borderTopRightRadius: 18,
+      paddingHorizontal: 20,
+      paddingTop: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+    },
+    sheetTitle: {
+      fontSize: 18,
+      fontWeight: "800",
+      color: c.text,
+    },
+    sheetLead: {
+      marginTop: 6,
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.textMuted,
+      lineHeight: 18,
+    },
+    sheetLabel: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: c.textMuted,
+      marginTop: 14,
+      marginBottom: 6,
+    },
+    input: {
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      fontSize: 16,
+      fontWeight: "600",
+      color: c.text,
+    },
+    amountWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: c.border,
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+    },
+    amountInput: {
+      flex: 1,
+      paddingVertical: 12,
+      fontSize: 24,
+      fontWeight: "800",
+      color: c.text,
+    },
+    amountCurrency: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.textFaint,
+    },
+    hint: {
+      marginTop: 6,
+      fontSize: 12,
+      fontWeight: "600",
+      color: c.textMuted,
+    },
+    chipRow: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+    },
+    chip: {
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 999,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+      backgroundColor: c.surfaceMuted,
+    },
+    chipOn: {
+      backgroundColor: c.depositHighlightBackground,
+      borderColor: c.depositHighlightBorder,
+    },
+    chipText: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: c.textMuted,
+    },
+    chipTextOn: {
+      color: c.accent,
+    },
+    error: {
+      marginTop: 10,
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.destructive,
+    },
+    primaryBtn: {
+      marginTop: 18,
+      borderRadius: 14,
+      paddingVertical: 15,
+      alignItems: "center",
+      backgroundColor: c.accent,
+    },
+    primaryBtnDisabled: {
+      backgroundColor: c.disabledButton,
+    },
+    primaryBtnPressed: {
+      opacity: 0.85,
+    },
+    primaryBtnText: {
+      fontSize: 16,
+      fontWeight: "800",
+      color: c.accentOn,
+    },
+
+    screen: {
+      flex: 1,
+      backgroundColor: c.background,
+    },
+    topBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 8,
+      paddingVertical: 6,
+    },
+    topBtn: {
+      width: 44,
+      height: 44,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    topTitle: {
+      flex: 1,
+      fontSize: 17,
+      fontWeight: "800",
+      color: c.text,
+      textAlign: "center",
+    },
+    hero: {
+      marginHorizontal: 20,
+      marginTop: 6,
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 18,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+      padding: 18,
+    },
+    heroLabel: {
+      fontSize: 12,
+      fontWeight: "700",
+      color: c.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.4,
+    },
+    heroAmountRow: {
+      marginTop: 6,
+      flexDirection: "row",
+      alignItems: "flex-end",
+      gap: 8,
+    },
+    heroAmount: {
+      fontSize: 32,
+      fontWeight: "800",
+      color: c.accent,
+      letterSpacing: -0.5,
+    },
+    heroCurrency: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.textFaint,
+      marginBottom: 6,
+    },
+    heroLead: {
+      marginTop: 8,
+      fontSize: 12,
+      fontWeight: "600",
+      color: c.textMuted,
+      lineHeight: 17,
+    },
+    heroActions: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 16,
+    },
+    heroBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 13,
+      borderRadius: 12,
+      backgroundColor: c.accent,
+    },
+    heroBtnSecondary: {
+      backgroundColor: c.background,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    heroBtnDisabled: {
+      opacity: 0.45,
+    },
+    heroBtnText: {
+      fontSize: 15,
+      fontWeight: "800",
+      color: c.accentOn,
+    },
+    heroBtnTextSecondary: {
+      color: c.text,
+    },
+    historyTitle: {
+      marginTop: 22,
+      marginBottom: 6,
+      marginHorizontal: 22,
+      fontSize: 11,
+      fontWeight: "800",
+      color: c.textMuted,
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+    },
+    txRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 12,
+      paddingVertical: 12,
+      marginHorizontal: 20,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.borderLight,
+    },
+    txPending: {
+      opacity: 0.55,
+    },
+    txIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: c.surfaceMuted,
+    },
+    txTexts: {
+      flex: 1,
+      minWidth: 0,
+    },
+    txLabel: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.text,
+    },
+    txDate: {
+      marginTop: 2,
+      fontSize: 12,
+      fontWeight: "600",
+      color: c.textMuted,
+    },
+    txAmountIn: {
+      fontSize: 15,
+      fontWeight: "800",
+      color: c.accent,
+    },
+    txAmountOut: {
+      fontSize: 15,
+      fontWeight: "800",
+      color: c.text,
+    },
+    empty: {
+      marginTop: 12,
+      marginHorizontal: 22,
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.textMuted,
+    },
+    menuItem: {
+      paddingVertical: 15,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: c.borderLight,
+    },
+    menuText: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: c.text,
+    },
+    menuTextDanger: {
+      color: c.destructive,
+    },
+  });
+}
+
+export type PocketStyles = ReturnType<typeof createPocketStyles>;

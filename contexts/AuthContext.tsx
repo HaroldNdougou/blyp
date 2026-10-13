@@ -29,6 +29,19 @@ function hydrateTxCache(phone: string) {
     });
 }
 
+function hydrateMessagesCache(phone: string, token?: string | null) {
+  void import("@/lib/messagesCache")
+    .then((m) => m.hydrateMessagesCache(phone, token))
+    .catch(() => {
+      /* SQLite / race au reload — best effort */
+    });
+}
+
+function hydrateLocalCaches(phone: string, token?: string | null) {
+  hydrateTxCache(phone);
+  hydrateMessagesCache(phone, token);
+}
+
 async function clearTxCaches() {
   const m = await import("@/lib/transactionsCache");
   m.clearAllTransactionsSnapshots();
@@ -91,10 +104,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const api = await import("@/lib/api/client");
     const t = getAccessToken();
     if (!t) return;
-    const me = await api.getMe(t);
-    setToken(t);
-    setUser(me);
-    await setAuthSession(t, getRefreshToken(), me);
+    try {
+      const me = await api.getMe(t);
+      setToken(t);
+      setUser(me);
+      await setAuthSession(t, getRefreshToken(), me);
+    } catch {
+      /* hors-ligne / 401 — session locale conservée */
+    }
   }, []);
 
   useEffect(() => {
@@ -145,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
 
-        if (snap?.phone) hydrateTxCache(snap.phone);
+        if (snap?.phone) hydrateLocalCaches(snap.phone, tok);
 
         const { InteractionManager } = await import("react-native");
         InteractionManager.runAfterInteractions(() => {
@@ -160,7 +177,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setToken(getAccessToken() ?? current);
               setUser(me);
               await setAuthSession(current, getRefreshToken(), me);
-              hydrateTxCache(me.phone);
+              hydrateLocalCaches(me.phone, getAccessToken() ?? current);
             } catch (e) {
               const { ApiError } = await import("@/lib/api/errors");
               if (
@@ -202,7 +219,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await setAuthSession(newToken, refreshToken ?? null, u);
       setToken(newToken);
       setUser(u);
-      hydrateTxCache(u.phone);
+      hydrateLocalCaches(u.phone, newToken);
       return u;
     },
     [],
@@ -220,6 +237,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       /* best effort */
     }
     await clearAuthSession();
+    const { clearTransactionPinVault } = await import(
+      "@/lib/security/transactionPinVault"
+    );
+    await clearTransactionPinVault();
     await clearTxCaches();
     const { clearAllMessagesSnapshots } = await import("@/lib/messagesCache");
     clearAllMessagesSnapshots();
@@ -320,17 +341,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void setAuthSession(t, getRefreshToken(), optimistic);
       void resetTxForPhone(prev.phone);
 
-      if (input.type === "personal") {
-        void import("@/lib/ble/taxiBroadcastController").then((m) => {
-          if (!m.isTaxiBroadcastWanted() && !m.getTaxiBroadcastSnapshot().on) {
-            return;
-          }
-          void m.setTaxiBroadcastEnabled(false, {
-            accountId: null,
-            phone: null,
-          });
-        });
-      }
+      const wasBroadcasting = await import(
+        "@/lib/ble/taxiBroadcastController"
+      ).then(
+        (m) => m.isTaxiBroadcastWanted() || m.getTaxiBroadcastSnapshot().on,
+      );
 
       const api = await import("@/lib/api/client");
       const { user: me } = await api.setActiveContext(t, input);
@@ -338,6 +353,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void import("@/lib/sync/transactionsSync").then((m) => {
         void m.syncTransactionsFromNetwork(t, me.phone);
       });
+
+      if (wasBroadcasting) {
+        if (input.type === "personal") {
+          void import("@/lib/ble/taxiBroadcastController").then((m) => {
+            void m.setTaxiBroadcastEnabled(false, {
+              accountId: null,
+              phone: null,
+            });
+          });
+        } else {
+          void import("@/lib/ble/broadcastAccount").then(({ resolveBleBroadcastAccount }) => {
+            void import("@/lib/ble/taxiBroadcastController").then((m) => {
+              void m.retargetTaxiBroadcast(resolveBleBroadcastAccount(me));
+            });
+          });
+        }
+      }
+
       return me;
     },
     [user, applyUser],
@@ -347,6 +380,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (input: { name: string; category?: string }) => {
       const t = getAccessToken();
       if (!t) throw new Error("Not signed in");
+      const wasBroadcasting = await import(
+        "@/lib/ble/taxiBroadcastController"
+      ).then(
+        (m) => m.isTaxiBroadcastWanted() || m.getTaxiBroadcastSnapshot().on,
+      );
       const api = await import("@/lib/api/client");
       const res = await api.createCommerce(t, input);
       await applyUser(res.user);
@@ -354,6 +392,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       void import("@/lib/sync/transactionsSync").then((m) => {
         void m.syncTransactionsFromNetwork(t, res.user.phone);
       });
+      if (wasBroadcasting) {
+        void import("@/lib/ble/broadcastAccount").then(
+          ({ resolveBleBroadcastAccount }) => {
+            void import("@/lib/ble/taxiBroadcastController").then((m) => {
+              void m.retargetTaxiBroadcast(
+                resolveBleBroadcastAccount(res.user),
+              );
+            });
+          },
+        );
+      }
       return res;
     },
     [applyUser],

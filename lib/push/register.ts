@@ -54,6 +54,7 @@ export async function registerPushToken(accessToken: string): Promise<boolean> {
       const asked = await Notifications.requestPermissionsAsync();
       status = asked.status;
     }
+
     if (status !== "granted") {
       devWarn("permission refusée", status);
       return false;

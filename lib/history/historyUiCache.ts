@@ -16,7 +16,12 @@ export type HistoryUiRow = {
   reference: string;
   type: "sent" | "received";
   phone: string | null;
+  txKind: string | null;
+  /** Mouvement poche ↔ disponible : visible, mais hors totaux envoyé / reçu. */
+  internal: boolean;
 };
+
+const INTERNAL_KINDS = new Set(["POCKET_IN", "POCKET_OUT"]);
 
 type UiPack = {
   source: TransactionItem[];
@@ -34,8 +39,13 @@ export function txItemsToHistoryRows(items: TransactionItem[]): HistoryUiRow[] {
     dateLabel: formatTransactionDate(t.createdAt),
     createdAt: t.createdAt,
     reference: t.reference ?? "",
-    type: t.type,
+    type:
+      t.type === "sent" && t.counterpartyName === "Message Money"
+        ? "received"
+        : t.type,
     phone: t.counterpartyPhone,
+    txKind: t.kind ?? null,
+    internal: Boolean(t.kind && INTERNAL_KINDS.has(t.kind)),
   }));
 }
 

@@ -730,6 +730,28 @@ export async function executePayment(
   };
 }
 
+/** Crédits du solde — remboursements money inclus (l’argent revient). */
+const RECEIVED_TX_TYPES = new Set([
+  "DEPOSIT",
+  "RECEIVED",
+  "MONEY_CLAIM",
+  "MONEY_RECALL",
+  "MONEY_EXPIRE_REFUND",
+  "POCKET_OUT",
+]);
+
+function isReceivedTxType(type) {
+  return RECEIVED_TX_TYPES.has(type);
+}
+
+function txCounterpartyName(t) {
+  const raw = String(t.counterpartyName ?? "").trim();
+  if (raw && raw !== "Message Money") return raw;
+  if (t.type === "DEPOSIT") return "Rechargement";
+  if (t.type === "RECEIVED" || t.type === "MONEY_CLAIM") return "Paiement reçu";
+  return raw || "Paiement";
+}
+
 /**
  * @param {string} userId
  * @param {{ limit?: number, since?: string | null }} [opts]
@@ -780,16 +802,10 @@ export async function listTransactions(userId, opts = {}) {
   let items = (res.Items ?? []).map((t) => ({
     id: t.transactionId,
     reference: resolveTxReference(t),
-    type:
-      t.type === "DEPOSIT" || t.type === "RECEIVED" ? "received" : "sent",
+    type: isReceivedTxType(t.type) ? "received" : "sent",
+    kind: t.type ?? null,
     amountFcfa: t.amountFcfa,
-    counterpartyName:
-      t.counterpartyName ||
-      (t.type === "DEPOSIT"
-        ? "Rechargement"
-        : t.type === "RECEIVED"
-          ? "Paiement reçu"
-          : "Paiement"),
+    counterpartyName: txCounterpartyName(t),
     counterpartyPhone: t.counterpartyPhone ?? null,
     createdAt: t.createdAt,
   }));

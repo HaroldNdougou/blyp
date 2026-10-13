@@ -28,7 +28,7 @@ object PaymentPushPresenter {
     ensureChannel(app)
 
     val lang = PaymentAnnouncePrefs.getLang(app)
-    val title = paymentTitle(lang)
+    val title = receivedTitle(lang, data["contextType"])
     val body = formatBody(amount, data["fromName"], lang)
 
     val openApp =
@@ -49,7 +49,7 @@ object PaymentPushPresenter {
         .setContentTitle(title)
         .setContentText(body)
         .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-        .setSmallIcon(R.mipmap.ic_launcher)
+        .setSmallIcon(R.drawable.ic_stat_blyp)
         .setColor(0xFF5DC705.toInt())
         .setAutoCancel(true)
         .setContentIntent(openApp)
@@ -63,8 +63,14 @@ object PaymentPushPresenter {
     mgr.notify(notifId, notification)
   }
 
-  private fun paymentTitle(lang: String): String =
-    if (lang == "fr") "Paiement reçu" else "Payment received"
+  private fun receivedTitle(lang: String, contextType: String?): String {
+    val transfer = contextType != "commerce"
+    return if (lang == "fr") {
+      if (transfer) "Transfert reçu" else "Paiement reçu"
+    } else {
+      if (transfer) "Transfer received" else "Payment received"
+    }
+  }
 
   private fun formatBody(amount: Int, fromName: String?, lang: String): String {
     val locale = if (lang == "fr") Locale.FRANCE else Locale.US

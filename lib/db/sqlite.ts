@@ -17,6 +17,8 @@ async function openDb(): Promise<Db | null> {
   try {
     const SQLite = await import("expo-sqlite");
     const db = await SQLite.openDatabaseAsync("blyp.db");
+    /** Connexion restée ouverte (reload Metro) / checkpoint WAL : attendre au lieu de « database is locked ». */
+    await db.execAsync(`PRAGMA busy_timeout = 4000;`);
     await db.execAsync(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS transactions (
@@ -43,6 +45,34 @@ async function openDb(): Promise<Db | null> {
         createdAt TEXT NOT NULL,
         attempts INTEGER NOT NULL DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS conversations (
+        phone TEXT NOT NULL,
+        id TEXT NOT NULL,
+        json TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        PRIMARY KEY (phone, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_conv_phone_upd
+        ON conversations(phone, updatedAt DESC);
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        phone TEXT NOT NULL,
+        conversationId TEXT NOT NULL,
+        json TEXT NOT NULL,
+        PRIMARY KEY (phone, conversationId)
+      );
+      CREATE TABLE IF NOT EXISTS chat_receipts (
+        phone TEXT NOT NULL,
+        conversationId TEXT NOT NULL,
+        peerLastReadAt TEXT,
+        peerLastDeliveredAt TEXT,
+        PRIMARY KEY (phone, conversationId)
+      );
+      CREATE TABLE IF NOT EXISTS kv_cache (
+        phone TEXT NOT NULL,
+        key TEXT NOT NULL,
+        json TEXT NOT NULL,
+        PRIMARY KEY (phone, key)
+      );
     `);
     try {
       await db.execAsync(
@@ -50,6 +80,36 @@ async function openDb(): Promise<Db | null> {
       );
     } catch {
       /* colonne déjà présente */
+    }
+    try {
+      await db.execAsync(`ALTER TABLE transactions ADD COLUMN kind TEXT`);
+      /** Colonne neuve : vieux cache sans `kind` → prochain sync = full replace. */
+      await db.execAsync(`DELETE FROM sync_meta`);
+    } catch {
+      /* colonne déjà présente */
+    }
+    const ver = await db.getFirstAsync<{ user_version: number }>(
+      `PRAGMA user_version`,
+    );
+    if ((ver?.user_version ?? 0) < 1) {
+      /** Données serveur migrées : resync tx complet + fils re-téléchargés. */
+      await db.execAsync(`
+        DELETE FROM sync_meta;
+        DELETE FROM chat_messages;
+        PRAGMA user_version = 1;
+      `);
+    }
+    if ((ver?.user_version ?? 0) < 2) {
+      await db.execAsync(`
+        DELETE FROM sync_meta;
+        PRAGMA user_version = 2;
+      `);
+    }
+    if ((ver?.user_version ?? 0) < 3) {
+      await db.execAsync(`
+        DELETE FROM sync_meta;
+        PRAGMA user_version = 3;
+      `);
     }
     return db;
   } catch {

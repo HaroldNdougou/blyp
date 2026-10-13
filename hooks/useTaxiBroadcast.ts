@@ -24,7 +24,7 @@ export function useTaxiBroadcast(account: TaxiBroadcastAccount) {
   const setEnabled = useCallback(
     (enabled: boolean): Promise<TaxiBroadcastSetResult> =>
       setTaxiBroadcastEnabled(enabled, account),
-    [account.accountId, account.phone],
+    [account.accountId, account.phone, account.category],
   );
 
   return { on: snap.on, status: snap.status, busy: snap.busy, setEnabled };

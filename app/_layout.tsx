@@ -107,7 +107,9 @@ function RootShell() {
             animation: "slide_from_bottom",
           }}
         />
+        <Stack.Screen name="new-chat" />
         <Stack.Screen name="chat/[id]" />
+        <Stack.Screen name="pocket/[id]" />
         <Stack.Screen
           name="deposit"
           options={{

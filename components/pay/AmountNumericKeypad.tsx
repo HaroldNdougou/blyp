@@ -82,6 +82,10 @@ type Props = {
   confirmEnabled?: boolean;
   confirmBusy?: boolean;
   disabled?: boolean;
+  /** `outline` : contour accent, fond inchangé (message money). */
+  confirmVariant?: "fill" | "outline";
+  /** Touches réduites — laisse la place à une rangée sous le pad (petits écrans). */
+  compact?: boolean;
 };
 
 const ROWS: readonly (readonly string[])[] = [
@@ -91,7 +95,9 @@ const ROWS: readonly (readonly string[])[] = [
   ["back", "0", "pay"],
 ];
 
-function createKeypadStyles(c: ThemeColors) {
+function createKeypadStyles(c: ThemeColors, compact = false) {
+  const KEY_SIZE = compact ? KEY_SIZE_COMPACT : KEY_SIZE_DEFAULT;
+  const GAP = compact ? GAP_COMPACT : GAP_DEFAULT;
   return StyleSheet.create({
     keypad: {
       marginTop: 0,
@@ -130,6 +136,26 @@ function createKeypadStyles(c: ThemeColors) {
       borderColor: c.disabledButton,
       opacity: 1,
     },
+    keypadKeyPayOutline: {
+      backgroundColor: c.keypadBackground,
+      borderColor: c.accent,
+      borderWidth: 2,
+    },
+    keypadKeyPayOutlinePressed: {
+      backgroundColor: c.keypadPressed,
+      borderColor: c.accentDark,
+    },
+    keypadKeyPayOutlineDisabled: {
+      backgroundColor: c.keypadBackground,
+      borderColor: c.keypadBorder,
+      opacity: 0.45,
+    },
+    keypadPayArrowOutline: {
+      fontSize: 28,
+      fontWeight: "700",
+      color: c.accent,
+      marginTop: -2,
+    },
     keypadKeyPressed: {
       backgroundColor: c.keypadPressed,
     },
@@ -159,11 +185,17 @@ function AmountNumericKeypadInner({
   confirmEnabled = false,
   confirmBusy = false,
   disabled,
+  confirmVariant = "fill",
+  compact = false,
 }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  const styles = useMemo(() => createKeypadStyles(colors), [colors]);
+  const styles = useMemo(
+    () => createKeypadStyles(colors, compact),
+    [colors, compact],
+  );
   const payReady = Boolean(onConfirm) && confirmEnabled && !confirmBusy && !disabled;
+  const outline = confirmVariant === "outline";
 
   return (
     <View style={styles.keypad} collapsable={false}>
@@ -176,8 +208,18 @@ function AmountNumericKeypadInner({
                   key={ci}
                   style={({ pressed }) => [
                     styles.keypadKey,
-                    payReady ? styles.keypadKeyPay : styles.keypadKeyPayDisabled,
-                    pressed && payReady && styles.keypadKeyPayPressed,
+                    outline
+                      ? payReady
+                        ? styles.keypadKeyPayOutline
+                        : styles.keypadKeyPayOutlineDisabled
+                      : payReady
+                        ? styles.keypadKeyPay
+                        : styles.keypadKeyPayDisabled,
+                    pressed &&
+                      payReady &&
+                      (outline
+                        ? styles.keypadKeyPayOutlinePressed
+                        : styles.keypadKeyPayPressed),
                   ]}
                   onPressIn={() => {
                     if (payReady) onConfirm?.();
@@ -188,9 +230,20 @@ function AmountNumericKeypadInner({
                   accessibilityState={{ disabled: !payReady, busy: confirmBusy }}
                 >
                   {confirmBusy ? (
-                    <ActivityIndicator color={colors.accentOn} size="small" />
+                    <ActivityIndicator
+                      color={outline ? colors.accent : colors.accentOn}
+                      size="small"
+                    />
                   ) : (
-                    <Text style={styles.keypadPayArrow}>↑</Text>
+                    <Text
+                      style={
+                        outline
+                          ? styles.keypadPayArrowOutline
+                          : styles.keypadPayArrow
+                      }
+                    >
+                      ↑
+                    </Text>
                   )}
                 </Pressable>
               );
@@ -237,5 +290,7 @@ function AmountNumericKeypadInner({
 /** memo : le parent se met à jour à chaque chiffre ; les touches ne re-rendent pas inutilement. */
 export const AmountNumericKeypad = React.memo(AmountNumericKeypadInner);
 
-const KEY_SIZE = 72;
-const GAP = 10;
+const KEY_SIZE_DEFAULT = 72;
+const GAP_DEFAULT = 10;
+const KEY_SIZE_COMPACT = 64;
+const GAP_COMPACT = 8;

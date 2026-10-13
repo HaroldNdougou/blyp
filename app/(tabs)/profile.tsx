@@ -1,3 +1,8 @@
+import {
+  PocketsSection,
+  PocketsSetAsideLine,
+} from "@/components/pockets/PocketsSection";
+import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { CommerceSection } from "@/components/profile/CommerceSection";
 import { createProfileStyles } from "@/components/profile/profileStyles";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,10 +13,11 @@ import {
   formatCameroonPhoneDisplay,
   formatFcfa,
 } from "@/lib/format";
-import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
-import { Redirect, router } from "expo-router";
+import { Redirect } from "expo-router";
+import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
+import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -37,7 +43,8 @@ function initialsFromName(first: string | null, last: string | null): string {
 
 export default function ProfileTabScreen() {
   const insets = useSafeAreaInsets();
-  const { user, token, signOut, isLoading } = useAuth();
+  const { user, token, signOut, isLoading, refreshUser } = useAuth();
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const { colors } = useTheme();
   const { t, i18n } = useTranslation();
   const styles = useMemo(() => createProfileStyles(colors), [colors]);
@@ -51,6 +58,15 @@ export default function ProfileTabScreen() {
   const isPro = user?.activeContext?.type === "commerce";
   const personalFirst = user?.personalFirstName ?? null;
   const personalLast = user?.personalLastName ?? null;
+
+  useFocusEffect(
+    useCallback(() => {
+      perfMarkStart("tab_profile");
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => perfMarkEnd("tab_profile"));
+      });
+    }, []),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -92,18 +108,36 @@ export default function ProfileTabScreen() {
     });
   }, []);
 
-  const onContextChanged = useCallback(
-    (next: "personal" | "commerce") => {
-      if (next === "personal") {
-        if (broadcast.on) void broadcast.setEnabled(false);
-        return;
-      }
-      if (broadcast.on) {
-        void broadcast.setEnabled(false).then(() => broadcast.setEnabled(true));
-      }
-    },
-    [broadcast],
-  );
+  const onContextChanged = useCallback((_next: "personal" | "commerce") => {
+    /* Relance BLE : AuthContext.retarget après le nouveau compte. */
+  }, []);
+
+  const onChangePhoto = useCallback(async () => {
+    if (!token || avatarBusy) return;
+    setAvatarBusy(true);
+    try {
+      const { requestImageLibraryPermission } = await import(
+        "@/lib/image/pickFromLibrary"
+      );
+      const { pickImagesFromLibrary } = await import(
+        "@/lib/image/pickFromLibrary"
+      );
+      const granted = await requestImageLibraryPermission();
+      if (!granted) return;
+      const assets = await pickImagesFromLibrary();
+      const asset = assets?.[0];
+      if (!asset?.uri) return;
+      const { uploadProfileAvatar } = await import(
+        "@/lib/avatar/uploadProfileAvatar"
+      );
+      await uploadProfileAvatar(token, asset.uri, asset.contentType);
+      await refreshUser();
+    } catch {
+      Alert.alert(t("profile.title"), t("profile.photoUploadFailed"));
+    } finally {
+      setAvatarBusy(false);
+    }
+  }, [token, avatarBusy, refreshUser, t]);
 
   /** Hooks avant tout return — sinon crash « fewer hooks » au logout / session. */
   if (!isLoading && !token) {
@@ -174,20 +208,31 @@ export default function ProfileTabScreen() {
         </View>
 
         <View style={styles.hero}>
-          <View style={styles.avatar}>
+          <Pressable
+            onPress={onChangePhoto}
+            disabled={!token || avatarBusy}
+            accessibilityRole="button"
+            accessibilityLabel={t("profile.changePhoto")}
+          >
             {hasName ? (
-              <Text style={styles.avatarText}>
-                {isPro
-                  ? (user?.firstName ?? "?").trim().charAt(0).toUpperCase()
-                  : initialsFromName(
-                      user?.firstName ?? null,
-                      user?.lastName ?? null,
-                    )}
-              </Text>
+              <PeerAvatar
+                name={displayName}
+                phone={user?.phone ?? null}
+                remoteUrl={user?.avatarUrl}
+                size={84}
+                style={styles.avatar}
+                textStyle={styles.avatarText}
+              />
             ) : (
-              <Ionicons name="person" size={36} color={colors.accent} />
+              <View style={styles.avatar}>
+                {avatarBusy ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : (
+                  <Ionicons name="person" size={36} color={colors.accent} />
+                )}
+              </View>
             )}
-          </View>
+          </Pressable>
           <Text style={styles.name}>{displayName}</Text>
           <View
             style={[
@@ -230,83 +275,21 @@ export default function ProfileTabScreen() {
             </Text>
             <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
           </View>
+          {!isPro ? <PocketsSetAsideLine /> : null}
         </View>
 
-        <View style={styles.actionsRow}>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionBtn,
-              pressed && styles.actionBtnPressed,
-            ]}
-            onPressIn={() => {
-              void import("@/app/deposit");
-            }}
-            onPress={() => openDepositRoute()}
-            accessibilityRole="button"
-            accessibilityLabel={t("profile.actionTopUp")}
-          >
-            <View style={styles.actionIconWrap}>
-              <Ionicons name="add" size={20} color={colors.accent} />
-            </View>
-            <Text
-              style={styles.actionLabel}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.8}
-            >
-              {t("profile.actionTopUp")}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionBtn,
-              pressed && styles.actionBtnPressed,
-            ]}
-            onPress={() => router.push("/(tabs)/history")}
-            accessibilityRole="button"
-            accessibilityLabel={t("profile.actionHistory")}
-          >
-            <View style={styles.actionIconWrap}>
-              <Ionicons name="swap-vertical" size={20} color={colors.accent} />
-            </View>
-            <Text
-              style={styles.actionLabel}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.8}
-            >
-              {t("profile.actionHistory")}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [
-              styles.actionBtn,
-              pressed && styles.actionBtnPressed,
-            ]}
-            onPress={() => router.push("/(tabs)")}
-            accessibilityRole="button"
-            accessibilityLabel={t("profile.actionPay")}
-          >
-            <View style={styles.actionIconWrap}>
-              <Ionicons name="keypad" size={18} color={colors.accent} />
-            </View>
-            <Text
-              style={styles.actionLabel}
-              numberOfLines={1}
-              adjustsFontSizeToFit
-              minimumFontScale={0.8}
-            >
-              {t("profile.actionPay")}
-            </Text>
-          </Pressable>
-        </View>
+        {!isPro ? <PocketsSection profileStyles={styles} /> : null}
 
         <CommerceSection styles={styles} onContextChanged={onContextChanged} />
 
         <Text style={styles.sectionTitle}>{t("profile.sectionTaxi")}</Text>
         <View style={styles.sectionCard}>
           <Pressable
-            style={[styles.broadcastRow, styles.broadcastRowOnline]}
+            style={({ pressed }) => [
+              styles.broadcastRow,
+              styles.broadcastRowOnline,
+              pressed && !broadcast.busy && styles.actionBtnPressed,
+            ]}
             onPress={() => {
               if (broadcast.busy) return;
               void onBroadcastToggle(!broadcast.on);
@@ -315,7 +298,6 @@ export default function ProfileTabScreen() {
             accessibilityRole="switch"
             accessibilityState={{ checked: broadcast.on, disabled: broadcast.busy }}
             accessibilityLabel={t("profile.broadcastLabel")}
-            hitSlop={{ top: 4, bottom: 4, left: 0, right: 0 }}
           >
             <View style={styles.broadcastTexts}>
               <Text style={styles.broadcastTitle}>
@@ -339,44 +321,54 @@ export default function ProfileTabScreen() {
                 <Switch
                   value={broadcast.on}
                   trackColor={{
-                    false: colors.borderLight,
-                    true: colors.depositHighlightBorder,
+                    false: colors.switchTrackOff,
+                    true: colors.switchTrackOn,
                   }}
-                  thumbColor={broadcast.on ? colors.accent : colors.surface}
+                  thumbColor={
+                    broadcast.on
+                      ? colors.switchThumbOn
+                      : colors.switchThumbOff
+                  }
+                  ios_backgroundColor={colors.switchTrackOff}
                 />
               </View>
             )}
           </Pressable>
-          <View style={[styles.broadcastRow, styles.broadcastRowBorder]}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.broadcastRow,
+              styles.broadcastRowBorder,
+              pressed && styles.actionBtnPressed,
+            ]}
+            onPress={() => onAnnounceToggle(!announcePayments)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: announcePayments }}
+            accessibilityLabel={t("profile.announcePaymentsLabel")}
+          >
             <View style={styles.broadcastTexts}>
               <Text style={styles.broadcastTitle}>
                 {t("profile.announcePaymentsLabel")}
               </Text>
-              <Text
-                style={[
-                  styles.broadcastHint,
-                  announcePayments && styles.broadcastHintOn,
-                ]}
-              >
-                {announcePayments
-                  ? t("profile.announcePaymentsHintOn")
-                  : t("profile.announcePaymentsHintOff")}
+              <Text style={styles.broadcastHint}>
+                {t("profile.announcePaymentsHint")}
               </Text>
             </View>
-            <Switch
-              value={announcePayments}
-              onValueChange={onAnnounceToggle}
-              trackColor={{
-                false: colors.borderLight,
-                true: colors.depositHighlightBorder,
-              }}
-              thumbColor={
-                announcePayments ? colors.accent : colors.surface
-              }
-              accessibilityLabel={t("profile.announcePaymentsLabel")}
-              accessibilityRole="switch"
-            />
-          </View>
+            <View style={styles.broadcastSwitchWrap} pointerEvents="none">
+              <Switch
+                value={announcePayments}
+                trackColor={{
+                  false: colors.switchTrackOff,
+                  true: colors.switchTrackOn,
+                }}
+                thumbColor={
+                  announcePayments
+                    ? colors.switchThumbOn
+                    : colors.switchThumbOff
+                }
+                ios_backgroundColor={colors.switchTrackOff}
+              />
+            </View>
+          </Pressable>
         </View>
 
         <Text style={styles.sectionTitle}>{t("profile.sectionAccount")}</Text>

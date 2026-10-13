@@ -2,6 +2,7 @@
  * Prefetch : modules UI après parse ; hydrate SQLite tôt ;
  * client API / sync réseau seulement APRÈS le 1er frame (ne pas voler Pay).
  */
+import { floodAllTabs } from "@/lib/perf/floodAllTabs";
 import { InteractionManager } from "react-native";
 
 let warmed = false;
@@ -17,8 +18,18 @@ function warmJsModules(token: string | null): void {
     void m.Ionicons.loadFont().catch(() => {});
   });
   void import("@/components/pay/PayRegisterOverlay");
+  void import("@/app/(tabs)/messages");
+  void import("@/components/messages/ConversationsScreen");
+  void import("@/components/messages/ChatThreadScreen");
+  void import("@/app/chat/[id]");
+  void import("@/lib/messages/prefetchChatThread");
+  void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
+  void import("@/lib/image/pickFromLibrary").then((m) =>
+    m.warmImageLibraryPermission(),
+  );
   if (token) {
     void import("@/app/(tabs)/profile");
+    void import("@/app/pocket/[id]");
   }
 }
 
@@ -33,8 +44,9 @@ export function runAggressiveWarm(opts: {
 
   /** Modules écrans : OK en parallèle léger — pas le gros client API. */
   warmJsModules(token);
+  floodAllTabs(token);
 
-  /** Cache tx RAM (SQLite) — léger, sert Historique ; ne parse pas api/client. */
+  /** Cache tx + messages RAM (SQLite) — léger ; ne parse pas api/client. */
   if (token && phone) {
     void (async () => {
       try {
@@ -48,6 +60,18 @@ export function runAggressiveWarm(opts: {
           );
           ensureHistoryUiRows(phone, snap);
         }
+        const { hydrateMessagesCache } = await import("@/lib/messagesCache");
+        await hydrateMessagesCache(phone, token);
+        const { hydrateSpendCategories } = await import(
+          "@/lib/peers/peerCategoryCache"
+        );
+        await hydrateSpendCategories();
+        const { startQuickAmountsEngine } = await import(
+          "@/lib/pay/quickAmounts"
+        );
+        startQuickAmountsEngine(phone);
+        const { hydratePockets } = await import("@/lib/pockets/store");
+        await hydratePockets(phone);
       } catch {
         /* best effort */
       }
@@ -70,6 +94,29 @@ export function runAggressiveWarm(opts: {
           "@/lib/sync/transactionsSync"
         );
         await syncTransactionsFromNetwork(token, phone);
+      } catch {
+        /* best effort */
+      }
+      void import("@/lib/pockets/store")
+        .then((m) => m.syncPocketsFromNetwork(token, phone))
+        .catch(() => {});
+      try {
+        const api = await import("@/lib/api/client");
+        const cache = await import("@/lib/messagesCache");
+        const { items } = await api.listConversations(token);
+        cache.setConversationsSnapshot(token, items);
+        for (const c of items.slice(0, 5)) {
+          const {
+            items: msgs,
+            peerLastReadAt,
+            peerLastDeliveredAt,
+          } = await api.listMessages(token, c.id);
+          cache.applyServerMessagesSnapshot(token, c.id, msgs);
+          cache.setReceiptsSnapshot(c.id, {
+            peerLastReadAt: peerLastReadAt ?? null,
+            peerLastDeliveredAt: peerLastDeliveredAt ?? null,
+          });
+        }
       } catch {
         /* best effort */
       }

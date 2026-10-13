@@ -42,7 +42,12 @@ import {
   setOtpCooldown,
   setTransactionPin,
   updateProfileNames,
+  touchAvatarUpdated,
 } from "../../lib/user.mjs";
+import {
+  presignAvatarUpload,
+  isAvatarKeyForPhone,
+} from "../../lib/avatar.mjs";
 import {
   createCommerce,
   getPublicAccountLabel,
@@ -126,7 +131,12 @@ async function handleVerifyOtp(body) {
   const cached = await getOtpVerifyCache(cacheKey);
   if (cached) return ok(cached);
 
-  const challenge = await getOtpChallenge(phone);
+  let challenge = await getOtpChallenge(phone);
+  /** Course : l’écran code s’ouvre avant la fin de `request-otp` / réplique Dynamo. */
+  if (!challenge || !isItemActive(challenge)) {
+    await new Promise((r) => setTimeout(r, 200));
+    challenge = await getOtpChallenge(phone);
+  }
   const expectedHash = hashOtp(phone, code);
   if (!challenge || !isItemActive(challenge)) {
     return badRequest("Code incorrect ou expiré");
@@ -229,6 +239,31 @@ async function handleMe(userId) {
   return ok(user);
 }
 
+async function handleAvatarPresign(userId, body) {
+  const profile = await getUserProfile(userId);
+  if (!profile?.phone) return unauthorized("Utilisateur introuvable");
+  const contentType = String(body?.contentType ?? "image/jpeg").trim();
+  const signed = await presignAvatarUpload(userId, profile.phone, contentType);
+  if (signed.error === "ASSETS_UNAVAILABLE") {
+    return serviceUnavailable("Photos indisponibles");
+  }
+  if (signed.error) return badRequest("Requête invalide");
+  return ok(signed);
+}
+
+async function handleAvatarConfirm(userId, body) {
+  const profile = await getUserProfile(userId);
+  if (!profile?.phone) return unauthorized("Utilisateur introuvable");
+  const key = String(body?.key ?? "").trim();
+  const phoneNine = String(profile.phone ?? "").replace(/\D/g, "").slice(-9);
+  if (!isAvatarKeyForPhone(key, phoneNine)) {
+    return badRequest("Clé avatar invalide");
+  }
+  await touchAvatarUpdated(userId);
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
+}
+
 async function handleEnableMerchant(userId) {
   const profile = await getUserProfile(userId);
   if (!profile) return unauthorized("Utilisateur introuvable");
@@ -319,6 +354,7 @@ async function handlePublicAccount(accountIdRaw) {
     accountId: label.accountId,
     displayName,
     kind: label.kind,
+    category: label.category ?? null,
   });
 }
 
@@ -370,6 +406,22 @@ export async function handler(event, context) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handleMe(auth.userId);
+    }
+
+    if (method === "POST" && path === "/me/avatar/presign") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleAvatarPresign(auth.userId, body);
+    }
+
+    if (method === "POST" && path === "/me/avatar/confirm") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleAvatarConfirm(auth.userId, body);
     }
 
     if (method === "POST" && path === "/auth/merchant/enable") {

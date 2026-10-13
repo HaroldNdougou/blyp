@@ -49,6 +49,11 @@ Parameters:
     Default: ""
     Description: Hash SMS Retriever Android (11 car.)
 
+  BlypInviteUrl:
+    Type: String
+    Default: "https://blyppay.com/download/blyp-pay.apk"
+    Description: Lien téléchargement APK / stores dans les SMS d’invitation messages
+
   DepositMode:
     Type: String
     Default: sync
@@ -186,9 +191,13 @@ Resources:
           OBIT_SMS_KEY_API: !Ref ObitSmsKeyApi
           OBIT_SMS_SENDER: !Ref ObitSmsSender
           ANDROID_SMS_OTP_APP_HASH: !Ref AndroidSmsOtpAppHash
+          ASSETS_BUCKET: !Sub "blyp-assets-${Stage}-${AWS::AccountId}"
+          ASSETS_CDN_URL: !Sub "https://${AssetsDistribution.DomainName}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
+        - S3CrudPolicy:
+            BucketName: !Sub "blyp-assets-${Stage}-${AWS::AccountId}"
       Events:
         RequestOtp:
           Type: HttpApi
@@ -232,6 +241,18 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /me
             Method: GET
+        MeAvatarPresign:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/avatar/presign
+            Method: POST
+        MeAvatarConfirm:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/avatar/confirm
+            Method: POST
         MeContext:
           Type: HttpApi
           Properties:
@@ -320,6 +341,42 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /transactions
             Method: GET
+        PocketsList:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets
+            Method: GET
+        PocketsCreate:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets
+            Method: POST
+        PocketRename:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets/{id}
+            Method: PUT
+        PocketDelete:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets/{id}
+            Method: DELETE
+        PocketMove:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets/{id}/move
+            Method: POST
+        PocketTransactions:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /pockets/{id}/transactions
+            Method: GET
 
   WebhookFunction:
     Type: AWS::Serverless::Function
@@ -384,6 +441,61 @@ Resources:
             FunctionResponseTypes:
               - ReportBatchItemFailures
 
+  # Seau blyp-media-{Stage}-{AccountId} : déjà provisionné (vocaux / images). Pas de ressource
+  # S3 ici — EarlyValidation échoue si le nom existe déjà hors stack.
+
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "blyp-assets-${Stage}-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  AssetsOAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "blyp-assets-${Stage}"
+
+  AssetsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref AssetsBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt AssetsOAI.S3CanonicalUserId
+            Action: s3:GetObject
+            Resource: !Sub "${AssetsBucket.Arn}/*"
+
+  AssetsDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultCacheBehavior:
+          TargetOriginId: assetsS3
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          ForwardedValues:
+            QueryString: true
+          Compress: true
+        Origins:
+          - Id: assetsS3
+            DomainName: !GetAtt AssetsBucket.RegionalDomainName
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${AssetsOAI}"
+        PriceClass: PriceClass_100
+
   MessagingFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -401,11 +513,18 @@ Resources:
             - !Ref TransactionPinPepper
             - !Ref OtpPepper
           PUSH_QUEUE_URL: !Ref PushQueue
+          SMS_PROVIDER: !Ref SmsProvider
+          OBIT_SMS_KEY_API: !Ref ObitSmsKeyApi
+          OBIT_SMS_SENDER: !Ref ObitSmsSender
+          BLYP_INVITE_URL: !Ref BlypInviteUrl
+          MEDIA_BUCKET: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt PushQueue.QueueName
+        - S3CrudPolicy:
+            BucketName: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
       Events:
         ListConversations:
           Type: HttpApi
@@ -418,6 +537,12 @@ Resources:
           Properties:
             ApiId: !Ref BlypApi
             Path: /conversations
+            Method: POST
+        ContactsBlypLookup:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /contacts/blyp-lookup
             Method: POST
         ListMessages:
           Type: HttpApi
@@ -444,6 +569,12 @@ Outputs:
     Value: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
     Export:
       Name: !Sub "blyp-api-url-${Stage}"
+
+  AssetsCdnUrl:
+    Description: EXPO_PUBLIC_ASSETS_CDN_URL (photos de profil avatars/*.jpg)
+    Value: !Sub "https://${AssetsDistribution.DomainName}"
+    Export:
+      Name: !Sub "blyp-assets-cdn-${Stage}"
 
   PawapayWebhookUrl:
     Description: URL callback à enregistrer chez PawaPay (dépôts async)

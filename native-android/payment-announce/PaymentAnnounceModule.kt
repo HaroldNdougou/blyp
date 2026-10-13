@@ -51,6 +51,16 @@ class PaymentAnnounceModule(
   }
 
   @ReactMethod
+  fun setApiSession(apiBase: String?, accessToken: String?, promise: Promise) {
+    try {
+      PaymentAnnouncePrefs.setApiSession(ctx, apiBase, accessToken)
+      promise.resolve(null)
+    } catch (e: Exception) {
+      promise.reject("API_SESSION", e.message, e)
+    }
+  }
+
+  @ReactMethod
   fun announce(amountFcfa: Int, lang: String, txId: String?, promise: Promise) {
     try {
       PaymentAnnounceController.announceFromJs(ctx, amountFcfa, lang, txId)
@@ -70,6 +80,11 @@ class PaymentAnnounceModule(
     @Volatile
     private var reactCtx: ReactApplicationContext? = null
 
+    fun hasActiveReact(): Boolean {
+      val ctx = reactCtx ?: return false
+      return ctx.hasActiveReactInstance()
+    }
+
     fun emitPaymentReceived(data: Map<String, String>) {
       val ctx = reactCtx ?: return
       if (!ctx.hasActiveReactInstance()) return
@@ -85,16 +100,81 @@ class PaymentAnnounceModule(
       }
     }
 
-    fun emitIncomingMessage(conversationId: String) {
-      val id = conversationId.trim()
-      if (id.isEmpty()) return
+    fun emitIncomingMessage(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      if (conversationId.isEmpty()) return
       val ctx = reactCtx ?: return
       if (!ctx.hasActiveReactInstance()) return
       ctx.runOnUiQueueThread {
         try {
+          val map = Arguments.createMap()
+          for ((k, v) in data) map.putString(k, v)
+          if (!map.hasKey("conversationId")) {
+            map.putString("conversationId", conversationId)
+          }
           ctx
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-            .emit("blyp_message_received", id)
+            .emit("blyp_message_received", map)
+        } catch (_: Exception) {
+        }
+      }
+    }
+
+    fun emitMoneyClaimed(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      val transferId = data["transferId"]?.trim().orEmpty()
+      if (conversationId.isEmpty() || transferId.isEmpty()) return
+      val ctx = reactCtx ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      ctx.runOnUiQueueThread {
+        try {
+          val map = Arguments.createMap()
+          for ((k, v) in data) map.putString(k, v)
+          ctx
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit("blyp_money_claimed", map)
+        } catch (_: Exception) {
+        }
+      }
+    }
+
+    fun emitConversationReceipt(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      val at = data["at"]?.trim().orEmpty()
+      if (conversationId.isEmpty() || at.isEmpty()) return
+      emitMap("blyp_conversation_receipt", data)
+    }
+
+    fun emitConversationTyping(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      if (conversationId.isEmpty()) return
+      emitMap("blyp_conversation_typing", data)
+    }
+
+    fun emitMoneyUpdated(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      val transferId = data["transferId"]?.trim().orEmpty()
+      if (conversationId.isEmpty() || transferId.isEmpty()) return
+      emitMap("blyp_money_updated", data)
+    }
+
+    fun emitMoneyTray(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      val transferId = data["transferId"]?.trim().orEmpty()
+      if (conversationId.isEmpty() || transferId.isEmpty()) return
+      emitMap("blyp_money_tray", data)
+    }
+
+    private fun emitMap(event: String, data: Map<String, String>) {
+      val ctx = reactCtx ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      ctx.runOnUiQueueThread {
+        try {
+          val map = Arguments.createMap()
+          for ((k, v) in data) map.putString(k, v)
+          ctx
+            .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+            .emit(event, map)
         } catch (_: Exception) {
         }
       }

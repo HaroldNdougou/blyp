@@ -7,8 +7,9 @@ import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
 import { MAX_AMOUNT_DIGITS, parseAmountFcfa } from "@/lib/amountLimits";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { computePayFeeFcfa } from "@/lib/pay/fees";
+import { DEFAULT_QUICK_AMOUNTS } from "@/lib/pay/quickAmounts";
 import i18n from "@/lib/i18n";
-import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Pressable,
@@ -20,14 +21,15 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-/** Montants FCFA courants — tap = remplace la saisie. */
-const QUICK_AMOUNTS_FCFA = [100, 350, 500, 600] as const;
-
 type Styles = {
   inputSection: StyleProp<ViewStyle>;
   inputLabel: StyleProp<TextStyle>;
+  inputLabelActive?: StyleProp<TextStyle>;
   inputWrapper: StyleProp<ViewStyle>;
   amountRow: StyleProp<ViewStyle>;
+  amountRowSide: StyleProp<ViewStyle>;
+  amountRowCenter: StyleProp<ViewStyle>;
+  amountRowEnd: StyleProp<ViewStyle>;
   amountDisplayWrap: StyleProp<ViewStyle>;
   amountDisplay: StyleProp<TextStyle>;
   currency: StyleProp<TextStyle>;
@@ -60,6 +62,13 @@ type Props = {
   topUpSuccessMessage?: string | null;
   /** Solde affiché juste au-dessus du clavier (null = masqué). */
   balanceFcfa?: number | null;
+  /** Contrôle à droite du F, même ligne (switch Recevoir). */
+  amountFooter?: React.ReactNode;
+  quickAmounts?: readonly number[];
+  /** Rangée sous les montants rapides (proches fréquents). */
+  belowQuickAmounts?: React.ReactNode;
+  /** Remplace « Entrer montant à payer » (ex. proche sélectionné). */
+  amountLabel?: string | null;
 };
 
 /**
@@ -72,8 +81,6 @@ function formatDigitsHot(digits: string): string {
   return digits.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
 }
 
-const QUICK_LABELS = QUICK_AMOUNTS_FCFA.map((v) => formatFcfa(v));
-
 function PayAmountEntryInner({
   styles,
   resetKey,
@@ -83,6 +90,10 @@ function PayAmountEntryInner({
   onAmountFcfaChange,
   topUpSuccessMessage,
   balanceFcfa,
+  quickAmounts,
+  amountFooter,
+  belowQuickAmounts,
+  amountLabel,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
@@ -138,6 +149,11 @@ function PayAmountEntryInner({
     amountFcfa != null && amountFcfa > 0 ? computePayFeeFcfa(amountFcfa) : null;
   const displayText = formatDigitsHot(amount);
   const chipsDisabled = Boolean(keypadDisabled || payBusy);
+  const amounts = quickAmounts?.length ? quickAmounts : DEFAULT_QUICK_AMOUNTS;
+  const quickLabels = useMemo(
+    () => amounts.map((v) => formatFcfa(v)),
+    [amounts],
+  );
 
   const tryPay = useCallback(
     (raw: number | string) => {
@@ -175,22 +191,33 @@ function PayAmountEntryInner({
       <View style={styles.payContentSpacer} />
 
       <View style={styles.inputSection}>
-        <Text style={styles.inputLabel}>{t("pay.amountLabel")}</Text>
+        <Text
+          style={[styles.inputLabel, amountLabel ? styles.inputLabelActive : null]}
+          numberOfLines={1}
+        >
+          {amountLabel || t("pay.amountLabel")}
+        </Text>
         <View style={styles.inputWrapper}>
           <View style={styles.amountRow}>
-            <View style={styles.amountDisplayWrap}>
-              <Text
-                style={styles.amountDisplay}
-                numberOfLines={1}
-                accessibilityRole="text"
-                accessibilityLabel={t("a11y.amountLabel", {
-                  amount: displayText,
-                })}
-              >
-                {displayText}
-              </Text>
+            <View style={styles.amountRowSide} />
+            <View style={styles.amountRowCenter}>
+              <View style={styles.amountDisplayWrap}>
+                <Text
+                  style={styles.amountDisplay}
+                  numberOfLines={1}
+                  accessibilityRole="text"
+                  accessibilityLabel={t("a11y.amountLabel", {
+                    amount: displayText,
+                  })}
+                >
+                  {displayText}
+                </Text>
+              </View>
+              <Text style={styles.currency}>F</Text>
             </View>
-            <Text style={styles.currency}>F</Text>
+            <View style={styles.amountRowEnd} pointerEvents="box-none">
+              {amountFooter}
+            </View>
           </View>
           {feeFcfa != null && feeFcfa > 0 ? (
             <Text
@@ -243,11 +270,12 @@ function PayAmountEntryInner({
           confirmEnabled={canPay}
           confirmBusy={Boolean(payBusy)}
           disabled={keypadDisabled}
+          compact={belowQuickAmounts != null}
         />
         <View style={styles.quickAmountsRow}>
-          {QUICK_AMOUNTS_FCFA.map((value, i) => {
+          {amounts.map((value, i) => {
             const selected = quickSelected === value;
-            const label = QUICK_LABELS[i];
+            const label = quickLabels[i] ?? formatFcfa(value);
             return (
               <Pressable
                 key={value}
@@ -281,6 +309,7 @@ function PayAmountEntryInner({
             );
           })}
         </View>
+        {belowQuickAmounts}
       </View>
     </>
   );
