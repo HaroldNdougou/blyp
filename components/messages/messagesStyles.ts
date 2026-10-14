@@ -207,6 +207,20 @@ export function createMessagesStyles(c: ThemeColors) {
       color: c.bubbleTheirsText,
       opacity: 0.85,
     },
+    translateBadgeRow: {
+      marginBottom: 4,
+    },
+    translateOriginalQuote: {
+      flexDirection: "row",
+      alignItems: "stretch",
+      gap: 8,
+      marginTop: 6,
+      paddingTop: 2,
+    },
+    translateOriginalText: {
+      flex: 1,
+      flexShrink: 1,
+    },
     replyComposer: {
       flexDirection: "row",
       alignItems: "center",

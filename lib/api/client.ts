@@ -742,6 +742,31 @@ export async function listMessages(
   };
 }
 
+export async function translateChatMessages(
+  token: string,
+  conversationId: string,
+  targetLanguage: string,
+  items: { id: string; text: string }[],
+): Promise<{
+  targetLanguage: string;
+  items: { id: string; translatedText: string }[];
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockTranslateChatMessages(
+      targetLanguage,
+      items,
+    );
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/translate`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ targetLanguage, items }),
+    },
+  );
+}
+
 export async function markConversationRead(
   token: string,
   conversationId: string,

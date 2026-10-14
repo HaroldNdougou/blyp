@@ -4,6 +4,7 @@ import { MessageReplyQuote } from "@/components/messages/MessageReplyQuote";
 import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
 import { ReactionBadge } from "@/components/messages/MessageReactions";
 import { SwipeToReplyWrap } from "@/components/messages/SwipeToReplyWrap";
+import { MessageTranslatedText } from "@/components/messages/MessageTranslatedText";
 import { VoiceBubble } from "@/components/messages/VoiceBubble";
 import type { createMessagesStyles } from "@/components/messages/messagesStyles";
 import type { ChatMessage } from "@/lib/api/types";
@@ -66,6 +67,8 @@ export type ChatMessageListRowProps = {
   styles: ReturnType<typeof createMessagesStyles>;
   handlersRef: React.MutableRefObject<ChatMessageRowHandlers>;
   registerReactAnchor: (messageId: string, node: View | null) => void;
+  /** Traductions des messages reçus (id → texte dans la langue du téléphone). */
+  peerTranslations?: Record<string, string>;
 };
 
 function ChatMessageListRowInner({
@@ -88,6 +91,7 @@ function ChatMessageListRowInner({
   styles,
   handlersRef,
   registerReactAnchor,
+  peerTranslations,
 }: ChatMessageListRowProps) {
   const { t } = useTranslation();
   const { peerLastReadAt, peerLastDeliveredAt } =
@@ -111,6 +115,7 @@ function ChatMessageListRowInner({
     ? `${formatFcfa(tr.amountFcfa)} ${t("common.fcfa")}`
     : "";
   const moneyCaption = isMoney ? String(item.body ?? "").trim() : "";
+  const peerTranslation = peerTranslations?.[item.id];
   const body = deleted
     ? mine
       ? t("messages.deletedForAllMine")
@@ -201,14 +206,17 @@ function ChatMessageListRowInner({
       {imageCaption ? (
         <View style={styles.bubbleImageCaption}>
           <View style={styles.bubbleTextStack}>
-            <Text
-              style={[
+            <MessageTranslatedText
+              original={imageCaption}
+              translated={peerTranslation}
+              mine={mine}
+              colors={colors}
+              styles={styles}
+              textStyle={[
                 styles.bubbleText,
                 mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
               ]}
-            >
-              {imageCaption}
-            </Text>
+            />
             <MessageBubbleMetaRow {...metaTextProps} />
           </View>
         </View>
@@ -234,14 +242,17 @@ function ChatMessageListRowInner({
       {documentCaption ? (
         <View style={styles.bubbleImageCaption}>
           <View style={styles.bubbleTextStack}>
-            <Text
-              style={[
+            <MessageTranslatedText
+              original={documentCaption}
+              translated={peerTranslation}
+              mine={mine}
+              colors={colors}
+              styles={styles}
+              textStyle={[
                 styles.bubbleText,
                 mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
               ]}
-            >
-              {documentCaption}
-            </Text>
+            />
             <MessageBubbleMetaRow {...metaTextProps} />
           </View>
         </View>
@@ -291,56 +302,72 @@ function ChatMessageListRowInner({
               : styles.bubbleTextStack
           }
         >
-          <Text
-            style={[
-              deleted
-                ? styles.bubbleTextDeleted
-                : isMoney
-                  ? styles.moneyAmountText
-                  : styles.bubbleText,
-              !deleted &&
-                !isMoney &&
-                (mine ? styles.bubbleTextMine : styles.bubbleTextTheirs),
-              amountColor ? { color: amountColor } : null,
-              claimingThis && { opacity: 0.55 },
-            ]}
-          >
-            {body}
-            {isMoney && tr ? (
-              <Text
-                style={[
-                  styles.bubbleMetaTime,
-                  showClaim
-                    ? { color: colors.moneyClaimAction }
-                    : tr.status !== "pending" && amountColor
-                      ? { color: amountColor }
-                      : null,
-                ]}
-              >
-                {`\n💰 ${
-                  showClaim
-                    ? t(mine ? "messages.reclaim" : "messages.claim")
-                    : statusTxt
-                }`}
-                {expiresTxt ? (
-                  <Text style={styles.bubbleMetaTime}>{`\n${expiresTxt}`}</Text>
-                ) : null}
-              </Text>
-            ) : null}
-          </Text>
+          {deleted || isMoney ? (
+            <Text
+              style={[
+                deleted
+                  ? styles.bubbleTextDeleted
+                  : styles.moneyAmountText,
+                !deleted &&
+                  !isMoney &&
+                  (mine ? styles.bubbleTextMine : styles.bubbleTextTheirs),
+                amountColor ? { color: amountColor } : null,
+                claimingThis && { opacity: 0.55 },
+              ]}
+            >
+              {body}
+              {isMoney && tr ? (
+                <Text
+                  style={[
+                    styles.bubbleMetaTime,
+                    showClaim
+                      ? { color: colors.moneyClaimAction }
+                      : tr.status !== "pending" && amountColor
+                        ? { color: amountColor }
+                        : null,
+                  ]}
+                >
+                  {`\n💰 ${
+                    showClaim
+                      ? t(mine ? "messages.reclaim" : "messages.claim")
+                      : statusTxt
+                  }`}
+                  {expiresTxt ? (
+                    <Text style={styles.bubbleMetaTime}>{`\n${expiresTxt}`}</Text>
+                  ) : null}
+                </Text>
+              ) : null}
+            </Text>
+          ) : (
+            <MessageTranslatedText
+              original={body}
+              translated={peerTranslation}
+              mine={mine}
+              colors={colors}
+              styles={styles}
+              textStyle={[
+                styles.bubbleText,
+                mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
+                claimingThis && { opacity: 0.55 },
+              ]}
+            />
+          )}
           <MessageBubbleMetaRow {...metaTextProps} />
         </View>
       )}
       {isMoney && moneyCaption ? (
         <View style={styles.bubbleImageCaption}>
-          <Text
-            style={[
+          <MessageTranslatedText
+            original={moneyCaption}
+            translated={peerTranslation}
+            mine={mine}
+            colors={colors}
+            styles={styles}
+            textStyle={[
               styles.bubbleText,
               mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
             ]}
-          >
-            {moneyCaption}
-          </Text>
+          />
         </View>
       ) : null}
       {isVoice ? <MessageBubbleMetaRow {...metaTextProps} /> : null}
@@ -499,6 +526,12 @@ function rowPropsEqual(
   if (a.handlersRef !== b.handlersRef) return false;
   if (a.registerReactAnchor !== b.registerReactAnchor) return false;
   if (a.mine && a.receiptGeneration !== b.receiptGeneration) return false;
+  if (
+    (a.peerTranslations?.[a.item.id] ?? "") !==
+    (b.peerTranslations?.[b.item.id] ?? "")
+  ) {
+    return false;
+  }
   return true;
 }
 

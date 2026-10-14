@@ -89,6 +89,13 @@ import {
   foldReactionSyncMessages,
 } from "@/lib/messages/reactionSync";
 import { pushRecentChatEmoji } from "@/lib/messages/recentChatEmojis";
+import { resolveTranslateTargetLanguage } from "@/lib/i18n/translateLocale";
+import {
+  ensureThreadTranslations,
+  getCachedMessageTranslation,
+  translatablePeerText,
+  warmMessageTranslationsFromSqlite,
+} from "@/lib/messages/messageTranslation";
 import {
   listChatMessages,
   prefetchChatMessaging,
@@ -245,6 +252,13 @@ export default function ChatThreadScreen() {
     convInit ? Boolean(convInit.peerUserId) : true,
   );
   const [messages, setMessages] = useState<ChatMessage[]>(cachedInit ?? []);
+  const [peerTranslations, setPeerTranslations] = useState<
+    Record<string, string>
+  >({});
+  const translateTargetLang = useMemo(
+    () => resolveTranslateTargetLanguage(),
+    [],
+  );
   const [loading, setLoading] = useState(!cachedInit);
   const [text, setText] = useState("");
   const composerTextRef = useRef("");
@@ -746,6 +760,66 @@ export default function ChatThreadScreen() {
     });
     return () => task.cancel?.();
   }, [token, conversationId]);
+
+  useEffect(() => {
+    if (!token || !conversationId || messages.length === 0) return;
+    const ids = messages.map((m) => m.id);
+    void warmMessageTranslationsFromSqlite(token, ids, translateTargetLang).then(
+      () => {
+        const patch: Record<string, string> = {};
+        for (const msg of messages) {
+          const mine = Boolean(myId && msg.senderUserId === myId);
+          const source = translatablePeerText(msg, mine);
+          if (!source) continue;
+          const tr = getCachedMessageTranslation(msg.id, translateTargetLang);
+          if (tr && tr.trim() !== source.trim()) patch[msg.id] = tr;
+        }
+        if (Object.keys(patch).length === 0) return;
+        setPeerTranslations((prev) => {
+          let changed = false;
+          const next = { ...prev };
+          for (const [id, text] of Object.entries(patch)) {
+            if (next[id] !== text) {
+              next[id] = text;
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      },
+    );
+  }, [token, conversationId, messages, myId, translateTargetLang]);
+
+  useEffect(() => {
+    if (!token || !conversationId) return;
+    let cancelled = false;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void ensureThreadTranslations(
+        token,
+        conversationId,
+        messages,
+        myId,
+        (patch) => {
+          if (cancelled) return;
+          setPeerTranslations((prev) => {
+            let changed = false;
+            const next = { ...prev };
+            for (const [id, text] of Object.entries(patch)) {
+              if (next[id] !== text) {
+                next[id] = text;
+                changed = true;
+              }
+            }
+            return changed ? next : prev;
+          });
+        },
+      );
+    });
+    return () => {
+      cancelled = true;
+      task.cancel?.();
+    };
+  }, [token, conversationId, messages, myId]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -2403,6 +2477,7 @@ export default function ChatThreadScreen() {
           styles={styles}
           handlersRef={messageRowHandlersRef}
           registerReactAnchor={registerReactAnchor}
+          peerTranslations={peerTranslations}
         />
       );
     },
@@ -2423,6 +2498,7 @@ export default function ChatThreadScreen() {
       colors,
       styles,
       registerReactAnchor,
+      peerTranslations,
     ],
   );
 

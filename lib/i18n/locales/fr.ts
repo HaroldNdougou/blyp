@@ -533,6 +533,7 @@ export default {
       "Suppression pour tout le monde impossible (délai dépassé ou transfert déjà traité).",
     deletedForAllMine: "Vous avez supprimé ce message",
     deletedForAllTheirs: "Ce message a été supprimé",
+    autoTranslatedA11y: "Message traduit automatiquement",
     emojiShowPicker: "Emojis",
     emojiShowKeyboard: "Clavier",
     emojiPickA11y: "Insérer {{emoji}}",

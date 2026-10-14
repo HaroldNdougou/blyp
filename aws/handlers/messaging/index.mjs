@@ -46,6 +46,7 @@ import {
   presignVoicePlay,
   presignVoiceUpload,
 } from "../../lib/media.mjs";
+import { translateTextBatch } from "../../lib/translate.mjs";
 
 async function requireUserId(event) {
   const token = event.headers?.authorization ?? event.headers?.Authorization;
@@ -104,6 +105,23 @@ export async function handler(event) {
       if (result.error === "USER_NOT_FOUND") {
         return notFound("Utilisateur introuvable");
       }
+      return ok(result);
+    }
+
+    const translateMatch = path.match(/^\/conversations\/([^/]+)\/translate$/);
+    if (translateMatch && method === "POST") {
+      const conversationId = decodeURIComponent(translateMatch[1]);
+      const member = await assertMember(conversationId, userId);
+      if (!member) return forbidden("Accès refusé");
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("JSON invalide");
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (items.length === 0) return badRequest("items requis");
+      if (items.length > 32) {
+        return badRequest("Trop de messages à traduire");
+      }
+      const targetLanguage = String(body.targetLanguage ?? "en");
+      const result = await translateTextBatch(items, targetLanguage);
       return ok(result);
     }
 

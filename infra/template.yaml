@@ -525,6 +525,11 @@ Resources:
             QueueName: !GetAtt PushQueue.QueueName
         - S3CrudPolicy:
             BucketName: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - translate:TranslateText
+              Resource: "*"
       Events:
         ListConversations:
           Type: HttpApi
@@ -555,6 +560,12 @@ Resources:
           Properties:
             ApiId: !Ref BlypApi
             Path: /conversations/{id}/messages
+            Method: POST
+        TranslateMessages:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /conversations/{id}/translate
             Method: POST
         ClaimMoney:
           Type: HttpApi

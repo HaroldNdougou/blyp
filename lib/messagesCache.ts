@@ -444,6 +444,10 @@ function migrateOwnerKey(from: string, to: string) {
   }
 }
 
+export function getMessagesCacheOwnerPhone(): string | null {
+  return ownerPhone;
+}
+
 /** Clé persist = téléphone, pas le JWT (refresh / relog). */
 export function bindMessagesCacheOwner(
   phone: string | null,

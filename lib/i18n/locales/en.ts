@@ -527,6 +527,7 @@ export default {
       "Delete for everyone is not available (time limit or transfer already handled).",
     deletedForAllMine: "You deleted this message",
     deletedForAllTheirs: "This message was deleted",
+    autoTranslatedA11y: "Automatically translated message",
     emojiShowPicker: "Emojis",
     emojiShowKeyboard: "Keyboard",
     emojiPickA11y: "Insert {{emoji}}",

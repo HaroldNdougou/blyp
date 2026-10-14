@@ -801,6 +801,21 @@ export function mockListMessages(_token: string, conversationId: string) {
   };
 }
 
+/** Démo hors-ligne : préfixe la cible pour simuler une traduction. */
+export function mockTranslateChatMessages(
+  targetLanguage: string,
+  items: { id: string; text: string }[],
+) {
+  const tag = String(targetLanguage || "en").toUpperCase();
+  return {
+    targetLanguage: tag,
+    items: items.map((row) => ({
+      id: row.id,
+      translatedText: `[${tag}] ${row.text}`,
+    })),
+  };
+}
+
 export function mockSendTextMessage(
   _token: string,
   conversationId: string,
