@@ -194,3 +194,11 @@ export function formatTransactionDate(iso: string): string {
   });
 }
 
+/** Taille fichier pour bulles document (octets → Ko / Mo). */
+export function formatFileSize(bytes: number): string {
+  const n = Math.max(0, Math.floor(Number(bytes) || 0));
+  if (n < 1024) return `${n} o`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10_240 ? 1 : 0)} Ko`;
+  return `${(n / (1024 * 1024)).toFixed(1)} Mo`;
+}
+

@@ -32,6 +32,8 @@ import {
 } from "@/lib/messages/deletedListPreview";
 import { createMessagesStyles } from "@/components/messages/messagesStyles";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
+import { DocumentListGlyph } from "@/components/messages/DocumentListGlyph";
+import { documentNameFromListPreview } from "@/lib/document/kind";
 import { previewTickForConversation } from "@/lib/messages/previewTicks";
 import { prefetchChatThreadOnPressIn } from "@/lib/messages/prefetchChatThread";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
@@ -60,6 +62,7 @@ type ConversationRowProps = {
   previewTick: "sent" | "delivered" | "read" | null;
   previewDeleted: boolean;
   previewText: string;
+  previewDocumentIcon: boolean;
   onOpen: (id: string) => void;
   onPressIn: (id: string) => void;
   unreadLabel: string;
@@ -74,6 +77,7 @@ const ConversationRow = React.memo(function ConversationRow({
   previewTick,
   previewDeleted,
   previewText,
+  previewDocumentIcon,
   onOpen,
   onPressIn,
   unreadLabel,
@@ -120,12 +124,19 @@ const ConversationRow = React.memo(function ConversationRow({
               }
             />
           ) : null}
+          {previewDocumentIcon && !previewDeleted ? (
+            <DocumentListGlyph
+              color={unread > 0 ? colors.text : colors.textMuted}
+              style={styles.rowDocumentGlyph}
+            />
+          ) : null}
           <Text
             style={[
               previewStyle,
               styles.rowPreviewText,
               previewDeleted && { fontStyle: "italic" },
             ]}
+            numberOfLines={1}
           >
             {previewText}
           </Text>
@@ -246,30 +257,33 @@ export default function ConversationsScreen() {
           if (!cancelled) setLoading(true);
         })();
       }
-      void (async () => {
-        try {
-          const { ensureSessionFresh, listConversations } = await import(
-            "@/lib/api/client"
-          );
-          await ensureSessionFresh();
-          const access = getAccessToken();
-          if (!access || cancelled) return;
-          const { items: next } = await listConversations(access);
-          if (cancelled) return;
-          setConversationsSnapshot(access, next);
-          const stored = getConversationsSnapshot(access) ?? next;
-          setItems((prev) =>
-            conversationsEqual(prev, stored) ? prev : stored,
-          );
-        } catch {
-          // hors-ligne : on garde la copie locale
-        } finally {
-          if (!cancelled) {
-            setLoading(false);
-            endMark();
+      const syncNet = () => {
+        void (async () => {
+          try {
+            const { ensureSessionFresh, listConversations } = await import(
+              "@/lib/api/client"
+            );
+            await ensureSessionFresh();
+            const access = getAccessToken();
+            if (!access || cancelled) return;
+            const { items: next } = await listConversations(access);
+            if (cancelled) return;
+            setConversationsSnapshot(access, next);
+            const stored = getConversationsSnapshot(access) ?? next;
+            setItems((prev) =>
+              conversationsEqual(prev, stored) ? prev : stored,
+            );
+          } catch {
+            // hors-ligne : on garde la copie locale
+          } finally {
+            if (!cancelled) {
+              setLoading(false);
+              endMark();
+            }
           }
-        }
-      })();
+        })();
+      };
+      InteractionManager.runAfterInteractions(syncNet);
       return () => {
         cancelled = true;
       };
@@ -300,6 +314,13 @@ export default function ConversationsScreen() {
       if (p && p !== "IMAGE" && p !== "📷") return p;
       return t("messages.imagePreview");
     }
+    if (c.lastMessageType === "document") {
+      const p = String(c.lastMessagePreview ?? "").trim();
+      if (p && !p.startsWith("📄")) return p;
+      const name = documentNameFromListPreview(p);
+      if (name) return name;
+      return t("messages.documentPreview");
+    }
     if (c.lastMessageType === "reaction") {
       const { mine, emoji } = parseReactionListPreview(c.lastMessagePreview);
       if (!emoji) return t("messages.reactionPreviewBare");
@@ -307,10 +328,13 @@ export default function ConversationsScreen() {
       return t("messages.reactionPreview", { emoji });
     }
     if (c.lastMessageType === "money") {
-      const n = parseInt(c.lastMessagePreview.replace(/\D/g, ""), 10);
+      const p = String(c.lastMessagePreview ?? "").trim();
+      if (p && /[A-Za-zÀ-ÿ]/.test(p)) return p;
+      const n = parseInt(p.replace(/\D/g, ""), 10);
       if (Number.isFinite(n) && n > 0) {
         return t("messages.moneyPreview", { amount: formatFcfa(n) });
       }
+      if (p) return p;
     }
     return c.lastMessagePreview || t("messages.emptyHint");
   },
@@ -318,7 +342,7 @@ export default function ConversationsScreen() {
   );
 
   const openChat = useCallback((id: string) => {
-    router.push(`/chat/${encodeURIComponent(id)}`);
+    router.push(`/chat/${encodeURIComponent(id)}` as const);
   }, []);
 
   const warmChatOnPressIn = useCallback(
@@ -403,6 +427,13 @@ export default function ConversationsScreen() {
                 previewTick={previewTick}
                 previewDeleted={previewDeleted}
                 previewText={previewFor(item)}
+                previewDocumentIcon={
+                  !typing &&
+                  item.lastMessageType === "document" &&
+                  !(
+                    token && lastDeletedMessageInThread(token, item.id)
+                  )
+                }
                 onOpen={openChat}
                 onPressIn={warmChatOnPressIn}
                 unreadLabel={t("messages.unreadCount", { count: unread })}

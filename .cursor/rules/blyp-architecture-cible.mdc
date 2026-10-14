@@ -47,5 +47,6 @@ alwaysApply: true
 ## Travail agent
 
 - Lire `docs/ARCHITECTURE-CIBLE.md` pour le détail (phases, checklist, anti-patterns).
+- Stratégie mobile hybride : `docs/HYBRIDE-RN-NATIF.md` + `blyp-hybrid-native.mdc` (RN + natif ciblé + infra + tuning continu).
 - Ne pas proposer Railway comme hébergement prod pour l’échelle visée.
 - Prioriser : app perçue instantanée → API légère région Afrique → wallet fiable → scale infra.

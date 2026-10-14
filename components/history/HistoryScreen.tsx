@@ -36,6 +36,7 @@ import React, {
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
+  InteractionManager,
   Pressable,
   StyleSheet,
   Text,
@@ -306,28 +307,38 @@ export default function HistoryScreen() {
           }
         }
 
-        try {
-          const items = await syncTransactionsFromNetwork(token, phone);
-          if (cancelled) return;
-          applySnapshot(items);
-          setError(null);
-        } catch (e) {
-          if (
-            !cancelled &&
-            !getTransactionsSnapshot(phone) &&
-            !ram
-          ) {
-            setError(
-              e instanceof ApiError ? e.message : t("history.loadFailed"),
-            );
-            setRows([]);
-            snapshotRef.current = null;
-          }
-        } finally {
-          if (!cancelled) {
-            setLoading(false);
-            perfMarkEnd("history_open");
-          }
+        const syncNet = () => {
+          void (async () => {
+            try {
+              const items = await syncTransactionsFromNetwork(token, phone);
+              if (cancelled) return;
+              applySnapshot(items);
+              setError(null);
+            } catch (e) {
+              if (
+                !cancelled &&
+                !getTransactionsSnapshot(phone) &&
+                !ram
+              ) {
+                setError(
+                  e instanceof ApiError ? e.message : t("history.loadFailed"),
+                );
+                setRows([]);
+                snapshotRef.current = null;
+              }
+            } finally {
+              if (!cancelled) {
+                setLoading(false);
+                perfMarkEnd("history_open");
+              }
+            }
+          })();
+        };
+
+        if (ram) {
+          InteractionManager.runAfterInteractions(syncNet);
+        } else {
+          syncNet();
         }
       })();
 

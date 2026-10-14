@@ -1,0 +1,49 @@
+---
+description: Blyp — chaque nouvelle feature DOIT passer cache + defer + gates (surveillance agents)
+alwaysApply: true
+---
+
+# Blyp — contrat feature (cache · defer · gates)
+
+Blyp **grandit feature par feature**. Chaque ajout est autorisé **seulement** s’il respecte ce contrat.  
+Référence humaine : **`docs/CHECKLIST-NOUVELLE-FEATURE.md`**.  
+Perf globale : **`blyp-perf-light.mdc`** · Hybride : **`blyp-hybrid-native.mdc`**.
+
+## Les 3 gates (obligatoires)
+
+| Gate | Règle |
+|------|--------|
+| **Cache** | Au clic / focus / ouverture : l’UI lit **RAM ou SQLite** en premier ; **jamais** d’écran vide ou spinner si un snapshot existe. |
+| **Defer** | Réseau, hydrate lourde, decode, gros `import()` : **après** le 1er paint (`InteractionManager.runAfterInteractions` ou `import()` différé), pas avant. |
+| **Gates (throttle)** | Pas de refetch systématique au focus : intervalle min, delta, « skip si snapshot inchangé », push/realtime → cache d’abord. Ex. `threadPullGate`, égalité listes. |
+
+**Feedback utilisateur (tap, envoi, swipe)** : optimiste **immédiat** ; rollback si échec — pas d’`await` API avant d’afficher la bulle / le montant / la ligne.
+
+## Surveillance agents (à chaque session de dev)
+
+Quand tu **ajoutes ou modifies** `app/`, `components/`, `lib/` (UI, sync, navigation) :
+
+1. **Lire le diff** : toute nouvelle `useFocusEffect` / `useEffect` au focus → vérifier cache + defer + pas de refetch full sans gate.
+2. **Imports** : pas de module lourd en **sync** sur Pay, tab bar, `_layout` racine ; prefetch (`eagerRoutes`, `aggressiveWarm`, `onPressIn`) si parcours fréquent.
+3. **setState** : après sync, **skip** si référence ou égalité métier inchangée (`*Equal`, même snapshot RAM).
+4. **Nouvel écran / onglet / modal** : checklist `docs/CHECKLIST-NOUVELLE-FEATURE.md` + mark perf si ouverture critique (`lib/perf/marks.ts`).
+5. **Régression** : si une feature existante devient « refetch au focus » ou bloque le thread → **corriger dans le même diff**, pas ticket « plus tard ».
+
+## Signaux rouges (interdits sauf exception documentée)
+
+- `useFocusEffect` → `await` API **avant** d’avoir peint le cache local.
+- Spinner sur onglet déjà visité alors que le snapshot RAM est non vide.
+- `import` sync en tête de fichier pour PDF, picker, grosse lib sur le chemin Messages/Pay **sans** lazy + warm.
+- Listener global (AppState, netinfo) qui refetch **tout** à chaque resume.
+- Travail O(n) sur toute la liste au focus (re-format, re-map) si les données n’ont pas changé.
+
+## Patterns à réutiliser (ne pas réinventer)
+
+- Tx : `transactionsCache`, `historyUiCache`, `syncTransactionsFromNetwork`
+- Messages : `messagesCache`, `threadPullGate`, `prefetchChatThreadOnPressIn`
+- Warm : `lib/perf/aggressiveWarm.ts`, `lib/perf/eagerRoutes.ts`
+- Offline : `lib/offline/queue.ts`
+
+## Message produit
+
+**Plus de features ≠ plus lent** — seulement si **chaque** feature paie les 3 gates. Refuser ou refactoriser le code qui viole ce contrat, même si la feature métier est « finie ».

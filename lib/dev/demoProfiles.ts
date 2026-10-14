@@ -333,6 +333,105 @@ export function demoApiResponse<T>(
   if (profile && method.toUpperCase() === "POST" && type === "image-play") {
     return { url: "mock://image", expiresIn: 600 } as T;
   }
+  if (profile && method.toUpperCase() === "POST" && type === "document-presign") {
+    const cid = conversationId(profile);
+    const parsed = JSON.parse(String(body ?? "{}")) as {
+      contentType?: unknown;
+      fileName?: unknown;
+    };
+    const fileName = String(parsed.fileName ?? "").trim() || "document.pdf";
+    const ext = fileName.includes(".") ? fileName.split(".").pop() : "pdf";
+    const contentType =
+      String(parsed.contentType ?? "").trim() || "application/octet-stream";
+    return {
+      uploadUrl: "mock://document",
+      key: `doc/${cid}/demo/mock.${ext}`,
+      contentType,
+      expiresIn: 300,
+    } as T;
+  }
+  if (profile && method.toUpperCase() === "POST" && type === "document-thumb-presign") {
+    const cid = conversationId(profile);
+    return {
+      uploadUrl: "mock://document-thumb",
+      key: `doc-thumb/${cid}/demo/mock.jpg`,
+      contentType: "image/jpeg",
+      expiresIn: 300,
+    } as T;
+  }
+  if (profile && method.toUpperCase() === "POST" && type === "document-thumb-download") {
+    let parsed: { key?: unknown } = {};
+    try {
+      parsed = JSON.parse(String(body ?? "{}")) as typeof parsed;
+    } catch {
+      throw new ApiError(i18n.t("messages.documentOpenFailed"), 400);
+    }
+    const key = String(parsed.key ?? "").trim();
+    if (!key) throw new ApiError(i18n.t("messages.documentOpenFailed"), 400);
+    return { url: key, expiresIn: 600 } as T;
+  }
+  if (profile && method.toUpperCase() === "POST" && type === "document-download") {
+    let parsed: { key?: unknown } = {};
+    try {
+      parsed = JSON.parse(String(body ?? "{}")) as typeof parsed;
+    } catch {
+      throw new ApiError(i18n.t("messages.documentOpenFailed"), 400);
+    }
+    const key = String(parsed.key ?? "").trim();
+    if (!key) throw new ApiError(i18n.t("messages.documentOpenFailed"), 400);
+    return { url: key, expiresIn: 600 } as T;
+  }
+  if (profile && method.toUpperCase() === "POST" && type === "document") {
+    let parsed: {
+      key?: unknown;
+      fileName?: unknown;
+      sizeBytes?: unknown;
+      contentType?: unknown;
+      clientId?: unknown;
+      replyToMessageId?: unknown;
+      thumbKey?: unknown;
+      pageCount?: unknown;
+    } = {};
+    try {
+      parsed = JSON.parse(String(body ?? "{}")) as typeof parsed;
+    } catch {
+      throw new ApiError(i18n.t("messages.documentSendFailed"), 400);
+    }
+    const key = String(parsed.key ?? "").trim();
+    const clientId = String(parsed.clientId ?? "").trim() || `c-${Date.now()}`;
+    const fileName = String(parsed.fileName ?? "").trim() || "document";
+    const sizeBytes = Math.max(0, Math.floor(Number(parsed.sizeBytes) || 0));
+    const contentType =
+      String(parsed.contentType ?? "").trim() || "application/octet-stream";
+    const thumbKey = String(parsed.thumbKey ?? "").trim();
+    const pages = Math.max(0, Math.floor(Number(parsed.pageCount) || 0));
+    if (!key) throw new ApiError(i18n.t("messages.documentSendFailed"), 400);
+    const myId = userIdFromToken(token);
+    const now = new Date().toISOString();
+    const message: ChatMessage = {
+      id: `m-doc-${clientId}`,
+      conversationId: conversationId(profile),
+      senderUserId: myId,
+      type: "document",
+      body: null,
+      moneyTransfer: null,
+      document: {
+        key,
+        fileName,
+        sizeBytes,
+        contentType,
+        thumbKey: thumbKey || undefined,
+        pageCount: pages > 0 ? pages : undefined,
+      },
+      reactions: [],
+      createdAt: now,
+      clientId,
+    };
+    const k = `${myId}::${profile.key}`;
+    const list = [...demoMessages(profile, myId), message];
+    messagesCache.set(k, list);
+    return { message } as T;
+  }
   if (profile && method.toUpperCase() === "POST" && type === "image") {
     let parsed: {
       key?: unknown;

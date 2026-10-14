@@ -116,6 +116,10 @@ export function runAggressiveWarm(opts: {
             peerLastReadAt: peerLastReadAt ?? null,
             peerLastDeliveredAt: peerLastDeliveredAt ?? null,
           });
+          const { markThreadMessagesPulled } = await import(
+            "@/lib/messages/threadPullGate"
+          );
+          markThreadMessagesPulled(c.id);
         }
       } catch {
         /* best effort */

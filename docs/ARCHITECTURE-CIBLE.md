@@ -169,15 +169,23 @@ GSI selon besoins (ex. liste tx par statut admin — limité).
 
 ---
 
-## 9. Dev mobile (existant)
+## 9. Stratégie hybride mobile (RN + natif)
+
+- **RN** pour le produit et le cache-first ; **natif ciblé** pour les moteurs (fil/gestes, voix, thumbs/docs, BLE) quand les métriques le justifient.
+- **Infra + tuning continu** : push → cache, delta sync, CDN médias, budgets sur appareil réel.
+- Référence complète : **`docs/HYBRIDE-RN-NATIF.md`** et **`.cursor/rules/blyp-hybrid-native.mdc`**.
+
+---
+
+## 10. Dev mobile (existant)
 
 - Tests sur **Redmi 9C** physique, USB, pas d’émulateur par défaut (voir `.cursor/rules/android-dev-device.mdc`).
 
 ---
 
-## 10. Phrase pour reprendre une session
+## 11. Phrase pour reprendre une session
 
-> « On continue Blyp : lis `docs/ARCHITECTURE-CIBLE.md` et la règle `.cursor/rules/blyp-architecture-cible.mdc` — full AWS, latence Google, sécurité ultra. Vocaux plus tard : `docs/VOICE-MESSAGES.md`. »
+> « On continue Blyp : lis `docs/ARCHITECTURE-CIBLE.md`, `docs/HYBRIDE-RN-NATIF.md` et les règles `blyp-architecture-cible.mdc` + `blyp-hybrid-native.mdc` — full AWS, latence Google, hybride RN/natif. Vocaux : `docs/VOICE-MESSAGES.md`. »
 
 ---
 

@@ -939,6 +939,156 @@ export async function sendImageMessage(
   );
 }
 
+export async function presignDocumentUpload(
+  token: string,
+  conversationId: string,
+  contentType: string,
+  fileName: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return {
+      uploadUrl: "mock://document",
+      key: `doc/${conversationId}/me/mock.pdf`,
+      contentType: contentType || "application/pdf",
+      expiresIn: 300,
+    };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        type: "document-presign",
+        contentType,
+        fileName,
+      }),
+    },
+  );
+}
+
+export async function presignDocumentDownload(
+  token: string,
+  conversationId: string,
+  key: string,
+): Promise<{ url: string; expiresIn?: number }> {
+  if (USE_MOCK_API) {
+    return { url: key, expiresIn: 600 };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "document-download", key }),
+    },
+  );
+}
+
+export async function presignDocumentThumbUpload(
+  token: string,
+  conversationId: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return {
+      uploadUrl: "mock://document-thumb",
+      key: `doc-thumb/${conversationId}/me/mock.jpg`,
+      contentType: "image/jpeg",
+      expiresIn: 300,
+    };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "document-thumb-presign" }),
+    },
+  );
+}
+
+export async function presignDocumentThumbDownload(
+  token: string,
+  conversationId: string,
+  key: string,
+): Promise<{ url: string; expiresIn?: number }> {
+  if (USE_MOCK_API) {
+    return { url: key, expiresIn: 600 };
+  }
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({ type: "document-thumb-download", key }),
+    },
+  );
+}
+
+export async function sendDocumentMessage(
+  token: string,
+  conversationId: string,
+  key: string,
+  fileName: string,
+  sizeBytes: number,
+  contentType: string,
+  clientId: string,
+  replyToMessageId?: string | null,
+  thumbKey?: string | null,
+  pageCount?: number | null,
+  caption?: string | null,
+): Promise<{ message: import("./types").ChatMessage }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSendDocumentMessage(
+      token,
+      conversationId,
+      key,
+      fileName,
+      sizeBytes,
+      contentType,
+      clientId,
+      replyToMessageId,
+      thumbKey,
+      pageCount,
+      caption,
+    );
+  }
+  const cap = String(caption ?? "").trim();
+  const payload: Record<string, unknown> = {
+    type: "document",
+    key,
+    fileName,
+    sizeBytes,
+    contentType,
+    clientId,
+  };
+  if (cap) payload.caption = cap;
+  const thumb = String(thumbKey ?? "").trim();
+  if (thumb) payload.thumbKey = thumb;
+  const pages = Math.floor(Number(pageCount) || 0);
+  if (pages > 0) payload.pageCount = pages;
+  const replyId = String(replyToMessageId ?? "").trim();
+  if (replyId) payload.replyToMessageId = replyId;
+  return request(
+    `/conversations/${encodeURIComponent(conversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
 export type DeleteMessageScope = "me" | "everyone";
 
 export async function deleteChatMessage(
@@ -1040,6 +1190,7 @@ export async function sendMoneyMessage(
   idempotencyKey: string,
   transactionPin: string,
   replyToMessageId?: string | null,
+  caption?: string | null,
 ): Promise<{
   message: import("./types").ChatMessage;
   balanceFcfa: number;
@@ -1053,8 +1204,10 @@ export async function sendMoneyMessage(
       idempotencyKey,
       transactionPin,
       replyToMessageId,
+      caption,
     );
   }
+  const cap = String(caption ?? "").trim();
   const payload: Record<string, unknown> = {
     type: "money",
     amount,
@@ -1062,6 +1215,7 @@ export async function sendMoneyMessage(
     idempotencyKey,
     transactionPin,
   };
+  if (cap) payload.caption = cap;
   const replyId = String(replyToMessageId ?? "").trim();
   if (replyId) payload.replyToMessageId = replyId;
   return request(

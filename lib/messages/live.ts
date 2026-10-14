@@ -561,7 +561,9 @@ function chatMessageFromPush(p: ParsedMessagePush): ChatMessage | null {
         ? "voice"
         : p.messageType === "image"
           ? "image"
-          : "text";
+          : p.messageType === "document"
+            ? "document"
+            : "text";
   const amount = p.amountFcfa;
   const isMoney = type === "money" || (amount > 0 && /💰|fcfa|f\b/i.test(p.body));
   const kind: ChatMessage["type"] = isMoney ? "money" : type;
@@ -572,7 +574,7 @@ function chatMessageFromPush(p: ParsedMessagePush): ChatMessage | null {
     senderUserId: p.senderUserId || "peer",
     type: kind,
     body:
-      kind === "money" || kind === "voice"
+      kind === "money" || kind === "voice" || kind === "document"
         ? null
         : kind === "image"
           ? stripImagePushPrefix(p.body)
@@ -593,6 +595,16 @@ function chatMessageFromPush(p: ParsedMessagePush): ChatMessage | null {
         : null,
     voice: kind === "voice" ? { key: "", durationMs: 0 } : null,
     image: kind === "image" ? { key: "", width: 0, height: 0 } : null,
+    document:
+      kind === "document"
+        ? {
+            key: "",
+            fileName: String(p.body ?? "")
+              .replace(/^📄\s*/, "")
+              .trim() || "document",
+            sizeBytes: 0,
+          }
+        : null,
     createdAt: p.createdAt,
     clientId: null,
   };

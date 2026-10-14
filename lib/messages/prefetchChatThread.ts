@@ -1,8 +1,10 @@
 import { ensureMessagesSnapshotFromDb } from "@/lib/messagesCache";
 import { perfMarkStart } from "@/lib/perf/marks";
+import { InteractionManager } from "react-native";
 
 /**
- * Dès le toucher sur une ligne de conversation : module thread + SQLite + perms galerie.
+ * Dès le toucher sur une ligne : charger le chunk fil + SQLite uniquement.
+ * Le reste après transition — ne pas saturer le thread au `push`.
  */
 export function prefetchChatThreadOnPressIn(opts: {
   conversationId: string;
@@ -16,8 +18,12 @@ export function prefetchChatThreadOnPressIn(opts: {
   if (opts.phone) {
     void ensureMessagesSnapshotFromDb(opts.phone, opts.token, cid);
   }
-  void import("@/lib/image/pickFromLibrary").then((m) =>
-    m.warmImageLibraryPermission(),
-  );
-  void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
+  InteractionManager.runAfterInteractions(() => {
+    void import("@/lib/image/pickFromLibrary").then((m) =>
+      m.warmImageLibraryPermission(),
+    );
+    void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
+    void import("@/lib/messages/chatLongPressHaptic");
+    void import("@/components/messages/SwipeToReplyWrap");
+  });
 }

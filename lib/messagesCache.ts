@@ -780,11 +780,21 @@ function bumpConversationFromPushedMessage(token: string, msg: ChatMessage) {
         ? "🎤"
         : msg.type === "image"
           ? String(msg.body ?? "").trim() || "📷"
-          : String(msg.body ?? "");
+          : msg.type === "document"
+            ? (() => {
+                const name = String(msg.document?.fileName ?? "").trim();
+                return name
+                  ? name.length > 72
+                    ? `📄 ${name.slice(0, 69)}…`
+                    : `📄 ${name}`
+                  : "📄";
+              })()
+            : String(msg.body ?? "");
   const lastMessageType: Conversation["lastMessageType"] =
     msg.type === "money" ||
     msg.type === "voice" ||
-    msg.type === "image"
+    msg.type === "image" ||
+    msg.type === "document"
       ? msg.type
       : "text";
   const sub = accessTokenSubject(token);

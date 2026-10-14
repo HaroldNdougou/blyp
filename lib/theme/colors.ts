@@ -66,6 +66,9 @@ export type ThemeColors = {
   tickRead: string;
   /** Dégradé bas des photos (heure / coches). */
   imageMetaScrim: string;
+  /** Aperçu page document (style WhatsApp, reste clair en mode sombre). */
+  documentPreviewPage: string;
+  documentPreviewLine: string;
   switchTrackOff: string;
   switchTrackOn: string;
   switchThumbOff: string;
@@ -136,6 +139,8 @@ export const lightColors: ThemeColors = {
   tickSent: "#8E8E93",
   tickRead: "#53BDEB",
   imageMetaScrim: "rgba(0,0,0,0.38)",
+  documentPreviewPage: "#E9EDEF",
+  documentPreviewLine: "#8696A0",
   switchTrackOff: "#D1D1D6",
   switchTrackOn: "#A8E07A",
   switchThumbOff: "#FFFFFF",
@@ -203,6 +208,8 @@ export const darkColors: ThemeColors = {
   tickSent: "#8E8E93",
   tickRead: "#53BDEB",
   imageMetaScrim: "rgba(0,0,0,0.45)",
+  documentPreviewPage: "#E9EDEF",
+  documentPreviewLine: "#8696A0",
   switchTrackOff: "#636366",
   switchTrackOn: "#4BB004",
   switchThumbOff: "#F5F5F7",

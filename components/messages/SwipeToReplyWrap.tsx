@@ -10,7 +10,7 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 
-const THRESHOLD = 44;
+const THRESHOLD = 40;
 const MAX_DRAG = 72;
 
 type Props = {
@@ -23,31 +23,49 @@ export function SwipeToReplyWrap({ children, enabled, onReply }: Props) {
   const { colors } = useTheme();
   const tx = useSharedValue(0);
   const fired = useSharedValue(false);
+  const hapticArmed = useSharedValue(false);
   const onReplyRef = useRef(onReply);
   onReplyRef.current = onReply;
+
   const triggerReply = useCallback(() => {
     onReplyRef.current();
   }, []);
 
-  const pan = useMemo(() => {
-    return Gesture.Pan()
+  const bumpHaptic = useCallback(() => {
+    void import("@/lib/messages/chatLongPressHaptic").then((m) =>
+      m.fireChatLongPressHaptic(),
+    );
+  }, []);
+
+  const gesture = useMemo(() => {
+    const pan = Gesture.Pan()
       .enabled(enabled)
-      .activeOffsetX(8)
-      .failOffsetX(-8)
-      .failOffsetY([-14, 14])
+      .activeOffsetX(5)
+      .failOffsetX(-6)
+      .failOffsetY([-18, 18])
       .onUpdate((e) => {
         const x = Math.max(0, Math.min(e.translationX, MAX_DRAG));
         tx.value = x;
+        if (x >= THRESHOLD && !hapticArmed.value) {
+          hapticArmed.value = true;
+          runOnJS(bumpHaptic)();
+        }
+        if (x < THRESHOLD * 0.65) {
+          hapticArmed.value = false;
+        }
         fired.value = x >= THRESHOLD;
       })
       .onEnd(() => {
         if (fired.value) {
           runOnJS(triggerReply)();
         }
-        tx.value = withSpring(0, { damping: 20, stiffness: 380 });
+        tx.value = withSpring(0, { damping: 22, stiffness: 420 });
         fired.value = false;
+        hapticArmed.value = false;
       });
-  }, [enabled, fired, tx, triggerReply]);
+
+    return Gesture.Simultaneous(Gesture.Native(), pan);
+  }, [bumpHaptic, enabled, fired, hapticArmed, tx, triggerReply]);
 
   const rowStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: tx.value }],
@@ -78,7 +96,7 @@ export function SwipeToReplyWrap({ children, enabled, onReply }: Props) {
       >
         <Ionicons name="arrow-undo" size={22} color={colors.accent} />
       </Animated.View>
-      <GestureDetector gesture={pan}>
+      <GestureDetector gesture={gesture}>
         <Animated.View
           style={[rowStyle, { alignSelf: "flex-start", maxWidth: "100%" }]}
         >

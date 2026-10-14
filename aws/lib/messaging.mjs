@@ -207,7 +207,15 @@ function buildReplyPreview(m, moneyTransfer) {
     const cap = String(m.body ?? "").trim();
     return cap || null;
   }
+  if (type === "document") {
+    const cap = String(m.body ?? "").trim();
+    if (cap) return cap.length > 120 ? `${cap.slice(0, 117)}…` : cap;
+    const name = String(m.documentFileName ?? "").trim();
+    return name || null;
+  }
   if (type === "money" && moneyTransfer?.amountFcfa != null) {
+    const cap = String(m.body ?? "").trim();
+    if (cap) return cap.length > 120 ? `${cap.slice(0, 117)}…` : cap;
     const amount = Number(moneyTransfer.amountFcfa) || 0;
     return `💰 ${amount.toLocaleString("fr-FR")} F`;
   }
@@ -225,6 +233,7 @@ function messagePublic(m) {
       moneyTransfer: null,
       voice: null,
       image: null,
+      document: null,
       reactions: [],
       replyTo: null,
       createdAt: m.createdAt,
@@ -247,6 +256,24 @@ function messagePublic(m) {
           height: Number(m.imageHeight) || 0,
         }
       : null;
+  const document =
+    m.type === "document" && m.documentKey
+      ? {
+          key: m.documentKey,
+          fileName: String(m.documentFileName ?? "").trim() || "document",
+          sizeBytes: Number(m.documentSizeBytes) || 0,
+          contentType: m.documentContentType
+            ? String(m.documentContentType)
+            : undefined,
+          thumbKey: m.documentThumbKey
+            ? String(m.documentThumbKey)
+            : undefined,
+          pageCount:
+            Number(m.documentPageCount) > 0
+              ? Number(m.documentPageCount)
+              : undefined,
+        }
+      : null;
   return {
     id: m.messageId,
     conversationId: m.conversationId,
@@ -256,6 +283,7 @@ function messagePublic(m) {
     moneyTransfer: m.moneyTransfer ?? null,
     voice,
     image,
+    document,
     reactions: Array.isArray(m.reactions) ? m.reactions : [],
     replyTo: replyToPublic(m),
     createdAt: m.createdAt,
@@ -726,7 +754,7 @@ export async function deleteMessage(userId, conversationId, messageId, scope) {
       TableName: getTableName(),
       Key: { PK: convPk(conversationId), SK: row.SK },
       UpdateExpression:
-        "SET deletedForAllAt = :now, body = :empty, #type = :text REMOVE voiceKey, voiceDurationMs, imageKey, imageWidth, imageHeight, transferId",
+        "SET deletedForAllAt = :now, body = :empty, #type = :text REMOVE voiceKey, voiceDurationMs, imageKey, imageWidth, imageHeight, documentKey, documentFileName, documentSizeBytes, documentContentType, documentThumbKey, documentPageCount, transferId",
       ExpressionAttributeNames: { "#type": "type" },
       ExpressionAttributeValues: {
         ":now": now,
@@ -1394,6 +1422,121 @@ export async function sendImageMessage(
   };
 }
 
+export async function sendDocumentMessage(
+  userId,
+  conversationId,
+  documentKey,
+  fileName,
+  sizeBytes,
+  contentType,
+  clientId,
+  replyToMessageId,
+  documentThumbKey,
+  pageCount,
+  caption,
+) {
+  const {
+    isOwnedDocumentKey,
+    isOwnedDocumentThumbKey,
+    sanitizeDocumentFileName,
+    clampDocumentSizeBytes,
+    clampDocumentPageCount,
+  } = await import("./media.mjs");
+  const key = String(documentKey ?? "").trim();
+  const name = sanitizeDocumentFileName(fileName);
+  const size = clampDocumentSizeBytes(sizeBytes);
+  if (!isOwnedDocumentKey(key, conversationId, userId) || size <= 0) {
+    return { error: "DOCUMENT_INVALID" };
+  }
+  const thumbKey = String(documentThumbKey ?? "").trim();
+  if (thumbKey && !isOwnedDocumentThumbKey(thumbKey, conversationId, userId)) {
+    return { error: "DOCUMENT_INVALID" };
+  }
+  const pages = clampDocumentPageCount(pageCount);
+  const text = String(caption ?? "").trim();
+  if (text.length > 2000) return { error: "BODY_INVALID" };
+
+  const member = await assertMember(conversationId, userId);
+  if (!member) return { error: "FORBIDDEN" };
+
+  const replyResolved = await resolveReplyFields(conversationId, replyToMessageId);
+  if (replyResolved.error) return { error: replyResolved.error };
+  const replyFields = replyResolved.replyFields ?? {};
+
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const messageId = randomUUID();
+  const ct = String(contentType ?? "").trim() || "application/octet-stream";
+
+  await doc.send(
+    new PutCommand({
+      TableName: getTableName(),
+      Item: {
+        PK: convPk(conversationId),
+        SK: msgSk(nowMs, messageId),
+        entityType: "MESSAGE",
+        messageId,
+        conversationId,
+        senderUserId: userId,
+        type: "document",
+        body: text || null,
+        documentKey: key,
+        documentFileName: name,
+        documentSizeBytes: size,
+        documentContentType: ct,
+        documentThumbKey: thumbKey || null,
+        documentPageCount: pages > 0 ? pages : null,
+        createdAt: now,
+        clientId: clientId || null,
+        ...replyFields,
+      },
+    }),
+  );
+
+  const preview = text
+    ? text.length > 80
+      ? `${text.slice(0, 77)}…`
+      : text
+    : name.length > 72
+      ? `📄 ${name.slice(0, 69)}…`
+      : `📄 ${name}`;
+  const pushBody = text ? `📄 ${text}` : preview;
+  await updateInboxes(conversationId, preview, "document", now, userId);
+  await notifyMessagePush(
+    conversationId,
+    userId,
+    messageId,
+    pushBody,
+    "document",
+    {
+      createdAt: now,
+      documentThumbKey: thumbKey || null,
+      documentPageCount: pages > 0 ? pages : null,
+    },
+  );
+  queueUnregisteredPeerInvite(conversationId, userId, "document");
+
+  return {
+    message: messagePublic({
+      messageId,
+      conversationId,
+      senderUserId: userId,
+      type: "document",
+      body: text || null,
+      documentKey: key,
+      documentFileName: name,
+      documentSizeBytes: size,
+      documentContentType: ct,
+      documentThumbKey: thumbKey || null,
+      documentPageCount: pages > 0 ? pages : null,
+      createdAt: now,
+      clientId: clientId || null,
+      moneyTransfer: null,
+      ...replyFields,
+    }),
+  };
+}
+
 export async function sendMoneyMessage(
   userId,
   conversationId,
@@ -1401,8 +1544,11 @@ export async function sendMoneyMessage(
   clientId,
   idempotencyKey,
   replyToMessageId,
+  caption,
 ) {
   if (!isValidTxAmount(amount)) return { error: "AMOUNT_INVALID" };
+  const text = String(caption ?? "").trim();
+  if (text.length > 2000) return { error: "BODY_INVALID" };
 
   const member = await assertMember(conversationId, userId);
   if (!member) return { error: "FORBIDDEN" };
@@ -1451,7 +1597,11 @@ export async function sendMoneyMessage(
   const expiresAt = new Date(nowMs + MONEY_TRANSFER_TTL_MS).toISOString();
   const transferId = randomUUID();
   const messageId = randomUUID();
-  const preview = `💰 ${amount.toLocaleString("fr-FR")} FCFA`;
+  const preview = text
+    ? text.length > 80
+      ? `${text.slice(0, 77)}…`
+      : text
+    : `💰 ${amount.toLocaleString("fr-FR")} FCFA`;
 
   const transferItem = {
     PK: mtPk(transferId),
@@ -1478,7 +1628,7 @@ export async function sendMoneyMessage(
     senderUserId: userId,
     type: "money",
     transferId,
-    body: null,
+    body: text || null,
     createdAt: now,
     clientId: clientId || null,
     ...replyFields,

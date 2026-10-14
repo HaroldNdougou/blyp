@@ -20,6 +20,7 @@ import {
   replyToFromMessage,
   withNormalizedReplyTo,
 } from "@/lib/messages/replyPreview";
+import { ChatAttachSheet } from "@/components/messages/ChatAttachSheet";
 import { ImageBubble } from "@/components/messages/ImageBubble";
 import {
   ImageCaptionComposer,
@@ -126,6 +127,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  StyleSheet,
   Text,
   TextInput,
   View,
@@ -257,7 +259,11 @@ export default function ChatThreadScreen() {
   const [sending, setSending] = useState(false);
   const [moneyOpen, setMoneyOpen] = useState(false);
   const [moneyStep, setMoneyStep] = useState<"amount" | "pin">("amount");
-  const moneyPinBioTriedRef = useRef(false);
+  const [pendingMoneyAmount, setPendingMoneyAmount] = useState<number | null>(
+    null,
+  );
+  const pendingMoneyAmountRef = useRef<number | null>(null);
+  const pendingMoneyCaptionRef = useRef("");
   const [pinDigits, setPinDigits] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinInputKey, setPinInputKey] = useState(0);
@@ -1542,6 +1548,12 @@ export default function ChatThreadScreen() {
   const [pendingImages, setPendingImages] = useState<PendingImageAsset[] | null>(
     null,
   );
+  const [attachSheetOpen, setAttachSheetOpen] = useState(false);
+  const [pendingDocument, setPendingDocument] = useState<{
+    file: import("@/lib/document/pick").PickedDocument;
+    thumbLocalUri: string | null;
+    pageCount?: number;
+  } | null>(null);
 
   const enqueueOptimisticImage = useCallback(
     (
@@ -1637,7 +1649,7 @@ export default function ChatThreadScreen() {
     ],
   );
 
-  const pickAndSendImage = async () => {
+  const pickAndQueueImages = async () => {
     if (!token || imagePickBusyRef.current || recUi !== "idle") return;
     imagePickBusyRef.current = true;
     try {
@@ -1656,6 +1668,146 @@ export default function ChatThreadScreen() {
       imagePickBusyRef.current = false;
     }
   };
+
+  const pickAndQueueDocument = async () => {
+    if (!token || recUi !== "idle") return;
+    try {
+      closeEmojiPanel();
+      const { pickDocumentFromDevice } = await import("@/lib/document/pick");
+      const file = await pickDocumentFromDevice();
+      if (!file) return;
+      const clientId = newClientId();
+      const { prepareDocumentSendArtifacts } = await import(
+        "@/lib/document/prepareSend"
+      );
+      const { thumbLocalUri, pageCount } = await prepareDocumentSendArtifacts(
+        file,
+        clientId,
+      );
+      setPendingDocument({ file, thumbLocalUri, pageCount });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      if (msg === "DOCUMENT_SIZE") {
+        Alert.alert(t("messages.title"), t("messages.documentTooLarge"));
+        return;
+      }
+      if (msg === "DOCUMENT_NATIVE_MISSING") {
+        Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+        return;
+      }
+      Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+    }
+  };
+
+  const sendPendingDocument = useCallback(
+    (caption: string) => {
+      if (!token || !pendingDocument) return;
+      const { file, thumbLocalUri, pageCount } = pendingDocument;
+      const cap = caption.trim() || null;
+      const replyMsg = replyDraftRef.current;
+      const replyTo =
+        replyMsg != null
+          ? replyToFromMessage(replyMsg, t, formatFcfa)
+          : null;
+      const replyToMessageId = replyMsg?.id ?? null;
+      setReplyDraft(null);
+      setPendingDocument(null);
+      void import("@/lib/messages/chatSounds").then((m) =>
+        m.playChatSound("sent"),
+      );
+      const clientId = newClientId();
+      const optimistic: ChatMessage = {
+        id: clientId,
+        conversationId,
+        senderUserId: myId ?? "me",
+        type: "document",
+        body: cap,
+        moneyTransfer: null,
+        document: {
+          key: "",
+          fileName: file.name,
+          sizeBytes: file.size,
+          contentType: file.mimeType,
+          localUri: file.uri,
+          thumbKey: null,
+          pageCount,
+        },
+        replyTo,
+        createdAt: new Date().toISOString(),
+        clientId,
+      };
+      setMessages((m) => {
+        const next = [...m, optimistic];
+        setMessagesSnapshot(token, conversationId, next);
+        return next;
+      });
+      const preview = cap ?? `📄 ${file.name}`;
+      bumpConversationPreview(preview, "document", optimistic.createdAt);
+      scrollToLatest(false);
+      void (async () => {
+        try {
+          const api = await import("@/lib/api/client");
+          const { uploadDocumentFile } = await import("@/lib/document/upload");
+          const signed = await api.presignDocumentUpload(
+            token,
+            conversationId,
+            file.mimeType,
+            file.name,
+          );
+          await uploadDocumentFile(
+            signed.uploadUrl,
+            file.uri,
+            signed.contentType,
+          );
+          let thumbKey: string | null = null;
+          if (thumbLocalUri) {
+            const thumbSigned = await api.presignDocumentThumbUpload(
+              token,
+              conversationId,
+            );
+            await uploadDocumentFile(
+              thumbSigned.uploadUrl,
+              thumbLocalUri,
+              thumbSigned.contentType,
+            );
+            thumbKey = thumbSigned.key;
+          }
+          const { message } = await api.sendDocumentMessage(
+            token,
+            conversationId,
+            signed.key,
+            file.name,
+            file.size,
+            file.mimeType,
+            clientId,
+            replyToMessageId,
+            thumbKey,
+            pageCount ?? null,
+            cap,
+          );
+          setMessages((m) => {
+            const next = m.map((x) =>
+              x.clientId === clientId ? { ...message, clientId } : x,
+            );
+            setMessagesSnapshot(token, conversationId, next);
+            return next;
+          });
+        } catch {
+          Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+        }
+      })();
+    },
+    [
+      token,
+      pendingDocument,
+      conversationId,
+      myId,
+      bumpConversationPreview,
+      scrollToLatest,
+      t,
+      formatFcfa,
+    ],
+  );
 
   const rememberVoiceUri = useCallback(
     (key: string, uri: string) => {
@@ -1792,20 +1944,12 @@ export default function ChatThreadScreen() {
     };
   }, [playVoiceMsg]);
 
-  const sendMoney = async (
-    pinOverride?: string,
-    opts?: { deviceAuthDone?: boolean },
-  ) => {
+  const sendMoney = async (pinOverride?: string) => {
     const pin = String(pinOverride ?? pinDigits).replace(/\D/g, "");
-    const n = parseAmountFcfa(amount);
+    const n =
+      parseAmountFcfa(amount) ?? pendingMoneyAmountRef.current ?? null;
     if (!token || n == null || sending || pin.length !== 4) return;
-    if (!opts?.deviceAuthDone) {
-      const { authenticateForPayment } = await import(
-        "@/lib/security/deviceAuth"
-      );
-      const auth = await authenticateForPayment(t("pay.deviceAuthPrompt"));
-      if (auth === "cancel") return;
-    }
+    const moneyCaption = pendingMoneyCaptionRef.current.trim() || null;
     const bal = user?.balanceFcfa ?? 0;
     if (bal < n) {
       Alert.alert(
@@ -1816,12 +1960,61 @@ export default function ChatThreadScreen() {
     }
 
     const replyMsg = replyDraftRef.current;
+    const replyTo =
+      replyMsg != null
+        ? replyToFromMessage(replyMsg, t, formatFcfa)
+        : null;
     const replyToMessageId = replyMsg?.id ?? null;
 
     const clientId = newClientId();
     const idem = newClientId();
+    const createdAt = new Date().toISOString();
+    const optimistic: ChatMessage = {
+      id: clientId,
+      conversationId,
+      senderUserId: myId ?? "me",
+      type: "money",
+      body: moneyCaption,
+      moneyTransfer: {
+        transferId: clientId,
+        amountFcfa: n,
+        status: "pending",
+        fromUserId: myId ?? "me",
+        toUserId: null,
+        toPhone: peerPhone ?? "",
+        expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+        claimedAt: null,
+        createdAt,
+      },
+      replyTo,
+      createdAt,
+      clientId,
+    };
+
     setSending(true);
     setPinError(null);
+    setAmount("");
+    setPinDigits("");
+    setMoneyStep("amount");
+    setMoneyOpen(false);
+    pendingMoneyCaptionRef.current = "";
+    pendingMoneyAmountRef.current = null;
+    setPendingMoneyAmount(null);
+    setReplyDraft(null);
+    lastLocalSendAtRef.current = Date.now();
+    atLatestRef.current = true;
+    setPinListOnInsert(false);
+    setMessages((m) => {
+      const next = [...m, optimistic];
+      setMessagesSnapshot(token, conversationId, next);
+      return next;
+    });
+    bumpConversationPreview(
+      t("messages.moneyPreview", { amount: formatFcfa(n) }),
+      "money",
+      createdAt,
+    );
+    scrollToLatest(false);
 
     try {
       const { sendMoneyMessage } = await import("@/lib/api/client");
@@ -1833,34 +2026,31 @@ export default function ChatThreadScreen() {
         idem,
         pin,
         replyToMessageId,
+        moneyCaption,
       );
-      setAmount("");
-      setPinDigits("");
-      setPinError(null);
-      setMoneyStep("amount");
-      setMoneyOpen(false);
-      setReplyDraft(null);
       setMessages((m) => {
-        const next = [...m, message];
+        const next = m.map((x) =>
+          x.clientId === clientId ? { ...message, clientId } : x,
+        );
         setMessagesSnapshot(token, conversationId, next);
         return next;
       });
-      bumpConversationPreview(
-        t("messages.moneyPreview", { amount: formatFcfa(n) }),
-        "money",
-        message.createdAt,
-      );
       updateBalance(balanceFcfa);
-      scrollToLatest(false);
       void refreshUser().catch(() => {});
       void import("@/lib/security/transactionPinVault").then((m) => {
         void m.saveTransactionPinVault(pin);
       });
     } catch (e) {
       setPinDigits("");
+      setMessages((m) => {
+        const next = m.filter((x) => x.clientId !== clientId);
+        setMessagesSnapshot(token, conversationId, next);
+        return next;
+      });
       if (isTransactionPinInvalidError(e)) {
+        setMoneyStep("pin");
+        setMoneyOpen(true);
         setPinError(t("messages.pinIncorrect"));
-        /** Pas de remount du champ : le clavier reste ouvert, la feuille ne bouge pas. */
         if (!pinInputRef.current?.isFocused()) pinInputRef.current?.focus();
         return;
       }
@@ -1875,23 +2065,35 @@ export default function ChatThreadScreen() {
     }
   };
 
-  useEffect(() => {
-    if (!moneyOpen || moneyStep !== "pin") {
-      moneyPinBioTriedRef.current = false;
+  const beginMoneyPinOrBio = useCallback(async () => {
+    const { tryUnlockTransactionPinVault } = await import(
+      "@/lib/security/transactionPinVault"
+    );
+    const vaulted = await tryUnlockTransactionPinVault(
+      t("pay.deviceAuthPrompt"),
+    );
+    if (vaulted) {
+      void sendMoney(vaulted);
       return;
     }
-    if (moneyPinBioTriedRef.current || sending) return;
-    moneyPinBioTriedRef.current = true;
-    void (async () => {
-      const { tryUnlockTransactionPinVault } = await import(
-        "@/lib/security/transactionPinVault"
-      );
-      const vaulted = await tryUnlockTransactionPinVault(
-        t("pay.deviceAuthPrompt"),
-      );
-      if (vaulted) void sendMoney(vaulted, { deviceAuthDone: true });
-    })();
-  }, [moneyOpen, moneyStep, sending, t]);
+    setPinDigits("");
+    setPinError(null);
+    setMoneyStep("pin");
+    setMoneyOpen(true);
+  }, [sendMoney, t]);
+
+  const sendPendingMoneyCaption = useCallback(
+    (caption: string) => {
+      const moneyN = pendingMoneyAmountRef.current ?? pendingMoneyAmount;
+      if (moneyN == null) return;
+      pendingMoneyAmountRef.current = moneyN;
+      setAmount(String(moneyN));
+      pendingMoneyCaptionRef.current = caption.trim();
+      setPendingMoneyAmount(null);
+      void beginMoneyPinOrBio();
+    },
+    [beginMoneyPinOrBio, pendingMoneyAmount],
+  );
 
   const applyTransfer = (
     transferId: string,
@@ -2513,6 +2715,27 @@ export default function ChatThreadScreen() {
                 </Text>
               </Pressable>
             </View>
+          ) : pinListOnInsert ? (
+            <Pressable
+              style={[
+                styles.scrollDownFab,
+                { backgroundColor: colors.modal, borderColor: colors.borderLight },
+              ]}
+              onPress={() => {
+                atLatestRef.current = true;
+                setPinListOnInsert(false);
+                scrollToLatest(true);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.scrollToBottomA11y")}
+              hitSlop={8}
+            >
+              <Ionicons
+                name="chevron-down"
+                size={22}
+                color={colors.textSecondary}
+              />
+            </Pressable>
           ) : null}
           {selectionMode ? (
             <>
@@ -2569,7 +2792,11 @@ export default function ChatThreadScreen() {
                 : Math.max(insets.bottom, 0),
           }}
         >
-          {replyDraft && recUi === "idle" && !pendingImages?.length ? (
+          {replyDraft &&
+          recUi === "idle" &&
+          !pendingImages?.length &&
+          !pendingDocument &&
+          pendingMoneyAmount == null ? (
             <ComposerReplyBar
               replyTo={replyToFromMessage(replyDraft, t, formatFcfa)}
               myId={myId}
@@ -2591,14 +2818,41 @@ export default function ChatThreadScreen() {
             dismissHighlight();
           }}
         >
-          {pendingImages?.length && recUi === "idle" ? (
+          {(pendingImages?.length ||
+            pendingDocument ||
+            pendingMoneyAmount != null) &&
+          recUi === "idle" ? (
             <View style={[styles.composerField, { alignItems: "flex-end" }]}>
               <ImageCaptionComposer
                 assets={pendingImages}
+                document={
+                  pendingDocument
+                    ? {
+                        fileName: pendingDocument.file.name,
+                        previewUri: pendingDocument.thumbLocalUri,
+                      }
+                    : null
+                }
+                money={
+                  pendingMoneyAmount != null
+                    ? { amountLabel: formatFcfa(pendingMoneyAmount) }
+                    : null
+                }
                 colors={colors}
                 styles={styles}
-                onCancel={() => setPendingImages(null)}
-                onSend={sendPendingImages}
+                onCancel={() => {
+                  setPendingImages(null);
+                  setPendingDocument(null);
+                  pendingMoneyAmountRef.current = null;
+                  setPendingMoneyAmount(null);
+                }}
+                onSend={
+                  pendingMoneyAmount != null
+                    ? sendPendingMoneyCaption
+                    : pendingDocument
+                      ? sendPendingDocument
+                      : sendPendingImages
+                }
               />
             </View>
           ) : (
@@ -2615,40 +2869,6 @@ export default function ChatThreadScreen() {
           >
             <Text style={{ fontSize: 18 }}>💰</Text>
           </Pressable>
-            {recUi === "idle" ? (
-              <Pressable
-                style={styles.composerEmojiBtn}
-                onPress={() => void pickAndSendImage()}
-                accessibilityLabel={t("messages.attachImage")}
-              >
-                <Ionicons
-                  name="image-outline"
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </Pressable>
-            ) : null}
-            {recUi === "idle" ? (
-              <Pressable
-                style={styles.composerEmojiBtn}
-                onPress={toggleEmojiKeyboard}
-                accessibilityLabel={
-                  emojiOpen || emojiPanelVisible
-                    ? t("messages.emojiShowKeyboard")
-                    : t("messages.emojiShowPicker")
-                }
-              >
-                <Ionicons
-                  name={
-                    emojiOpen || emojiPanelVisible
-                      ? "keypad-outline"
-                      : "happy-outline"
-                  }
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </Pressable>
-            ) : null}
             {recUi === "idle" ? (
           <TextInput
                 ref={composerRef}
@@ -2701,6 +2921,40 @@ export default function ChatThreadScreen() {
                 </Pressable>
               </View>
             )}
+            {recUi === "idle" ? (
+              <Pressable
+                style={styles.composerEmojiBtn}
+                onPress={() => setAttachSheetOpen(true)}
+                accessibilityLabel={t("messages.attachA11y")}
+              >
+                <Ionicons
+                  name="document-outline"
+                  size={22}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
+            {recUi === "idle" ? (
+              <Pressable
+                style={styles.composerEmojiBtn}
+                onPress={toggleEmojiKeyboard}
+                accessibilityLabel={
+                  emojiOpen || emojiPanelVisible
+                    ? t("messages.emojiShowKeyboard")
+                    : t("messages.emojiShowPicker")
+                }
+              >
+                <Ionicons
+                  name={
+                    emojiOpen || emojiPanelVisible
+                      ? "keypad-outline"
+                      : "happy-outline"
+                  }
+                  size={22}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
           </View>
           )}
           {pendingImages?.length && recUi === "idle" ? null : recUi ===
@@ -2835,6 +3089,23 @@ export default function ChatThreadScreen() {
                   {pinError}
                 </Text>
               ) : null}
+              <Pressable
+                onPress={() => void beginMoneyPinOrBio()}
+                accessibilityRole="button"
+                accessibilityLabel={t("messages.moneyBiometricUnlock")}
+                style={{ marginTop: 14, paddingVertical: 8 }}
+              >
+                <Text
+                  style={{
+                    color: colors.accent,
+                    fontSize: 15,
+                    fontWeight: "600",
+                    textAlign: "center",
+                  }}
+                >
+                  {t("messages.moneyBiometricUnlock")}
+                </Text>
+              </Pressable>
             </View>
           ) : (
             <>
@@ -2866,9 +3137,12 @@ export default function ChatThreadScreen() {
             }}
             onConfirm={() => {
               if (!amountOk || sending) return;
-              setPinDigits("");
-              setPinError(null);
-              setMoneyStep("pin");
+              const n = parseAmountFcfa(amount);
+              if (n == null) return;
+              pendingMoneyAmountRef.current = n;
+              setPendingMoneyAmount(n);
+              setAmount("");
+              setMoneyOpen(false);
             }}
             confirmEnabled={amountOk && !sending}
             confirmVariant="outline"
@@ -2890,9 +3164,12 @@ export default function ChatThreadScreen() {
             }
             onPress={() => {
               if (moneyStep === "amount") {
-                setPinDigits("");
-                setPinError(null);
-                setMoneyStep("pin");
+                const n = parseAmountFcfa(amount);
+                if (n == null) return;
+                pendingMoneyAmountRef.current = n;
+                setPendingMoneyAmount(n);
+                setAmount("");
+                setMoneyOpen(false);
                 return;
               }
               void sendMoney(pinDigits);
@@ -2906,6 +3183,19 @@ export default function ChatThreadScreen() {
           </Pressable>
         </View>
       </Modal>
+
+      <ChatAttachSheet
+        visible={attachSheetOpen}
+        onClose={() => setAttachSheetOpen(false)}
+        onPickPhoto={() => {
+          setAttachSheetOpen(false);
+          void pickAndQueueImages();
+        }}
+        onPickDocument={() => {
+          setAttachSheetOpen(false);
+          void pickAndQueueDocument();
+        }}
+      />
 
       <Modal
         visible={Boolean(recallTransferId)}

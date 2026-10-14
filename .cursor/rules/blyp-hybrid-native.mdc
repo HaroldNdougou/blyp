@@ -1,0 +1,58 @@
+---
+description: Blyp — stratégie hybride RN + natif ciblé + infra + tuning continu (réf. WhatsApp/Telegram)
+alwaysApply: true
+---
+
+# Blyp — hybride RN / natif / infra
+
+Détail complet : **`docs/HYBRIDE-RN-NATIF.md`**.  
+Discipline quotidienne vitesse : **`blyp-perf-light.mdc`**.  
+Chaque feature : **`blyp-feature-gates.mdc`** + **`docs/CHECKLIST-NOUVELLE-FEATURE.md`** (non négociable avant d’ajouter du natif).
+
+## Posture
+
+- **RN (Expo)** = coquille produit : écrans, wallet, cache-first, optimiste, i18n, thème.
+- **Natif** = **moteurs chirurgicaux** uniquement (fil/gestes, voix, decode/thumb, BLE, Intent fichiers) — pas une réécriture complète.
+- **Infra** = réseau invisible : delta, push → cache, S3+CloudFront, idempotence wallet, région Afrique.
+- **Tuning continu** = budgets sur **Redmi 9C** ; régression perçue = bug bloquant.
+
+## Matrice rapide (RN par défaut)
+
+| Zone | Natif si hotspot mesuré après cache + 2 itérations RN |
+|------|--------------------------------------------------------|
+| Pay, historique, profil | Rarement |
+| Liste conversations | Scroll jank massif malgré FlashList + RAM |
+| Fil chat (scroll, swipe, long-press) | Conflits gesture persistants → liste/row native **ciblée** |
+| Voix, BLE | Libs / modules natifs |
+| Docs / PDF | Thumb + open OS (déjà modèle hybride) |
+| Feed vidéo type TikTok | Hors scope RN pur — natif/C++ si un jour |
+
+## Infra obligatoire (avec le natif)
+
+1. Téléphone : SQLite + RAM + lignes UI préformatées — **afficher avant await API**.
+2. Pas de refetch full au focus si delta + cache suffisent (`InteractionManager`, gates pull).
+3. Push/realtime alimente le cache ; HTTP = filet.
+4. Médias : thumb séparé, CDN ; pas de gros fichier pour une preview.
+
+## Budgets (cache chaud)
+
+- Onglet / fil : **pas de spinner** si snapshot RAM.
+- Ouverture fil : messages cache au 1er paint ; réseau après transition.
+- Long-press ~**150 ms** jusqu’au feedback ; swipe reply sans manger le scroll.
+- Marks : `lib/perf/marks.ts` sur `chat_open`, `history_open`, etc.
+
+## Décision « passer natif »
+
+1. `blyp-perf-light` appliqué.  
+2. Mesure sur appareil physique.  
+3. Ticket **périmètre minimal** (un moteur), justification métrique dans la PR.
+
+## Interdit
+
+- « On fera natif plus tard » en laissant refetch au focus ou lag sur listes.
+- Modules natifs sans hotspot identifié.
+- Abandonner cache-first parce que la stack est RN.
+
+## Ordre stratégique
+
+Discipline globale → push/realtime → profiler fil → natif chirurgical → infra/latence API en parallèle.

@@ -1105,13 +1105,6 @@ export default function PayHomeScreen() {
     const pin = (pinRaw ?? payPinDraft).replace(/\D/g, "");
     if (pin.length !== ONBOARDING_PIN_LEN || !token) return;
     if (paymentStatus === "SENDING" || payPinUi !== "idle") return;
-    if (!opts?.deviceAuthDone) {
-      const { authenticateForPayment } = await import(
-        "@/lib/security/deviceAuth"
-      );
-      const auth = await authenticateForPayment(t("pay.deviceAuthPrompt"));
-      if (auth === "cancel") return;
-    }
     setPayPinErrorLine(null);
     setPaymentStatus("SENDING");
     setPayPinUi("sending");

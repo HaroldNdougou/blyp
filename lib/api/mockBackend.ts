@@ -923,6 +923,63 @@ export function mockSendImageMessage(
   return { message };
 }
 
+export function mockSendDocumentMessage(
+  _token: string,
+  conversationId: string,
+  key: string,
+  fileName: string,
+  sizeBytes: number,
+  contentType: string,
+  clientId: string,
+  replyToMessageId?: string | null,
+  thumbKey?: string | null,
+  pageCount?: number | null,
+  caption?: string | null,
+) {
+  const now = new Date().toISOString();
+  const name = String(fileName ?? "").trim() || "document";
+  const pages = Math.floor(Number(pageCount) || 0);
+  const thumb = String(thumbKey ?? "").trim();
+  const text = String(caption ?? "").trim() || null;
+  const message: ChatMessage = {
+    id: `m-doc-${clientId}`,
+    conversationId,
+    senderUserId: "me",
+    type: "document",
+    body: text,
+    moneyTransfer: null,
+    document: {
+      key,
+      fileName: name,
+      sizeBytes,
+      contentType,
+      localUri: null,
+      thumbKey: thumb || null,
+      pageCount: pages > 0 ? pages : undefined,
+    },
+    replyTo: mockReplyToFromList(conversationId, replyToMessageId),
+    createdAt: now,
+    clientId,
+  };
+  const list = mockMessages.get(conversationId) ?? [];
+  list.push(message);
+  mockMessages.set(conversationId, list);
+  const conv = mockConversations.find((c) => c.id === conversationId);
+  if (conv) {
+    conv.lastMessagePreview = text
+      ? text.length > 80
+        ? `${text.slice(0, 77)}…`
+        : text
+      : `📄 ${name}`;
+    conv.lastMessageType = "document";
+    conv.lastMessageAt = now;
+    conv.updatedAt = now;
+    conv.lastMessageFromSelf = true;
+  }
+  mockQueuePeerInvite(conversationId, "document");
+  return { message };
+}
+
 export function mockSendMoneyMessage(
   _token: string,
   conversationId: string,
@@ -931,6 +988,7 @@ export function mockSendMoneyMessage(
   _idempotencyKey: string,
   transactionPin: string,
   replyToMessageId?: string | null,
+  caption?: string | null,
 ) {
   if (String(transactionPin).replace(/\D/g, "").length !== 4) {
     throw new ApiError("Code PIN incorrect", 400);
@@ -951,12 +1009,13 @@ export function mockSendMoneyMessage(
     claimedAt: null,
     createdAt: now,
   };
+  const text = String(caption ?? "").trim() || null;
   const message: ChatMessage = {
     id: clientId,
     conversationId,
     senderUserId: "me",
     type: "money",
-    body: null,
+    body: text,
     moneyTransfer: transfer,
     replyTo: mockReplyToFromList(conversationId, replyToMessageId),
     createdAt: now,
@@ -967,7 +1026,11 @@ export function mockSendMoneyMessage(
   mockMessages.set(conversationId, list);
   const conv = mockConversations.find((c) => c.id === conversationId);
   if (conv) {
-    conv.lastMessagePreview = `${amount} FCFA`;
+    conv.lastMessagePreview = text
+      ? text.length > 80
+        ? `${text.slice(0, 77)}…`
+        : text
+      : `${amount} FCFA`;
     conv.lastMessageType = "money";
     conv.lastMessageAt = now;
     conv.updatedAt = now;

@@ -30,6 +30,7 @@ import {
   sendTextMessage,
   sendVoiceMessage,
   sendImageMessage,
+  sendDocumentMessage,
   setMessageReaction,
   deleteMessage,
   thankMoneyTransfer,
@@ -38,6 +39,10 @@ import {
 import {
   presignImagePlay,
   presignImageUpload,
+  presignDocumentDownload,
+  presignDocumentThumbDownload,
+  presignDocumentThumbUpload,
+  presignDocumentUpload,
   presignVoicePlay,
   presignVoiceUpload,
 } from "../../lib/media.mjs";
@@ -215,6 +220,85 @@ export async function handler(event) {
           }
           return ok(result);
         }
+        if (type === "document-presign") {
+          const member = await assertMember(conversationId, userId);
+          if (!member) return forbidden("Accès refusé");
+          const result = await presignDocumentUpload(
+            userId,
+            conversationId,
+            body.contentType,
+            body.fileName,
+          );
+          if (result.error === "MEDIA_UNAVAILABLE") {
+            return serverError("Media indisponible");
+          }
+          return ok(result);
+        }
+        if (type === "document-download") {
+          const member = await assertMember(conversationId, userId);
+          if (!member) return forbidden("Accès refusé");
+          const result = await presignDocumentDownload(
+            conversationId,
+            body.key,
+          );
+          if (result.error === "MEDIA_UNAVAILABLE") {
+            return serverError("Media indisponible");
+          }
+          if (result.error === "KEY_INVALID") {
+            return badRequest("Document invalide");
+          }
+          return ok(result);
+        }
+        if (type === "document-thumb-presign") {
+          const member = await assertMember(conversationId, userId);
+          if (!member) return forbidden("Accès refusé");
+          const result = await presignDocumentThumbUpload(userId, conversationId);
+          if (result.error === "MEDIA_UNAVAILABLE") {
+            return serverError("Media indisponible");
+          }
+          return ok(result);
+        }
+        if (type === "document-thumb-download") {
+          const member = await assertMember(conversationId, userId);
+          if (!member) return forbidden("Accès refusé");
+          const result = await presignDocumentThumbDownload(
+            conversationId,
+            body.key,
+          );
+          if (result.error === "MEDIA_UNAVAILABLE") {
+            return serverError("Media indisponible");
+          }
+          if (result.error === "KEY_INVALID") {
+            return badRequest("Vignette invalide");
+          }
+          return ok(result);
+        }
+        if (type === "document") {
+          const result = await sendDocumentMessage(
+            userId,
+            conversationId,
+            body.key,
+            body.fileName,
+            body.sizeBytes,
+            body.contentType,
+            body.clientId,
+            body.replyToMessageId,
+            body.thumbKey,
+            body.pageCount,
+            body.caption,
+          );
+          if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
+          if (result.error === "DOCUMENT_INVALID") {
+            return badRequest("Document invalide");
+          }
+          if (result.error === "BODY_INVALID") {
+            return badRequest("Légende invalide");
+          }
+          if (result.error === "REPLY_NOT_FOUND") {
+            return notFound("Message cité introuvable");
+          }
+          return ok(result);
+        }
         if (type === "react") {
           const result = await setMessageReaction(
             userId,
@@ -326,10 +410,14 @@ export async function handler(event) {
             body.clientId,
             getIdempotencyKey(event) || body.idempotencyKey,
             body.replyToMessageId,
+            body.caption,
           );
           if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
           if (result.error === "REPLY_NOT_FOUND") {
             return notFound("Message cité introuvable");
+          }
+          if (result.error === "BODY_INVALID") {
+            return badRequest("Légende invalide");
           }
           if (result.error === "AMOUNT_INVALID") {
             return badRequest("Montant invalide");

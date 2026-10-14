@@ -36,6 +36,10 @@ Référence : **WhatsApp** (feedback au clic, tout déjà en mémoire, réseau i
 2. Prefetch modules **dès le parse** (`lib/perf/eagerRoutes.ts`) + warm données (`aggressiveWarm`).
 3. FlashList + rows `memo` ; skip setState si snapshot inchangé.
 
+## Contrat feature (features ajoutées au fil du temps)
+
+**Cache → defer → gates** sur **chaque** nouvelle feature — voir **`blyp-feature-gates.mdc`** et **`docs/CHECKLIST-NOUVELLE-FEATURE.md`**. Les agents doivent **surveiller** les diffs (focus, imports, refetch) et refuser les patterns qui volent le thread ou le focus.
+
 ## Checklist (chaque feature)
 
 1. Cold start Pay intact (splash sacré).

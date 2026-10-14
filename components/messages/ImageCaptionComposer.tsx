@@ -1,3 +1,4 @@
+import { DocumentListGlyph } from "@/components/messages/DocumentListGlyph";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { Image } from "expo-image";
 import { Ionicons } from "@expo/vector-icons";
@@ -26,8 +27,19 @@ type ComposerStyles = {
   sendBtn: StyleProp<ViewStyle>;
 };
 
+export type PendingDocumentCaption = {
+  fileName: string;
+  previewUri: string | null;
+};
+
+export type PendingMoneyCaption = {
+  amountLabel: string;
+};
+
 type Props = {
-  assets: PendingImageAsset[];
+  assets?: PendingImageAsset[] | null;
+  document?: PendingDocumentCaption | null;
+  money?: PendingMoneyCaption | null;
   colors: ThemeColors;
   styles: ComposerStyles;
   onCancel: () => void;
@@ -39,6 +51,8 @@ const THUMB = 44;
 /** Barre légende + miniature (style WhatsApp), dans le composer du fil. */
 export function ImageCaptionComposer({
   assets,
+  document,
+  money,
   colors,
   styles,
   onCancel,
@@ -54,25 +68,49 @@ export function ImageCaptionComposer({
     return () => clearTimeout(focusTimer);
   }, []);
 
-  const first = assets[0];
-  const extra = assets.length > 1 ? assets.length - 1 : 0;
+  const imageAssets = assets ?? [];
+  const first = imageAssets[0];
+  const extra = imageAssets.length > 1 ? imageAssets.length - 1 : 0;
+  const doc = document ?? null;
+  const moneyPreview = money ?? null;
 
   const handleSend = () => {
     onSend(caption.trim());
     setCaption("");
   };
 
-  if (!first) return null;
+  if (!first && !doc && !moneyPreview) return null;
 
   return (
     <View style={local.row}>
       <View style={local.thumbWrap}>
-        <Image
-          source={{ uri: first.uri }}
-          style={local.thumb}
-          contentFit="cover"
-        />
-        {extra > 0 ? (
+        {moneyPreview ? (
+          <View style={[local.thumb, local.moneyThumb]}>
+            <Text style={local.moneyEmoji}>💰</Text>
+            <Text style={local.moneyAmount} numberOfLines={1}>
+              {moneyPreview.amountLabel}
+            </Text>
+          </View>
+        ) : doc ? (
+          doc.previewUri ? (
+            <Image
+              source={{ uri: doc.previewUri }}
+              style={local.thumb}
+              contentFit="cover"
+            />
+          ) : (
+            <View style={[local.thumb, local.docThumbFallback]}>
+              <DocumentListGlyph color={colors.textMuted} />
+            </View>
+          )
+        ) : (
+          <Image
+            source={{ uri: first!.uri }}
+            style={local.thumb}
+            contentFit="cover"
+          />
+        )}
+        {!doc && !moneyPreview && extra > 0 ? (
           <View style={local.countBadge}>
             <Text style={local.countText}>+{extra}</Text>
           </View>
@@ -127,6 +165,25 @@ function createLocalStyles(c: ThemeColors) {
       height: THUMB,
       borderRadius: 8,
       backgroundColor: c.borderLight,
+    },
+    docThumbFallback: {
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    moneyThumb: {
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 2,
+    },
+    moneyEmoji: {
+      fontSize: 16,
+      lineHeight: 18,
+    },
+    moneyAmount: {
+      fontSize: 8,
+      fontWeight: "700",
+      color: c.textMuted,
+      marginTop: 1,
     },
     thumbDismiss: {
       position: "absolute",

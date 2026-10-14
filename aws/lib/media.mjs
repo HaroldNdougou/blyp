@@ -142,3 +142,153 @@ export async function presignImagePlay(conversationId, key) {
   );
   return { url, expiresIn: GET_TTL_SEC };
 }
+
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+
+function documentKeyPrefix(conversationId, userId) {
+  return `doc/${conversationId}/${userId}/`;
+}
+
+function extFromFileName(fileName) {
+  const base = String(fileName ?? "").trim();
+  const m = base.match(/\.([a-zA-Z0-9]{1,8})$/);
+  if (!m) return { ext: "bin", contentType: "application/octet-stream" };
+  const ext = m[1].toLowerCase();
+  const map = {
+    pdf: "application/pdf",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ppt: "application/vnd.ms-powerpoint",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    txt: "text/plain",
+    zip: "application/zip",
+    csv: "text/csv",
+  };
+  return {
+    ext,
+    contentType: map[ext] ?? "application/octet-stream",
+  };
+}
+
+export function sanitizeDocumentFileName(raw) {
+  const name = String(raw ?? "")
+    .replace(/[/\\<>:"|?*\u0000-\u001f]/g, "_")
+    .trim();
+  if (!name) return "document";
+  return name.length > 180 ? `${name.slice(0, 177)}…` : name;
+}
+
+export function clampDocumentSizeBytes(raw) {
+  const n = Math.floor(Number(raw) || 0);
+  if (n <= 0) return 0;
+  return Math.min(n, MAX_DOCUMENT_BYTES);
+}
+
+export function isOwnedDocumentKey(key, conversationId, userId) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  if (!k.startsWith(documentKeyPrefix(conversationId, userId))) return false;
+  return /\.[a-zA-Z0-9]{1,8}$/.test(k);
+}
+
+export function isConvDocumentKey(key, conversationId) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  return k.startsWith(`doc/${conversationId}/`);
+}
+
+export async function presignDocumentUpload(
+  userId,
+  conversationId,
+  contentType,
+  fileName,
+) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  const fromName = extFromFileName(fileName);
+  const ct = String(contentType ?? "").trim() || fromName.contentType;
+  const ext = fromName.ext;
+  const key = `${documentKeyPrefix(conversationId, userId)}${randomUUID()}.${ext}`;
+  const { client, PutObjectCommand, getSignedUrl } = await s3Signer();
+  const uploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: b,
+      Key: key,
+      ContentType: ct,
+    }),
+    { expiresIn: PUT_TTL_SEC },
+  );
+  return { uploadUrl, key, contentType: ct, expiresIn: PUT_TTL_SEC };
+}
+
+export async function presignDocumentDownload(conversationId, key) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  if (!isConvDocumentKey(key, conversationId)) return { error: "KEY_INVALID" };
+  const { client, GetObjectCommand, getSignedUrl } = await s3Signer();
+  const url = await getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: b, Key: key }),
+    { expiresIn: GET_TTL_SEC },
+  );
+  return { url, expiresIn: GET_TTL_SEC };
+}
+
+function documentThumbKeyPrefix(conversationId, userId) {
+  return `doc-thumb/${conversationId}/${userId}/`;
+}
+
+export function isOwnedDocumentThumbKey(key, conversationId, userId) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  if (!k.startsWith(documentThumbKeyPrefix(conversationId, userId))) return false;
+  return k.endsWith(".jpg") || k.endsWith(".jpeg");
+}
+
+export function isConvDocumentThumbKey(key, conversationId) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  return k.startsWith(`doc-thumb/${conversationId}/`);
+}
+
+export function clampDocumentPageCount(raw) {
+  const n = Math.floor(Number(raw) || 0);
+  if (n <= 0) return 0;
+  return Math.min(n, 9999);
+}
+
+/** Vignette JPEG (page 1) — même modèle que WhatsApp (objet séparé du PDF). */
+export async function presignDocumentThumbUpload(userId, conversationId) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  const key = `${documentThumbKeyPrefix(conversationId, userId)}${randomUUID()}.jpg`;
+  const { client, PutObjectCommand, getSignedUrl } = await s3Signer();
+  const uploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: b,
+      Key: key,
+      ContentType: "image/jpeg",
+    }),
+    { expiresIn: PUT_TTL_SEC },
+  );
+  return { uploadUrl, key, contentType: "image/jpeg", expiresIn: PUT_TTL_SEC };
+}
+
+export async function presignDocumentThumbDownload(conversationId, key) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  if (!isConvDocumentThumbKey(key, conversationId)) {
+    return { error: "KEY_INVALID" };
+  }
+  const { client, GetObjectCommand, getSignedUrl } = await s3Signer();
+  const url = await getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: b, Key: key }),
+    { expiresIn: GET_TTL_SEC },
+  );
+  return { url, expiresIn: GET_TTL_SEC };
+}

@@ -160,6 +160,18 @@ export type ImageAttachment = {
   contentType?: string;
 };
 
+export type DocumentAttachment = {
+  key: string;
+  fileName: string;
+  sizeBytes: number;
+  contentType?: string;
+  localUri?: string | null;
+  /** Vignette JPEG sur S3 (aperçu bulle / liste). */
+  thumbKey?: string | null;
+  /** Nombre de pages PDF (expéditeur → serveur). */
+  pageCount?: number;
+};
+
 export type MessageReaction = {
   emoji: string;
   userId: string;
@@ -169,7 +181,7 @@ export type MessageReaction = {
 export type MessageReplyTo = {
   messageId: string;
   senderUserId: string;
-  type: "text" | "money" | "voice" | "image";
+  type: "text" | "money" | "voice" | "image" | "document";
   preview: string | null;
 };
 
@@ -177,11 +189,12 @@ export type ChatMessage = {
   id: string;
   conversationId: string;
   senderUserId: string;
-  type: "text" | "money" | "voice" | "image";
+  type: "text" | "money" | "voice" | "image" | "document";
   body: string | null;
   moneyTransfer: MoneyTransfer | null;
   voice?: VoiceClip | null;
   image?: ImageAttachment | null;
+  document?: DocumentAttachment | null;
   reactions?: MessageReaction[];
   replyTo?: MessageReplyTo | null;
   createdAt: string;
@@ -202,7 +215,14 @@ export type Conversation = {
   peerPhone: string | null;
   peerUserId: string | null;
   lastMessagePreview: string;
-  lastMessageType: "text" | "money" | "voice" | "image" | "reaction" | null;
+  lastMessageType:
+    | "text"
+    | "money"
+    | "voice"
+    | "image"
+    | "document"
+    | "reaction"
+    | null;
   lastMessageAt: string | null;
   /** Dernier message de la conversation envoyé par moi (liste + coches). */
   lastMessageFromSelf?: boolean;

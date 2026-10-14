@@ -47,7 +47,14 @@ export function messageReplySnippet(
     const cap = String(msg.body ?? "").trim();
     return cap || t("messages.imagePreview");
   }
+  if (msg.type === "document" && msg.document) {
+    const cap = String(msg.body ?? "").trim();
+    if (cap) return cap.length > 120 ? `${cap.slice(0, 117)}…` : cap;
+    return msg.document.fileName || t("messages.documentPreview");
+  }
   if (msg.type === "money" && msg.moneyTransfer) {
+    const cap = String(msg.body ?? "").trim();
+    if (cap) return cap.length > 120 ? `${cap.slice(0, 117)}…` : cap;
     return t("messages.moneyPreview", {
       amount: formatFcfa(msg.moneyTransfer.amountFcfa),
     });
@@ -77,6 +84,7 @@ export function replySnippetText(
   if (p) return p;
   if (replyTo.type === "voice") return t("messages.voicePreview");
   if (replyTo.type === "image") return t("messages.imagePreview");
+  if (replyTo.type === "document") return t("messages.documentPreview");
   if (replyTo.type === "money") return t("messages.moneyReplySnippet");
   return "";
 }

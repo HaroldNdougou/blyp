@@ -23,14 +23,15 @@ import {
 
 type Styles = {
   voiceRow: StyleProp<ViewStyle>;
+  voicePlayCol: StyleProp<ViewStyle>;
   voicePlayBtn: StyleProp<ViewStyle>;
+  voiceDurUnderPlay: StyleProp<TextStyle>;
   voiceSeek: StyleProp<ViewStyle>;
   voiceTrackWrap: StyleProp<ViewStyle>;
   voiceTrack: StyleProp<ViewStyle>;
   voiceFill: StyleProp<ViewStyle>;
   voiceThumb: StyleProp<ViewStyle>;
   voiceMeta: StyleProp<ViewStyle>;
-  voiceDur: StyleProp<TextStyle>;
   voiceSpeed: StyleProp<ViewStyle>;
   voiceSpeedText: StyleProp<TextStyle>;
 };
@@ -59,6 +60,7 @@ export const VoiceBubble = React.memo(function VoiceBubble({
   const { t } = useTranslation();
   const [st, setSt] = useState<VoicePlayStatus>(getVoiceStatus);
   const [scrubMs, setScrubMs] = useState<number | null>(null);
+  const [resolvedDurMs, setResolvedDurMs] = useState(durationMs);
   const trackW = useRef(0);
   const knownDur = useRef(durationMs);
   const dragging = useRef(false);
@@ -69,6 +71,7 @@ export const VoiceBubble = React.memo(function VoiceBubble({
 
   useEffect(() => {
     knownDur.current = durationMs;
+    if (durationMs > 0) setResolvedDurMs(durationMs);
   }, [durationMs]);
 
   useEffect(() => {
@@ -89,7 +92,10 @@ export const VoiceBubble = React.memo(function VoiceBubble({
       if (!mine && !wasActive.current) return;
       wasActive.current = mine;
       activeRef.current = mine;
-      if (mine && next.durationMs > 0) knownDur.current = next.durationMs;
+      if (mine && next.durationMs > 0) {
+        knownDur.current = next.durationMs;
+        setResolvedDurMs(next.durationMs);
+      }
       setSt(mine ? next : getVoiceStatus());
     });
   }, [message.id]);
@@ -124,37 +130,52 @@ export const VoiceBubble = React.memo(function VoiceBubble({
 
   const active = st.messageId === message.id;
   const playing = active && st.playing;
-  const total = active && st.durationMs > 0 ? st.durationMs : durationMs;
+  const total =
+    resolvedDurMs > 0
+      ? resolvedDurMs
+      : active && st.durationMs > 0
+        ? st.durationMs
+        : durationMs;
   const pos = scrubMs != null ? scrubMs : active ? st.positionMs : 0;
   const shownMs =
     playing || (active && st.paused) ? Math.max(0, total - pos) : total;
   const pct = total > 0 ? Math.max(0, Math.min(1, pos / total)) : 0;
+  const durLabel = total > 0 ? formatVoiceClock(shownMs) : "0:00";
 
   return (
     <View style={styles.voiceRow}>
-      <Pressable
-        style={styles.voicePlayBtn}
-        onPress={() => onToggle(message)}
-        accessibilityRole="button"
-        accessibilityLabel={
-          playing ? t("messages.voicePause") : t("messages.voicePlay")
-        }
-        hitSlop={6}
-      >
-        <View
-          pointerEvents="none"
-          style={[
-            StyleSheet.absoluteFillObject,
-            { backgroundColor: ink, opacity: 0.16, borderRadius: 18 },
-          ]}
-        />
-        <Ionicons
-          name={playing ? "pause" : "play"}
-          size={16}
-          color={ink}
-          style={playing ? undefined : { marginLeft: 2 }}
-        />
-      </Pressable>
+      <View style={styles.voicePlayCol}>
+        <Pressable
+          style={styles.voicePlayBtn}
+          onPress={() => onToggle(message)}
+          accessibilityRole="button"
+          accessibilityLabel={
+            playing ? t("messages.voicePause") : t("messages.voicePlay")
+          }
+          hitSlop={6}
+        >
+          <View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFillObject,
+              { backgroundColor: ink, opacity: 0.16, borderRadius: 18 },
+            ]}
+          />
+          <Ionicons
+            name={playing ? "pause" : "play"}
+            size={16}
+            color={ink}
+            style={playing ? undefined : { marginLeft: 2 }}
+          />
+        </Pressable>
+        <Text
+          style={[styles.voiceDurUnderPlay, { color: ink }]}
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+        >
+          {durLabel}
+        </Text>
+      </View>
       <View
         style={styles.voiceSeek}
         onLayout={(e) => {
@@ -187,11 +208,8 @@ export const VoiceBubble = React.memo(function VoiceBubble({
           ) : null}
         </View>
       </View>
-      <View style={styles.voiceMeta}>
-        <Text style={[styles.voiceDur, { color: ink }]}>
-          {formatVoiceClock(shownMs)}
-        </Text>
-        {active ? (
+      {active ? (
+        <View style={styles.voiceMeta}>
           <Pressable
             onPress={() => cycleVoiceRate()}
             accessibilityRole="button"
@@ -205,8 +223,8 @@ export const VoiceBubble = React.memo(function VoiceBubble({
               {rateLabel(st.rate, t)}
             </Text>
           </Pressable>
-        ) : null}
-      </View>
+        </View>
+      ) : null}
     </View>
   );
 });

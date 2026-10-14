@@ -1,3 +1,4 @@
+import { DocumentBubble } from "@/components/messages/DocumentBubble";
 import { ImageBubble } from "@/components/messages/ImageBubble";
 import { MessageReplyQuote } from "@/components/messages/MessageReplyQuote";
 import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
@@ -96,8 +97,9 @@ function ChatMessageListRowInner({
   const isMoney = !deleted && item.type === "money" && item.moneyTransfer;
   const isVoice = !deleted && item.type === "voice" && item.voice;
   const isImage = !deleted && item.type === "image" && item.image;
+  const isDocument = !deleted && item.type === "document" && item.document;
   const jumbo =
-    !deleted && !isMoney && !isVoice && !isImage
+    !deleted && !isMoney && !isVoice && !isImage && !isDocument
       ? parseJumboEmojiBody(item.body)
       : null;
   const tr = item.moneyTransfer;
@@ -108,6 +110,7 @@ function ChatMessageListRowInner({
   const amountLabel = tr
     ? `${formatFcfa(tr.amountFcfa)} ${t("common.fcfa")}`
     : "";
+  const moneyCaption = isMoney ? String(item.body ?? "").trim() : "";
   const body = deleted
     ? mine
       ? t("messages.deletedForAllMine")
@@ -120,6 +123,10 @@ function ChatMessageListRowInner({
   const voiceTime = item.voice ? formatVoiceClock(item.voice.durationMs) : "";
   const a11y = isImage
     ? t("messages.imageA11y")
+    : isDocument
+      ? t("messages.documentOpenA11y", {
+          name: item.document?.fileName ?? "",
+        })
     : isVoice
       ? t("messages.voiceA11y", { time: voiceTime })
       : isMoney && tr
@@ -168,23 +175,17 @@ function ChatMessageListRowInner({
   );
 
   const imageCaption = isImage ? String(item.body ?? "").trim() : "";
+  const documentCaption = isDocument ? String(item.body ?? "").trim() : "";
 
   const triggerReactPicker = () => {
     fireChatLongPressHaptic();
     handlersRef.current.openReactPicker(item.id);
   };
 
-  const bubble = isImage ? (
-    <View
-      style={[
-        styles.bubble,
-        styles.bubbleImage,
-        itemReplyTo && styles.bubbleHasReply,
-        mine ? styles.bubbleMine : styles.bubbleTheirs,
-        highlighted && styles.bubbleHighlight,
-        newArrival && !highlighted && styles.bubbleNewArrival,
-      ]}
-    >
+  const replyInnerStyle = itemReplyTo ? styles.bubbleReplyInner : undefined;
+
+  const bubbleBody = isImage ? (
+    <>
       {replyQuoteEl ? (
         <View style={styles.bubbleImageReplyPad}>{replyQuoteEl}</View>
       ) : null}
@@ -212,21 +213,44 @@ function ChatMessageListRowInner({
           </View>
         </View>
       ) : null}
-    </View>
+    </>
+  ) : isDocument ? (
+    <>
+      {replyQuoteEl}
+      <DocumentBubble
+        message={item}
+        conversationId={conversationId}
+        token={token}
+        mine={mine}
+        colors={colors}
+        styles={styles}
+        selectionActive={selectionActive}
+        onSelectionPress={() =>
+          handlersRef.current.toggleMessageSelection(item.id)
+        }
+        onLongPress={triggerReactPicker}
+        delayLongPress={CHAT_LONG_PRESS_MS}
+      />
+      {documentCaption ? (
+        <View style={styles.bubbleImageCaption}>
+          <View style={styles.bubbleTextStack}>
+            <Text
+              style={[
+                styles.bubbleText,
+                mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
+              ]}
+            >
+              {documentCaption}
+            </Text>
+            <MessageBubbleMetaRow {...metaTextProps} />
+          </View>
+        </View>
+      ) : (
+        <MessageBubbleMetaRow {...metaTextProps} />
+      )}
+    </>
   ) : (
-    <View
-      style={[
-        styles.bubble,
-        itemReplyTo && styles.bubbleHasReply,
-        jumbo
-          ? styles.bubbleJumbo
-          : mine
-            ? styles.bubbleMine
-            : styles.bubbleTheirs,
-        highlighted && styles.bubbleHighlight,
-        newArrival && !highlighted && styles.bubbleNewArrival,
-      ]}
-    >
+    <>
       {replyQuoteEl}
       {isVoice ? (
         <VoiceBubble
@@ -307,7 +331,46 @@ function ChatMessageListRowInner({
           <MessageBubbleMetaRow {...metaTextProps} />
         </View>
       )}
+      {isMoney && moneyCaption ? (
+        <View style={styles.bubbleImageCaption}>
+          <Text
+            style={[
+              styles.bubbleText,
+              mine ? styles.bubbleTextMine : styles.bubbleTextTheirs,
+            ]}
+          >
+            {moneyCaption}
+          </Text>
+        </View>
+      ) : null}
       {isVoice ? <MessageBubbleMetaRow {...metaTextProps} /> : null}
+    </>
+  );
+
+  const bubble = (
+    <View
+      style={[
+        styles.bubble,
+        isImage && styles.bubbleImage,
+        itemReplyTo && styles.bubbleHasReply,
+        !isImage &&
+          !isDocument &&
+          (jumbo
+            ? styles.bubbleJumbo
+            : mine
+              ? styles.bubbleMine
+              : styles.bubbleTheirs),
+        (isImage || isDocument) &&
+          (mine ? styles.bubbleMine : styles.bubbleTheirs),
+        highlighted && styles.bubbleHighlight,
+        newArrival && !highlighted && styles.bubbleNewArrival,
+      ]}
+    >
+      {replyInnerStyle ? (
+        <View style={replyInnerStyle}>{bubbleBody}</View>
+      ) : (
+        bubbleBody
+      )}
     </View>
   );
 
@@ -325,7 +388,10 @@ function ChatMessageListRowInner({
         </View>
       ) : null}
       <View
-        style={styles.messageSelectRowWrap}
+        style={[
+          styles.messageSelectRowWrap,
+          itemReplyTo && styles.messageSelectRowReply,
+        ]}
         onTouchStartCapture={() => {
           h.notifyMessageRowTouch();
         }}
@@ -351,6 +417,7 @@ function ChatMessageListRowInner({
                 onReply={() => h.startReplyTo(item)}
               >
                 <Pressable
+                  style={itemReplyTo ? styles.bubblePressableInReply : undefined}
                   onLongPress={triggerReactPicker}
                   delayLongPress={CHAT_LONG_PRESS_MS}
                   onPress={() => {
