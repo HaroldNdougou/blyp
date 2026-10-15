@@ -768,8 +768,7 @@ export default function ChatThreadScreen() {
       () => {
         const patch: Record<string, string> = {};
         for (const msg of messages) {
-          const mine = Boolean(myId && msg.senderUserId === myId);
-          const source = translatablePeerText(msg, mine);
+          const source = translatablePeerText(msg, myId);
           if (!source) continue;
           const tr = getCachedMessageTranslation(msg.id, translateTargetLang);
           if (tr && tr.trim() !== source.trim()) patch[msg.id] = tr;
@@ -2423,6 +2422,10 @@ export default function ChatThreadScreen() {
     () => selectedMessageIds.join("\u001f"),
     [selectedMessageIds],
   );
+  const peerTranslationExtra = useMemo(
+    () => Object.keys(peerTranslations).join("\u001f"),
+    [peerTranslations],
+  );
   const listExtraData = useMemo(
     () =>
       [
@@ -2431,6 +2434,7 @@ export default function ChatThreadScreen() {
         claimingId ?? "",
         highlightedTransferId ?? "",
         newArrivalHighlightIds.size,
+        peerTranslationExtra,
       ].join("\u001f"),
     [
       selectionExtraData,
@@ -2438,6 +2442,7 @@ export default function ChatThreadScreen() {
       claimingId,
       highlightedTransferId,
       newArrivalHighlightIds.size,
+      peerTranslationExtra,
     ],
   );
   const selectedIdSet = useMemo(

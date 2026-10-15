@@ -4,6 +4,7 @@ import { getDb, runDbWrite } from "@/lib/db/sqlite";
 import { getMessagesCacheOwnerPhone } from "@/lib/messagesCache";
 import { parseJumboEmojiBody } from "@/lib/messages/jumboEmoji";
 import { isReactionSyncBody } from "@/lib/messages/reactionSync";
+import { isChatMessageMine } from "@/lib/messages/messageMine";
 
 const ram = new Map<string, string>();
 
@@ -74,9 +75,9 @@ export async function warmMessageTranslationsFromSqlite(
 
 export function translatablePeerText(
   msg: ChatMessage,
-  mine: boolean,
+  myUserId: string | null,
 ): string | null {
-  if (mine || msg.deletedForAll) return null;
+  if (isChatMessageMine(msg, myUserId) || msg.deletedForAll) return null;
   if (msg.type === "text") {
     if (isReactionSyncBody(msg.body)) return null;
     if (parseJumboEmojiBody(msg.body)) return null;
@@ -96,6 +97,28 @@ export function translatablePeerText(
 
 function sameDisplayText(original: string, translated: string): boolean {
   return original.trim() === translated.trim();
+}
+
+function normalizeLangCode(code: string | null | undefined): string {
+  return String(code ?? "")
+    .trim()
+    .toLowerCase()
+    .split(/[-_]/)[0];
+}
+
+function shouldApplyTranslation(
+  original: string,
+  translated: string,
+  sourceLanguage: string | null | undefined,
+  targetLanguage: string,
+): boolean {
+  if (!translated.trim() || sameDisplayText(original, translated)) {
+    return false;
+  }
+  const src = normalizeLangCode(sourceLanguage);
+  const tgt = normalizeLangCode(targetLanguage);
+  if (src && tgt && src === tgt) return false;
+  return true;
 }
 
 export type MessageTranslationDisplay = {
@@ -142,8 +165,7 @@ export async function ensureThreadTranslations(
   const patch: Record<string, string> = {};
 
   for (const msg of messages) {
-    const mine = Boolean(myUserId && msg.senderUserId === myUserId);
-    const text = translatablePeerText(msg, mine);
+    const text = translatablePeerText(msg, myUserId);
     if (!text) continue;
     const cached = getCachedMessageTranslation(msg.id, targetLang);
     if (cached) {
@@ -171,16 +193,28 @@ export async function ensureThreadTranslations(
       for (const row of res.items) {
         const id = String(row.id ?? "").trim();
         const translated = String(row.translatedText ?? "").trim();
-        const source = pending.find((p) => p.id === id)?.text ?? "";
+        const original = pending.find((p) => p.id === id)?.text ?? "";
+        const sourceLanguage =
+          (row as { sourceLanguage?: string | null }).sourceLanguage ?? null;
         if (!id || !translated) continue;
-        rememberTranslation(id, targetLang, translated, phone);
-        if (!sameDisplayText(source, translated)) {
-          batchPatch[id] = translated;
+        if (
+          !shouldApplyTranslation(
+            original,
+            translated,
+            sourceLanguage,
+            res.targetLanguage ?? targetLang,
+          )
+        ) {
+          continue;
         }
+        rememberTranslation(id, targetLang, translated, phone);
+        batchPatch[id] = translated;
       }
       if (Object.keys(batchPatch).length > 0) onPatch(batchPatch);
-    } catch {
-      /* hors-ligne */
+    } catch (err) {
+      if (__DEV__) {
+        console.warn("[messageTranslation] batch failed", err);
+      }
     }
   }
 }

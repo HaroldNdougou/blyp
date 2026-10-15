@@ -518,6 +518,7 @@ Resources:
           OBIT_SMS_SENDER: !Ref ObitSmsSender
           BLYP_INVITE_URL: !Ref BlypInviteUrl
           MEDIA_BUCKET: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
+          TRANSLATE_REGION: eu-west-1
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable

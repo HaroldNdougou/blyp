@@ -3,7 +3,11 @@ import {
   TranslateTextCommand,
 } from "@aws-sdk/client-translate";
 
-const client = new TranslateClient({});
+/** Translate n’est pas disponible en af-south-1 — région dédiée (activer le service une fois dans la console AWS). */
+const TRANSLATE_REGION =
+  process.env.TRANSLATE_REGION?.trim() || "eu-west-1";
+
+const client = new TranslateClient({ region: TRANSLATE_REGION });
 
 const AWS_SUPPORTED = new Set([
   "af",

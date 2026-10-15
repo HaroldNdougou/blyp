@@ -749,7 +749,13 @@ export async function translateChatMessages(
   items: { id: string; text: string }[],
 ): Promise<{
   targetLanguage: string;
-  items: { id: string; translatedText: string }[];
+  items: {
+    id: string;
+    translatedText: string;
+    sourceLanguage?: string | null;
+    skipped?: boolean;
+    error?: boolean;
+  }[];
 }> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockTranslateChatMessages(
