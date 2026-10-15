@@ -530,6 +530,7 @@ Resources:
             - Effect: Allow
               Action:
                 - translate:TranslateText
+                - comprehend:DetectDominantLanguage
               Resource: "*"
       Events:
         ListConversations:
