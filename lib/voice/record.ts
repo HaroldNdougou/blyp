@@ -13,7 +13,22 @@ export type VoiceRecorder = {
   resume: () => Promise<void>;
   stop: () => Promise<{ uri: string; durationMs: number } | null>;
   discard: () => Promise<void>;
+  /** Clip en cours (URI partielle) — utile en pause pour l’aperçu avant envoi. */
+  getSnapshot: () => Promise<{ uri: string; durationMs: number } | null>;
 };
+
+export async function setVoiceRecordingAudioMode(
+  recording: boolean,
+): Promise<void> {
+  const { Audio } = await loadAv();
+  await Audio.setAudioModeAsync({
+    allowsRecordingIOS: recording,
+    playsInSilentModeIOS: true,
+    staysActiveInBackground: false,
+    shouldDuckAndroid: true,
+    playThroughEarpieceAndroid: false,
+  });
+}
 
 async function loadAv() {
   return import("expo-av");
@@ -52,8 +67,6 @@ export async function requestMicPermission(): Promise<boolean> {
     const started = Date.now();
     const result = await PermissionsAndroid.request(perm);
     if (result === PermissionsAndroid.RESULTS.GRANTED) return true;
-    // Refus visible : on s’arrête. Prochain tap = nouveau request().
-    // Feuille masquée par l’OS (retour immédiat) : écran permissions système.
     if (Date.now() - started < 320) await openAndroidMicPrompt();
     return (await PermissionsAndroid.check(perm)) === true;
   }
@@ -88,13 +101,7 @@ async function openAndroidMicPrompt(): Promise<void> {
 
 export async function createVoiceRecorder(): Promise<VoiceRecorder> {
   const { Audio } = await loadAv();
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
-  });
+  await setVoiceRecordingAudioMode(true);
   const rec = new Audio.Recording();
   let prepared = false;
 
@@ -121,12 +128,22 @@ export async function createVoiceRecorder(): Promise<VoiceRecorder> {
           VOICE_MAX_MS,
           Math.floor(Number(status.durationMillis) || 0),
         );
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          shouldDuckAndroid: true,
-        });
+        await setVoiceRecordingAudioMode(false);
         if (!uri || durationMs < 400) return null;
+        return { uri, durationMs };
+      } catch {
+        return null;
+      }
+    },
+    async getSnapshot() {
+      try {
+        const status = await rec.getStatusAsync();
+        const uri = rec.getURI();
+        if (!uri) return null;
+        const durationMs = Math.min(
+          VOICE_MAX_MS,
+          Math.floor(Number(status.durationMillis) || 0),
+        );
         return { uri, durationMs };
       } catch {
         return null;
@@ -141,10 +158,7 @@ export async function createVoiceRecorder(): Promise<VoiceRecorder> {
       } catch {
         /* already unloaded */
       }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: false,
-        playsInSilentModeIOS: true,
-      });
+      await setVoiceRecordingAudioMode(false);
     },
   };
 }

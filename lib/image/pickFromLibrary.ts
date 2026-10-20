@@ -13,6 +13,7 @@ export type PickedImage = {
 const SELECTION_LIMIT = 10;
 
 let cachedLibraryGranted: boolean | null = null;
+let cachedCameraGranted: boolean | null = null;
 
 /** Lecture seule — pas de prompt ; à appeler en fond (liste / thread). */
 export async function warmImageLibraryPermission(): Promise<void> {
@@ -43,6 +44,41 @@ export async function ensureImageLibraryPermission(): Promise<boolean> {
     /* demande classique */
   }
   return requestImageLibraryPermission();
+}
+
+export async function ensureCameraPermission(): Promise<boolean> {
+  if (cachedCameraGranted === true) return true;
+  try {
+    const perm = await ImagePicker.getCameraPermissionsAsync();
+    if (perm.granted) {
+      cachedCameraGranted = true;
+      return true;
+    }
+  } catch {
+    /* demande classique */
+  }
+  const perm = await ImagePicker.requestCameraPermissionsAsync();
+  cachedCameraGranted = perm.granted;
+  return perm.granted;
+}
+
+/** Une photo prise sur le vif — même format que la galerie pour l’envoi chat. */
+export async function pickImageFromCamera(): Promise<PickedImage | null> {
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: ["images"],
+    quality: 0.85,
+    exif: false,
+  });
+  if (result.canceled || !result.assets?.[0]) return null;
+  const asset = result.assets[0];
+  const uri = String(asset.uri ?? "").trim();
+  if (!uri) return null;
+  return {
+    uri,
+    width: Math.max(0, Math.floor(Number(asset.width) || 0)),
+    height: Math.max(0, Math.floor(Number(asset.height) || 0)),
+    contentType: String(asset.mimeType ?? "").trim() || "image/jpeg",
+  };
 }
 
 export async function pickImagesFromLibrary(): Promise<PickedImage[] | null> {

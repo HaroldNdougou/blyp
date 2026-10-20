@@ -73,6 +73,20 @@ async function openDb(): Promise<Db | null> {
         json TEXT NOT NULL,
         PRIMARY KEY (phone, key)
       );
+      CREATE TABLE IF NOT EXISTS merchant_receipts (
+        accountId TEXT NOT NULL,
+        id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        merchantName TEXT,
+        category TEXT NOT NULL,
+        localUri TEXT NOT NULL,
+        contentType TEXT NOT NULL,
+        sizeBytes INTEGER NOT NULL,
+        createdAt TEXT NOT NULL,
+        PRIMARY KEY (accountId, id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_receipts_account_created
+        ON merchant_receipts(accountId, createdAt DESC);
     `);
     try {
       await db.execAsync(

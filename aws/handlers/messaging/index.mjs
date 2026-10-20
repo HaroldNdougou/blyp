@@ -24,13 +24,16 @@ import {
   markConversationDelivered,
   markConversationRead,
   markConversationTyping,
+  markConversationPresence,
   openDirectConversation,
   recallMoneyTransfer,
+  setMoneyTransferReceiptRequired,
   sendMoneyMessage,
   sendTextMessage,
   sendVoiceMessage,
   sendImageMessage,
   sendDocumentMessage,
+  forwardMessages,
   setMessageReaction,
   deleteMessage,
   thankMoneyTransfer,
@@ -135,6 +138,7 @@ export async function handler(event) {
           items: result.messages,
           peerLastReadAt: result.peerLastReadAt ?? null,
           peerLastDeliveredAt: result.peerLastDeliveredAt ?? null,
+          peerLastPresenceAt: result.peerLastPresenceAt ?? null,
         });
       }
       if (method === "POST") {
@@ -369,6 +373,11 @@ export async function handler(event) {
           if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
           return ok(result);
         }
+        if (type === "presence") {
+          const result = await markConversationPresence(userId, conversationId);
+          if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
+          return ok(result);
+        }
         if (type === "money-thanks") {
           const transferId = String(body.transferId ?? "").trim();
           if (!transferId) return badRequest("Transfert requis");
@@ -386,6 +395,9 @@ export async function handler(event) {
             body.body,
             body.clientId,
             body.replyToMessageId,
+            body.forwarded === true || body.forwarded === 1 || body.forwarded === "1"
+              ? { forwarded: true }
+              : {},
           );
           if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
           if (result.error === "BODY_INVALID") {
@@ -393,6 +405,35 @@ export async function handler(event) {
           }
           if (result.error === "REPLY_NOT_FOUND") {
             return notFound("Message cité introuvable");
+          }
+          return ok(result);
+        }
+        if (type === "forward") {
+          const sourceConversationId = String(
+            body.sourceConversationId ?? "",
+          ).trim();
+          const messageIds = Array.isArray(body.messageIds)
+            ? body.messageIds
+            : [];
+          const clientIds =
+            body.clientIds && typeof body.clientIds === "object"
+              ? body.clientIds
+              : {};
+          const result = await forwardMessages(
+            userId,
+            conversationId,
+            sourceConversationId,
+            messageIds,
+            clientIds,
+          );
+          if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
+          if (result.error === "IDS_INVALID") {
+            return badRequest("Messages à transférer invalides");
+          }
+          if (result.error === "NOTHING_TO_FORWARD") {
+            return badRequest("Aucun message à transférer", {
+              code: "NOTHING_TO_FORWARD",
+            });
           }
           return ok(result);
         }
@@ -429,6 +470,8 @@ export async function handler(event) {
             getIdempotencyKey(event) || body.idempotencyKey,
             body.replyToMessageId,
             body.caption,
+            body.moneyFruitEmoji,
+            Boolean(body.receiptRequired),
           );
           if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
           if (result.error === "REPLY_NOT_FOUND") {
@@ -478,6 +521,33 @@ export async function handler(event) {
       }
       if (result.error === "CONFLICT") {
         return conflict("Action impossible pour le moment");
+      }
+      return ok(result);
+    }
+
+    const receiptReqMatch = path.match(
+      /^\/money-transfers\/([^/]+)\/receipt-required$/,
+    );
+    if (method === "PATCH" && receiptReqMatch) {
+      const transferId = decodeURIComponent(receiptReqMatch[1]);
+      const body = parseJsonBody(event) ?? {};
+      const required = body.required === true || body.required === "true";
+      const result = await setMoneyTransferReceiptRequired(
+        userId,
+        transferId,
+        required,
+      );
+      if (result.error === "NOT_FOUND") return notFound("Transfert introuvable");
+      if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
+      if (result.error === "NOT_PENDING") {
+        return conflict("Ce transfert n’est plus disponible", {
+          transfer: result.transfer,
+        });
+      }
+      if (result.error === "CONFLICT") {
+        return conflict("Action impossible pour le moment", {
+          transfer: result.transfer,
+        });
       }
       return ok(result);
     }

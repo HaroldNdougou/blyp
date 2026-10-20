@@ -1,15 +1,18 @@
-const { getDefaultConfig } = require('expo/metro-config');
-const { mergeConfig } = require('@react-native/metro-config');
+const path = require("path");
+const { getDefaultConfig } = require("expo/metro-config");
+const { FileStore } = require("metro-cache");
 
 const config = getDefaultConfig(__dirname);
 
-/** Windows: EMFILE during bundling if Metro opens too many files at once. */
-if (process.platform === 'win32') {
-  config.maxWorkers = 2;
+/** Windows : EMFILE + OOM si Metro ouvre trop de fichiers en parallèle (cache %TEMP%). */
+if (process.platform === "win32") {
+  config.maxWorkers = 1;
+  config.cacheStores = [
+    new FileStore({ root: path.join(__dirname, ".metro-cache") }),
+  ];
 }
 
 config.transformer.unstable_allowRequireContext = true;
-/** Reporte l’exécution des require : accélère le cold start (bundle initial plus léger). */
 config.transformer.getTransformOptions = async () => ({
   transform: {
     experimentalImportSupport: false,

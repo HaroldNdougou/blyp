@@ -15,6 +15,8 @@ import type {
   PocketTransaction,
   TransactionItem,
   WalletDepositResponse,
+  VaultDocument,
+  VaultListResponse,
   WalletDepositStatusResponse,
 } from "./types";
 
@@ -41,6 +43,7 @@ let mockCommerceTx = new Map<string, TransactionItem[]>();
 let mockActiveContext: ApiActiveContext = { type: "personal" };
 let mockHelloSeq = 0;
 let mockAvatarUri: string | null = null;
+let mockKycStatus: import("./types").KycStatus = "none";
 const lastMockOtpAtByPhone = new Map<string, number>();
 const MOCK_OTP_RESEND_MS = 60_000;
 const mockDepositIdempotencyCache = new Map<string, WalletDepositResponse>();
@@ -48,6 +51,9 @@ const mockDepositStatusByIntentId = new Map<
   string,
   WalletDepositStatusResponse
 >();
+const mockVaultDocs = new Map<string, VaultDocument[]>();
+const mockVaultLocalUri = new Map<string, string>();
+const MOCK_VAULT_MAX_BYTES = 200 * 1024 * 1024;
 
 function assertSession(token: string) {
   if (!sessionToken || token !== sessionToken) {
@@ -100,6 +106,8 @@ function mockUserFromState(): ApiUser {
       : { type: "personal" },
     commerces: mockCommerces.map((c) => ({ ...c })),
     avatarUrl: mockAvatarUri,
+    kycStatus: mockKycStatus,
+    kycLevel: mockKycStatus === "approved" ? 1 : 0,
   };
 }
 
@@ -255,6 +263,179 @@ export function mockSetOnboardingProfile(
   mockFirstName = f;
   mockLastName = l;
   return { user: mockUserFromState() };
+}
+
+export function mockPresignKycDocument(
+  token: string,
+  docType: string,
+  side: string,
+  contentType: string,
+): {
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+} {
+  assertSession(token);
+  const uid = mockSessionUserId ?? "mock-user";
+  const ct = String(contentType ?? "image/jpeg").trim() || "image/jpeg";
+  return {
+    uploadUrl: "mock://kyc",
+    key: `kyc/${uid}/${side}-${Date.now()}.jpg`,
+    contentType: ct,
+    expiresIn: 300,
+  };
+}
+
+export function mockConfirmKycSubmission(
+  token: string,
+  body: {
+    docType: string;
+    frontKey: string;
+    backKey?: string | null;
+    selfieKey: string;
+  },
+): { user: ApiUser } {
+  assertSession(token);
+  const uid = mockSessionUserId ?? "mock-user";
+  if (!String(body.frontKey).includes(`kyc/${uid}`)) {
+    throw new ApiError("Documents invalides", 400);
+  }
+  if (body.docType === "national_id" && !body.backKey) {
+    throw new ApiError("Photo verso de la CNI requise", 400);
+  }
+  if (mockKycStatus === "pending") {
+    throw new ApiError("Vérification déjà en cours", 400);
+  }
+  mockKycStatus = "approved";
+  return { user: mockUserFromState() };
+}
+
+function mockVaultAccountId(): string {
+  return String(mockUserFromState().id ?? makeAccountId());
+}
+
+export function mockStageVaultLocalUri(
+  docId: string,
+  localUri: string,
+): void {
+  mockVaultLocalUri.set(String(docId), String(localUri));
+}
+
+export function mockListVaultDocuments(token: string): VaultListResponse {
+  assertSession(token);
+  const accountId = mockVaultAccountId();
+  const items = [...(mockVaultDocs.get(accountId) ?? [])];
+  const usedBytes = items.reduce((a, d) => a + d.sizeBytes, 0);
+  return {
+    items,
+    usedBytes,
+    maxBytes: MOCK_VAULT_MAX_BYTES,
+    accountId,
+  };
+}
+
+export function mockPresignVaultDocument(
+  token: string,
+  body: {
+    name: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+  },
+): {
+  docId: string;
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+} {
+  assertSession(token);
+  const accountId = mockVaultAccountId();
+  const sizeBytes = Math.floor(Number(body.sizeBytes) || 0);
+  if (sizeBytes <= 0 || sizeBytes > 25 * 1024 * 1024) {
+    throw new ApiError("Fichier trop volumineux (max 25 Mo)", 400);
+  }
+  const used = (mockVaultDocs.get(accountId) ?? []).reduce(
+    (a, d) => a + d.sizeBytes,
+    0,
+  );
+  if (used + sizeBytes > MOCK_VAULT_MAX_BYTES) {
+    throw new ApiError("Espace documents plein pour ce compte", 400);
+  }
+  const docId = `mock-vault-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const ct = String(body.contentType ?? "application/octet-stream").trim();
+  return {
+    docId,
+    uploadUrl: "mock://vault",
+    key: `vault/${accountId}/${docId}.bin`,
+    contentType: ct,
+    expiresIn: 300,
+  };
+}
+
+export function mockConfirmVaultDocument(
+  token: string,
+  body: {
+    docId: string;
+    key: string;
+    name: string;
+    sizeBytes: number;
+    contentType: string;
+  },
+): { document: VaultDocument } {
+  assertSession(token);
+  const accountId = mockVaultAccountId();
+  const docId = String(body.docId ?? "").trim();
+  const localUri = mockVaultLocalUri.get(docId) ?? "";
+  if (localUri) mockVaultLocalUri.set(docId, localUri);
+  const document: VaultDocument = {
+    id: docId,
+    accountId,
+    name: String(body.name ?? "Document").trim() || "Document",
+    sizeBytes: Math.floor(Number(body.sizeBytes) || 0),
+    contentType: String(body.contentType ?? "application/octet-stream"),
+    createdAt: new Date().toISOString(),
+  };
+  const list = mockVaultDocs.get(accountId) ?? [];
+  mockVaultDocs.set(accountId, [document, ...list]);
+  return { document };
+}
+
+export function mockGetVaultDocumentDownload(
+  token: string,
+  docId: string,
+): {
+  url: string;
+  expiresIn: number;
+  name: string;
+  contentType: string;
+} {
+  assertSession(token);
+  const accountId = mockVaultAccountId();
+  const doc = (mockVaultDocs.get(accountId) ?? []).find((d) => d.id === docId);
+  if (!doc) throw new ApiError("Document introuvable", 404);
+  const url = mockVaultLocalUri.get(docId) ?? "";
+  if (!url) throw new ApiError("Document introuvable", 404);
+  return {
+    url,
+    expiresIn: 600,
+    name: doc.name,
+    contentType: doc.contentType,
+  };
+}
+
+export function mockDeleteVaultDocument(
+  token: string,
+  docId: string,
+): { ok: boolean } {
+  assertSession(token);
+  const accountId = mockVaultAccountId();
+  const list = mockVaultDocs.get(accountId) ?? [];
+  const next = list.filter((d) => d.id !== docId);
+  mockVaultDocs.set(accountId, next);
+  mockVaultLocalUri.delete(docId);
+  return { ok: true };
 }
 
 export function mockCreateCommerce(
@@ -822,6 +1003,7 @@ export function mockSendTextMessage(
   body: string,
   clientId: string,
   replyToMessageId?: string | null,
+  forwarded?: boolean,
 ) {
   const now = new Date().toISOString();
   const list = mockMessages.get(conversationId) ?? [];
@@ -848,6 +1030,7 @@ export function mockSendTextMessage(
     replyTo,
     createdAt: now,
     clientId,
+    forwarded: forwarded ? true : undefined,
   };
   list.push(message);
   mockMessages.set(conversationId, list);
@@ -995,6 +1178,62 @@ export function mockSendDocumentMessage(
   return { message };
 }
 
+export function mockForwardChatMessages(
+  _token: string,
+  targetConversationId: string,
+  sourceConversationId: string,
+  messageIds: string[],
+  clientIds: Record<string, string>,
+) {
+  const source = mockMessages.get(sourceConversationId) ?? [];
+  const out: ChatMessage[] = [];
+  for (const mid of messageIds) {
+    const src = source.find((m) => m.id === mid);
+    if (!src || src.deletedForAll || src.type === "money") continue;
+    const clientId = String(clientIds[mid] ?? "").trim() || `c-fwd-${mid}`;
+    const now = new Date().toISOString();
+    const message: ChatMessage = {
+      ...src,
+      id: clientId,
+      conversationId: targetConversationId,
+      senderUserId: "me",
+      clientId,
+      createdAt: now,
+      replyTo: null,
+      forwarded: true,
+      reactions: [],
+      moneyTransfer: null,
+    };
+    const list = mockMessages.get(targetConversationId) ?? [];
+    list.push(message);
+    mockMessages.set(targetConversationId, list);
+    out.push(message);
+    const conv = mockConversations.find((c) => c.id === targetConversationId);
+    if (conv) {
+      if (message.type === "text") {
+        conv.lastMessagePreview = String(message.body ?? "");
+        conv.lastMessageType = "text";
+      } else if (message.type === "voice") {
+        conv.lastMessagePreview = "VOICE";
+        conv.lastMessageType = "voice";
+      } else if (message.type === "image") {
+        conv.lastMessagePreview = String(message.body ?? "").trim() || "📷";
+        conv.lastMessageType = "image";
+      } else if (message.type === "document") {
+        conv.lastMessagePreview =
+          String(message.body ?? "").trim() ||
+          `📄 ${message.document?.fileName ?? "document"}`;
+        conv.lastMessageType = "document";
+      }
+      conv.lastMessageAt = now;
+      conv.updatedAt = now;
+      conv.lastMessageFromSelf = true;
+    }
+    mockQueuePeerInvite(targetConversationId, message.type);
+  }
+  return { messages: out };
+}
+
 export function mockSendMoneyMessage(
   _token: string,
   conversationId: string,
@@ -1004,6 +1243,8 @@ export function mockSendMoneyMessage(
   transactionPin: string,
   replyToMessageId?: string | null,
   caption?: string | null,
+  moneyFruitEmoji?: string | null,
+  receiptRequired?: boolean,
 ) {
   if (String(transactionPin).replace(/\D/g, "").length !== 4) {
     throw new ApiError("Code PIN incorrect", 400);
@@ -1023,8 +1264,10 @@ export function mockSendMoneyMessage(
     expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
     claimedAt: null,
     createdAt: now,
+    ...(receiptRequired ? { receiptRequired: true } : {}),
   };
   const text = String(caption ?? "").trim() || null;
+  const fruit = String(moneyFruitEmoji ?? "").trim() || null;
   const message: ChatMessage = {
     id: clientId,
     conversationId,
@@ -1032,6 +1275,7 @@ export function mockSendMoneyMessage(
     type: "money",
     body: text,
     moneyTransfer: transfer,
+    moneyFruitEmoji: fruit,
     replyTo: mockReplyToFromList(conversationId, replyToMessageId),
     createdAt: now,
     clientId,
@@ -1053,6 +1297,30 @@ export function mockSendMoneyMessage(
   }
   mockQueuePeerInvite(conversationId, "money");
   return { message, balanceFcfa };
+}
+
+export function mockSetMoneyTransferReceiptRequired(
+  _token: string,
+  transferId: string,
+  required: boolean,
+) {
+  for (const list of mockMessages.values()) {
+    const msg = list.find((m) => m.moneyTransfer?.transferId === transferId);
+    if (msg?.moneyTransfer) {
+      if (msg.moneyTransfer.status !== "pending") {
+        throw new ApiError("Ce transfert n’est plus disponible", 409);
+      }
+      if (msg.moneyTransfer.fromUserId !== "me") {
+        throw new ApiError("Accès refusé", 403);
+      }
+      msg.moneyTransfer = {
+        ...msg.moneyTransfer,
+        receiptRequired: Boolean(required),
+      };
+      return { transfer: msg.moneyTransfer };
+    }
+  }
+  throw new ApiError("Transfert introuvable", 404);
 }
 
 export function mockClaimMoneyTransfer(
@@ -1113,6 +1381,14 @@ export function mockMarkConversationTyping(
   _on: boolean,
 ) {
   return { ok: true };
+}
+
+export function mockMarkConversationPresence(
+  _token: string,
+  _conversationId: string,
+) {
+  const at = new Date().toISOString();
+  return { ok: true, at };
 }
 
 export function mockReactToMessage(

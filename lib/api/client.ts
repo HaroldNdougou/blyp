@@ -15,10 +15,14 @@ import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
 import type {
   ApiUser,
+  KycDocType,
+  KycDocumentSide,
   Pocket,
   PocketMoveResponse,
   PocketTransaction,
   TransactionItem,
+  VaultDocument,
+  VaultListResponse,
   WalletDepositResponse,
   WalletDepositStatusResponse,
 } from "./types";
@@ -362,6 +366,133 @@ export async function confirmProfileAvatar(
     method: "POST",
     token,
     body: JSON.stringify({ key }),
+  });
+}
+
+export async function presignKycDocument(
+  token: string,
+  docType: KycDocType,
+  side: KycDocumentSide,
+  contentType: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockPresignKycDocument(
+      token,
+      docType,
+      side,
+      contentType,
+    );
+  }
+  return request("/kyc/presign", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ docType, side, contentType }),
+  });
+}
+
+export async function confirmKycSubmission(
+  token: string,
+  body: {
+    docType: KycDocType;
+    frontKey: string;
+    backKey?: string | null;
+    selfieKey: string;
+  },
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockConfirmKycSubmission(token, body);
+  }
+  return request("/kyc/submit", {
+    method: "POST",
+    token,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listVaultDocuments(
+  token: string,
+): Promise<VaultListResponse> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListVaultDocuments(token);
+  }
+  return request("/vault/documents", { token });
+}
+
+export async function presignVaultDocument(
+  token: string,
+  body: {
+    name: string;
+    fileName: string;
+    contentType: string;
+    sizeBytes: number;
+  },
+): Promise<{
+  docId: string;
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockPresignVaultDocument(token, body);
+  }
+  return request("/vault/documents/presign", {
+    method: "POST",
+    token,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function confirmVaultDocument(
+  token: string,
+  body: {
+    docId: string;
+    key: string;
+    name: string;
+    sizeBytes: number;
+    contentType: string;
+  },
+): Promise<{ document: VaultDocument }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockConfirmVaultDocument(token, body);
+  }
+  return request("/vault/documents", {
+    method: "POST",
+    token,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function getVaultDocumentDownload(
+  token: string,
+  docId: string,
+): Promise<{
+  url: string;
+  expiresIn: number;
+  name: string;
+  contentType: string;
+}> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockGetVaultDocumentDownload(token, docId);
+  }
+  return request(`/vault/documents/${encodeURIComponent(docId)}`, { token });
+}
+
+export async function deleteVaultDocument(
+  token: string,
+  docId: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockDeleteVaultDocument(token, docId);
+  }
+  return request(`/vault/documents/${encodeURIComponent(docId)}`, {
+    method: "DELETE",
+    token,
   });
 }
 
@@ -712,6 +843,7 @@ export async function listMessages(
   items: import("./types").ChatMessage[];
   peerLastReadAt?: string | null;
   peerLastDeliveredAt?: string | null;
+  peerLastPresenceAt?: string | null;
 }> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockListMessages(token, conversationId);
@@ -721,6 +853,7 @@ export async function listMessages(
     messages?: import("./types").ChatMessage[];
     peerLastReadAt?: string | null;
     peerLastDeliveredAt?: string | null;
+    peerLastPresenceAt?: string | null;
   }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
     token,
   });
@@ -739,7 +872,25 @@ export async function listMessages(
     items,
     peerLastReadAt: data.peerLastReadAt ?? null,
     peerLastDeliveredAt: data.peerLastDeliveredAt ?? null,
+    peerLastPresenceAt: data.peerLastPresenceAt ?? null,
   };
+}
+
+export async function markConversationPresence(
+  token: string,
+  conversationId: string,
+): Promise<{ ok: boolean; at?: string }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockMarkConversationPresence(
+      token,
+      conversationId,
+    );
+  }
+  return request(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ type: "presence" }),
+  });
 }
 
 export async function translateChatMessages(
@@ -1185,6 +1336,7 @@ export async function sendTextMessage(
   body: string,
   clientId: string,
   replyToMessageId?: string | null,
+  forwarded?: boolean,
 ): Promise<{ message: import("./types").ChatMessage }> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockSendTextMessage(
@@ -1193,6 +1345,7 @@ export async function sendTextMessage(
       body,
       clientId,
       replyToMessageId,
+      forwarded,
     );
   }
   const payload: Record<string, unknown> = {
@@ -1202,6 +1355,7 @@ export async function sendTextMessage(
   };
   const replyId = String(replyToMessageId ?? "").trim();
   if (replyId) payload.replyToMessageId = replyId;
+  if (forwarded) payload.forwarded = true;
   const res = await request<{ message: import("./types").ChatMessage }>(
     `/conversations/${encodeURIComponent(conversationId)}/messages`,
     {
@@ -1222,6 +1376,8 @@ export async function sendMoneyMessage(
   transactionPin: string,
   replyToMessageId?: string | null,
   caption?: string | null,
+  moneyFruitEmoji?: string | null,
+  receiptRequired?: boolean,
 ): Promise<{
   message: import("./types").ChatMessage;
   balanceFcfa: number;
@@ -1236,9 +1392,12 @@ export async function sendMoneyMessage(
       transactionPin,
       replyToMessageId,
       caption,
+      moneyFruitEmoji,
+      receiptRequired,
     );
   }
   const cap = String(caption ?? "").trim();
+  const fruit = String(moneyFruitEmoji ?? "").trim();
   const payload: Record<string, unknown> = {
     type: "money",
     amount,
@@ -1247,6 +1406,8 @@ export async function sendMoneyMessage(
     transactionPin,
   };
   if (cap) payload.caption = cap;
+  if (fruit) payload.moneyFruitEmoji = fruit;
+  if (receiptRequired) payload.receiptRequired = true;
   const replyId = String(replyToMessageId ?? "").trim();
   if (replyId) payload.replyToMessageId = replyId;
   return request(
@@ -1261,6 +1422,28 @@ export async function sendMoneyMessage(
 }
 
 export type MoneyTransferAction = "claim" | "recall";
+
+export async function setMoneyTransferReceiptRequired(
+  token: string,
+  transferId: string,
+  required: boolean,
+): Promise<{ transfer: import("./types").MoneyTransfer }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSetMoneyTransferReceiptRequired(
+      token,
+      transferId,
+      required,
+    );
+  }
+  return request(
+    `/money-transfers/${encodeURIComponent(transferId)}/receipt-required`,
+    {
+      method: "PATCH",
+      token,
+      body: JSON.stringify({ required: Boolean(required) }),
+    },
+  );
+}
 
 export async function claimMoneyTransfer(
   token: string,
@@ -1328,4 +1511,38 @@ export async function sendConversationTyping(
       body: JSON.stringify({ type: "typing", on }),
     },
   );
+}
+
+export async function forwardChatMessages(
+  token: string,
+  targetConversationId: string,
+  sourceConversationId: string,
+  messageIds: string[],
+  clientIds: Record<string, string>,
+): Promise<{ messages: import("./types").ChatMessage[] }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockForwardChatMessages(
+      token,
+      targetConversationId,
+      sourceConversationId,
+      messageIds,
+      clientIds,
+    );
+  }
+  const res = await request<{ messages: import("./types").ChatMessage[] }>(
+    `/conversations/${encodeURIComponent(targetConversationId)}/messages`,
+    {
+      method: "POST",
+      token,
+      body: JSON.stringify({
+        type: "forward",
+        sourceConversationId,
+        messageIds,
+        clientIds,
+      }),
+    },
+  );
+  return {
+    messages: (res.messages ?? []).map((m) => withNormalizedReplyTo(m)),
+  };
 }

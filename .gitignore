@@ -19,6 +19,7 @@ expo-env.d.ts
 *.mobileprovision
 
 # Metro
+.metro-cache/
 .metro-health-check*
 
 # debug
@@ -29,6 +30,9 @@ yarn-error.*
 # macOS
 .DS_Store
 *.pem
+
+# Windows accidental `echo foo > nul` artifact
+/nul
 
 # local env files (secrets)
 .env

@@ -10,6 +10,7 @@ const DEFAULT_INVITE_URL = "https://blyppay.com/download/blyp-pay.apk";
 module.exports = ({ config }) => {
   const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim() ?? "";
   const assetsCdn = process.env.EXPO_PUBLIC_ASSETS_CDN_URL?.trim() ?? "";
+  const realtimeWsUrl = process.env.EXPO_PUBLIC_REALTIME_WS_URL?.trim() ?? "";
   const inviteUrl =
     process.env.EXPO_PUBLIC_INVITE_URL?.trim() || DEFAULT_INVITE_URL;
   const allowCleartext = apiUrl.startsWith("http://");
@@ -37,6 +38,7 @@ module.exports = ({ config }) => {
       ...config.extra,
       EXPO_PUBLIC_API_URL: apiUrl,
       EXPO_PUBLIC_ASSETS_CDN_URL: assetsCdn,
+      EXPO_PUBLIC_REALTIME_WS_URL: realtimeWsUrl,
     },
   };
 };

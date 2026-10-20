@@ -17,6 +17,10 @@ import {
   isReactionSyncBody,
   parseReactionSyncBody,
 } from "@/lib/messages/reactionSync";
+import {
+  isPresenceAtOnline,
+  PEER_PRESENCE_TTL_MS,
+} from "@/lib/messages/peerPresence";
 import { AppState, NativeEventEmitter, NativeModules, Platform } from "react-native";
 
 type Listener = (conversationId: string) => void;
@@ -45,6 +49,11 @@ export type TypingPatch = {
   on: boolean;
 };
 type TypingListener = (patch: TypingPatch) => void;
+export type PresencePatch = {
+  conversationId: string;
+  at: string;
+};
+type PresenceListener = (patch: PresencePatch) => void;
 type MoneyUpdatedListener = (patch: MoneyUpdatedPatch) => void;
 
 const listeners = new Set<Listener>();
@@ -53,15 +62,24 @@ const receiptListeners = new Set<ReceiptListener>();
 const reactionListeners = new Set<ReactionListener>();
 const messageDeletedListeners = new Set<MessageDeletedListener>();
 const typingListeners = new Set<TypingListener>();
+const presenceListeners = new Set<PresenceListener>();
 const moneyUpdatedListeners = new Set<MoneyUpdatedListener>();
 const typingByConv = new Map<string, { fromName: string; until: number }>();
+const presenceUntilByConv = new Map<string, number>();
 const TYPING_TTL_MS = 6000;
 let activeConversationId: string | null = null;
 let nativeListening = false;
 
 /** Fil actuellement ouvert — sert à masquer la notif si on est déjà dedans. */
+export function getActiveConversationId(): string | null {
+  return activeConversationId;
+}
+
 export function setActiveConversation(id: string | null): void {
   activeConversationId = id && id.length > 0 ? id : null;
+  void import("@/lib/messages/chatRealtimeLink").then((m) =>
+    m.onActiveConversationChanged(activeConversationId),
+  );
   if (activeConversationId) {
     void import("@/lib/messages/unread").then((m) => {
       m.clearUnread(activeConversationId!);
@@ -260,6 +278,36 @@ export function subscribeConversationTyping(cb: TypingListener): () => void {
   };
 }
 
+export function subscribeConversationPresence(cb: PresenceListener): () => void {
+  presenceListeners.add(cb);
+  return () => {
+    presenceListeners.delete(cb);
+  };
+}
+
+export function notifyConversationPresence(raw: PresencePatch): void {
+  const conversationId = String(raw.conversationId ?? "").trim();
+  const at = String(raw.at ?? "").trim();
+  if (!conversationId || !at) return;
+  presenceUntilByConv.set(conversationId, Date.now() + PEER_PRESENCE_TTL_MS);
+  const patch = { conversationId, at };
+  for (const cb of presenceListeners) {
+    cb(patch);
+  }
+}
+
+/** En ligne : push récent ou dernier heartbeat API encore dans la fenêtre TTL. */
+export function isConversationPeerOnline(
+  conversationId: string,
+  peerLastPresenceAt: string | null | undefined,
+): boolean {
+  const id = String(conversationId ?? "").trim();
+  if (!id) return false;
+  const until = presenceUntilByConv.get(id);
+  if (until && until > Date.now()) return true;
+  return isPresenceAtOnline(peerLastPresenceAt);
+}
+
 export function getTypingSnapshot(
   conversationId: string,
 ): { fromName: string } | null {
@@ -320,6 +368,11 @@ export function notifyMoneyUpdated(raw: MoneyUpdatedPatch): void {
     thanksFirstName: String(raw.thanksFirstName ?? "").trim(),
     thanksUserId: String(raw.thanksUserId ?? "").trim(),
     claimedAt: String(raw.claimedAt ?? "").trim(),
+    ...(parseReceiptRequiredPushField(raw.receiptRequired) !== undefined
+      ? {
+          receiptRequired: parseReceiptRequiredPushField(raw.receiptRequired),
+        }
+      : {}),
   };
   patchMoneyTransfer(patch);
   for (const cb of moneyUpdatedListeners) cb(patch);
@@ -331,6 +384,11 @@ export function ingestSilentChatPush(raw: unknown): boolean {
   const typing = parseConversationTypingPush(data);
   if (typing) {
     notifyConversationTyping(typing);
+    return true;
+  }
+  const presence = parseConversationPresencePush(data);
+  if (presence) {
+    notifyConversationPresence(presence);
     return true;
   }
   const updated = parseMoneyUpdatedPush(data);
@@ -443,6 +501,9 @@ export function startMessageLiveBridge(): void {
   em.addListener("blyp_conversation_typing", (raw: Record<string, unknown>) => {
     ingestSilentChatPush(raw);
   });
+  em.addListener("blyp_conversation_presence", (raw: Record<string, unknown>) => {
+    ingestSilentChatPush(raw);
+  });
   em.addListener("blyp_money_updated", (raw: Record<string, unknown>) => {
     ingestSilentChatPush(raw);
   });
@@ -484,6 +545,7 @@ export type ParsedMessagePush = {
   transferId: string;
   amountFcfa: number;
   expiresAt: string;
+  receiptRequired?: boolean;
 };
 
 export function ingestIncomingPush(raw: unknown): ParsedMessagePush | null {
@@ -541,6 +603,7 @@ export function parseMessagePush(
     transferId: String(raw.transferId ?? "").trim(),
     amountFcfa,
     expiresAt: String(raw.expiresAt ?? "").trim(),
+    receiptRequired: parseReceiptRequiredPushField(raw.receiptRequired),
   };
 }
 
@@ -591,6 +654,7 @@ function chatMessageFromPush(p: ParsedMessagePush): ChatMessage | null {
             expiresAt: p.expiresAt || "",
             claimedAt: null,
             createdAt: p.createdAt,
+            ...(p.receiptRequired ? { receiptRequired: true } : {}),
           }
         : null,
     voice: kind === "voice" ? { key: "", durationMs: 0 } : null,
@@ -755,11 +819,26 @@ export function parseConversationTypingPush(
   if (!conversationId) return null;
   const onRaw = raw.on;
   const on = !(onRaw === false || onRaw === 0 || onRaw === "0");
+  const presenceAt = String(raw.presenceAt ?? "").trim();
+  if (presenceAt) {
+    notifyConversationPresence({ conversationId, at: presenceAt });
+  }
   return {
     conversationId,
     fromName: String(raw.fromName ?? "").trim(),
     on,
   };
+}
+
+export function parseConversationPresencePush(
+  data: Record<string, unknown> | undefined | null,
+): PresencePatch | null {
+  const raw = unwrapTypedPush(data, "conversation_presence");
+  if (!raw) return null;
+  const conversationId = String(raw.conversationId ?? "").trim();
+  const at = String(raw.at ?? "").trim();
+  if (!conversationId || !at) return null;
+  return { conversationId, at };
 }
 
 export function parseMoneyUpdatedPush(
@@ -779,7 +858,20 @@ export function parseMoneyUpdatedPush(
     thanksFirstName: String(raw.thanksFirstName ?? "").trim(),
     thanksUserId: String(raw.thanksUserId ?? "").trim(),
     claimedAt: String(raw.claimedAt ?? "").trim(),
+    ...(parseReceiptRequiredPushField(raw.receiptRequired) !== undefined
+      ? {
+          receiptRequired: parseReceiptRequiredPushField(raw.receiptRequired),
+        }
+      : {}),
   };
+}
+
+function parseReceiptRequiredPushField(
+  raw: unknown,
+): boolean | undefined {
+  if (raw === true || raw === "true" || raw === "1") return true;
+  if (raw === false || raw === "false" || raw === "0") return false;
+  return undefined;
 }
 
 export function parseMoneyTrayPush(

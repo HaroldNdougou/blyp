@@ -11,7 +11,9 @@ export async function uploadProfileAvatar(
     const mock = await import("@/lib/api/mockBackend");
     mock.mockStageAvatarLocalUri(localUri);
   } else {
-    await uploadImageFile(signed.uploadUrl, localUri, signed.contentType);
+    await uploadImageFile(signed.uploadUrl, localUri, signed.contentType, {
+      "Cache-Control": "public, max-age=31536000, immutable",
+    });
   }
   const { user } = await confirmProfileAvatar(token, signed.key);
   return user;

@@ -1,4 +1,5 @@
 import { kickImageOutbox } from "@/lib/image/outbox";
+import { kickMoneyOutbox } from "@/lib/messages/moneyOutbox";
 import { kickVoiceOutbox } from "@/lib/voice/outbox";
 import { useAuth } from "@/contexts/authContextBase";
 import { useNetwork } from "@/contexts/NetworkContext";
@@ -58,6 +59,7 @@ export function RealtimeSync() {
           if (cancelled) return;
           kickVoiceOutbox(token);
           kickImageOutbox(token);
+          kickMoneyOutbox(token);
         } catch {
           /* silencieux */
         }

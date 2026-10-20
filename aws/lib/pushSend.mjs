@@ -152,6 +152,10 @@ export async function sendMessageReceivedPush(msg) {
   const transferId = String(msg?.transferId ?? "").trim();
   const amountFcfa = Math.floor(Number(msg?.amountFcfa) || 0);
   const expiresAt = String(msg?.expiresAt ?? "").trim();
+  const receiptRequired =
+    msg?.receiptRequired === true ||
+    msg?.receiptRequired === "1" ||
+    msg?.receiptRequired === 1;
   if (!recipientUserId || !conversationId || !messageId || !body) {
     return { skipped: true, reason: "INVALID" };
   }
@@ -180,6 +184,7 @@ export async function sendMessageReceivedPush(msg) {
       transferId,
       amountFcfa: String(amountFcfa),
       expiresAt,
+      ...(receiptRequired ? { receiptRequired: "1" } : {}),
       title: fromName,
       message: body,
       sound: "default",
@@ -599,6 +604,7 @@ export async function sendConversationTypingPush(msg) {
   const conversationId = String(msg?.conversationId ?? "").trim();
   const fromName = String(msg?.fromName ?? "").trim() || "Blyp";
   const on = msg?.on === false || msg?.on === "0" ? "0" : "1";
+  const presenceAt = String(msg?.presenceAt ?? "").trim();
   if (!recipientUserId || !conversationId) {
     return { skipped: true, reason: "INVALID" };
   }
@@ -615,6 +621,7 @@ export async function sendConversationTypingPush(msg) {
       conversationId,
       fromName,
       on,
+      ...(presenceAt ? { presenceAt } : {}),
     },
   }));
 
@@ -652,6 +659,49 @@ export async function sendConversationTypingPush(msg) {
 }
 
 /**
+ * Data-only — interlocuteur en ligne (heartbeat).
+ */
+export async function sendConversationPresencePush(msg) {
+  const recipientUserId = String(msg?.recipientUserId ?? "").trim();
+  const conversationId = String(msg?.conversationId ?? "").trim();
+  const at = String(msg?.at ?? "").trim();
+  if (!recipientUserId || !conversationId || !at) {
+    return { skipped: true, reason: "INVALID" };
+  }
+
+  const devices = await listDeviceTokens(recipientUserId);
+  if (!devices.length) return { skipped: true, reason: "NO_DEVICES" };
+
+  const messages = devices.map((d) => ({
+    to: d.token,
+    priority: "high",
+    _contentAvailable: true,
+    data: {
+      type: "conversation_presence",
+      conversationId,
+      at,
+    },
+  }));
+
+  const res = await fetch(EXPO_PUSH_URL, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Accept-Encoding": "gzip, deflate",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(messages),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Expo push HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  return { ok: true, count: messages.length };
+}
+
+/**
  * Data-only — statut message money (rappel / merci).
  */
 export async function sendMoneyUpdatedPush(msg) {
@@ -664,6 +714,14 @@ export async function sendMoneyUpdatedPush(msg) {
 
   const devices = await listDeviceTokens(recipientUserId);
   if (!devices.length) return { skipped: true, reason: "NO_DEVICES" };
+
+  const receiptRaw = msg?.receiptRequired;
+  const receiptField =
+    receiptRaw === true || receiptRaw === "1" || receiptRaw === 1
+      ? "1"
+      : receiptRaw === false || receiptRaw === "0" || receiptRaw === 0
+        ? "0"
+        : "";
 
   const messages = devices.map((d) => ({
     to: d.token,
@@ -678,6 +736,7 @@ export async function sendMoneyUpdatedPush(msg) {
       claimedByUserId: String(msg?.claimedByUserId ?? "").trim(),
       thanksFirstName: String(msg?.thanksFirstName ?? "").trim(),
       thanksUserId: String(msg?.thanksUserId ?? "").trim(),
+      ...(receiptField ? { receiptRequired: receiptField } : {}),
     },
   }));
 

@@ -1,6 +1,12 @@
 /** Étape onboarding côté serveur (`null` = profil complet). */
 export type OnboardingStep = "pin" | "profile";
 
+export type KycStatus = "none" | "pending" | "approved" | "rejected";
+
+export type KycDocType = "national_id" | "passport";
+
+export type KycDocumentSide = "front" | "back" | "selfie";
+
 export type CommerceCategory = "taxi" | "shop" | "other";
 
 export type ApiCommerce = {
@@ -42,6 +48,9 @@ export type ApiUser = {
   commerces?: ApiCommerce[];
   /** Photo Blyp sur le CDN (null si jamais définie). */
   avatarUrl?: string | null;
+  kycStatus?: KycStatus;
+  /** 0 = téléphone seul, 1 = identité vérifiée. */
+  kycLevel?: number;
 };
 
 export type TransactionItem = {
@@ -55,6 +64,22 @@ export type TransactionItem = {
   counterpartyName: string;
   counterpartyPhone: string | null;
   createdAt: string;
+};
+
+export type VaultDocument = {
+  id: string;
+  accountId: string;
+  name: string;
+  sizeBytes: number;
+  contentType: string;
+  createdAt: string;
+};
+
+export type VaultListResponse = {
+  items: VaultDocument[];
+  usedBytes: number;
+  maxBytes: number;
+  accountId: string;
 };
 
 export type PocketKind = "savings" | "custom";
@@ -144,6 +169,8 @@ export type MoneyTransfer = {
   thanksUserId?: string | null;
   thanksFirstName?: string | null;
   createdAt: string;
+  /** Le payeur exige un reçu Blyp pour récupérer (escrow). */
+  receiptRequired?: boolean;
 };
 
 export type VoiceClip = {
@@ -201,6 +228,12 @@ export type ChatMessage = {
   clientId: string | null;
   /** Bulle « message supprimé » (pour tout le monde). */
   deletedForAll?: boolean;
+  /** Message transféré (style WhatsApp). */
+  forwarded?: boolean;
+  /** Paiement via fruit (picker emoji Argent). */
+  moneyFruitEmoji?: string | null;
+  /** Idempotence POST 💰 — renvoi hors ligne (pas un secret). */
+  moneySendIdempotencyKey?: string | null;
 };
 
 export type BlypPhoneLookupItem = {

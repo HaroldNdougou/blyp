@@ -9,10 +9,28 @@ import {
 import { fallbackTxReference } from "@/lib/txReference";
 
 function withReferences(items: TransactionItem[]): TransactionItem[] {
-  return items.map((t) => ({
-    ...t,
-    reference: t.reference?.trim() || fallbackTxReference(t.id),
-  }));
+  return items
+    .map((t) => {
+      const amountFcfa = Math.floor(Number(t.amountFcfa));
+      if (!Number.isFinite(amountFcfa) || amountFcfa <= 0) return null;
+      const createdAt = String(t.createdAt ?? "").trim();
+      if (!createdAt) return null;
+      const type = t.type === "received" ? "received" : "sent";
+      const id =
+        String(t.id ?? "").trim() ||
+        String(t.reference ?? "").trim() ||
+        `tx-${createdAt}-${type}-${amountFcfa}`;
+      return {
+        ...t,
+        amountFcfa,
+        createdAt,
+        type,
+        counterpartyName: String(t.counterpartyName ?? "").trim() || "—",
+        id,
+        reference: t.reference?.trim() || fallbackTxReference(id),
+      };
+    })
+    .filter((t): t is TransactionItem => t !== null);
 }
 
 /**

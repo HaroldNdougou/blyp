@@ -151,6 +151,13 @@ class PaymentAnnounceModule(
       emitMap("blyp_conversation_typing", data)
     }
 
+    fun emitConversationPresence(data: Map<String, String>) {
+      val conversationId = data["conversationId"]?.trim().orEmpty()
+      val at = data["at"]?.trim().orEmpty()
+      if (conversationId.isEmpty() || at.isEmpty()) return
+      emitMap("blyp_conversation_presence", data)
+    }
+
     fun emitMoneyUpdated(data: Map<String, String>) {
       val conversationId = data["conversationId"]?.trim().orEmpty()
       val transferId = data["transferId"]?.trim().orEmpty()

@@ -56,6 +56,11 @@ class BlypFirebaseMessagingService : ExpoFirebaseMessagingService() {
       PaymentAnnounceModule.emitConversationTyping(typing)
       return
     }
+    val presence = PaymentPushParser.parseConversationPresence(remoteMessage.data)
+    if (presence != null) {
+      PaymentAnnounceModule.emitConversationPresence(presence)
+      return
+    }
     val moneyUpdated = PaymentPushParser.parseMoneyUpdated(remoteMessage.data)
     if (moneyUpdated != null) {
       PaymentAnnounceModule.emitMoneyUpdated(moneyUpdated)

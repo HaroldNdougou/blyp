@@ -149,7 +149,7 @@ function documentKeyPrefix(conversationId, userId) {
   return `doc/${conversationId}/${userId}/`;
 }
 
-function extFromFileName(fileName) {
+export function extFromFileName(fileName) {
   const base = String(fileName ?? "").trim();
   const m = base.match(/\.([a-zA-Z0-9]{1,8})$/);
   if (!m) return { ext: "bin", contentType: "application/octet-stream" };
@@ -291,4 +291,101 @@ export async function presignDocumentThumbDownload(conversationId, key) {
     { expiresIn: GET_TTL_SEC },
   );
   return { url, expiresIn: GET_TTL_SEC };
+}
+
+async function copyObjectInBucket(sourceKey, destKey) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  const src = String(sourceKey ?? "").trim();
+  const dst = String(destKey ?? "").trim();
+  if (!src || !dst || src.includes("..") || dst.includes("..")) {
+    return { error: "KEY_INVALID" };
+  }
+  const { S3Client, CopyObjectCommand } = await import("@aws-sdk/client-s3");
+  const client = new S3Client({
+    region: region(),
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED",
+  });
+  const copySource = encodeURIComponent(`${b}/${src}`);
+  try {
+    await client.send(
+      new CopyObjectCommand({
+        Bucket: b,
+        CopySource: copySource,
+        Key: dst,
+      }),
+    );
+    return { ok: true };
+  } catch {
+    return { error: "COPY_FAILED" };
+  }
+}
+
+export async function duplicateVoiceKeyForConversation(
+  userId,
+  sourceConversationId,
+  targetConversationId,
+  sourceKey,
+) {
+  const src = String(sourceKey ?? "").trim();
+  if (!isConvVoiceKey(src, sourceConversationId)) {
+    return { error: "KEY_INVALID" };
+  }
+  const destKey = `${voiceKeyPrefix(targetConversationId, userId)}${randomUUID()}.m4a`;
+  const copied = await copyObjectInBucket(src, destKey);
+  if (copied.error) return copied;
+  return { key: destKey };
+}
+
+export async function duplicateImageKeyForConversation(
+  userId,
+  sourceConversationId,
+  targetConversationId,
+  sourceKey,
+) {
+  const src = String(sourceKey ?? "").trim();
+  if (!isConvImageKey(src, sourceConversationId)) {
+    return { error: "KEY_INVALID" };
+  }
+  const ext = src.endsWith(".png") ? "png" : "jpg";
+  const destKey = `${imageKeyPrefix(targetConversationId, userId)}${randomUUID()}.${ext}`;
+  const copied = await copyObjectInBucket(src, destKey);
+  if (copied.error) return copied;
+  return { key: destKey };
+}
+
+export async function duplicateDocumentKeyForConversation(
+  userId,
+  sourceConversationId,
+  targetConversationId,
+  sourceKey,
+  fileName,
+) {
+  const src = String(sourceKey ?? "").trim();
+  if (!isConvDocumentKey(src, sourceConversationId)) {
+    return { error: "KEY_INVALID" };
+  }
+  const { ext } = extFromFileName(fileName);
+  const destKey = `${documentKeyPrefix(targetConversationId, userId)}${randomUUID()}.${ext}`;
+  const copied = await copyObjectInBucket(src, destKey);
+  if (copied.error) return copied;
+  return { key: destKey };
+}
+
+export async function duplicateDocumentThumbKeyForConversation(
+  userId,
+  sourceConversationId,
+  targetConversationId,
+  sourceKey,
+) {
+  const src = String(sourceKey ?? "").trim();
+  if (!src) return { key: null };
+  if (!isConvDocumentThumbKey(src, sourceConversationId)) {
+    return { error: "KEY_INVALID" };
+  }
+  const destKey = `${documentThumbKeyPrefix(targetConversationId, userId)}${randomUUID()}.jpg`;
+  const copied = await copyObjectInBucket(src, destKey);
+  if (copied.error) return copied;
+  return { key: destKey };
 }

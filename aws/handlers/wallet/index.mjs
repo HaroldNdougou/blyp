@@ -39,6 +39,7 @@ import {
   listTransactions,
   updateDepositIntent,
 } from "../../lib/wallet.mjs";
+import { maxTxFcfaForProfile } from "../../lib/kyc.mjs";
 import { getUserBalance, getUserProfile } from "../../lib/user.mjs";
 import {
   createPocket,
@@ -247,6 +248,14 @@ async function handlePay(userId, body, event) {
   if (!profile) return notFound("Utilisateur introuvable");
   if (!profile.transactionPinHash) {
     return forbidden("Complétez votre inscription (code PIN) pour payer");
+  }
+  const kycMax = maxTxFcfaForProfile(profile);
+  if (amount > kycMax) {
+    return badRequest(
+      profile.kycStatus === "approved"
+        ? `Montant invalide (max ${kycMax.toLocaleString("fr-FR")} FCFA)`
+        : `Plafond ${kycMax.toLocaleString("fr-FR")} FCFA — vérifiez votre identité dans Profil`,
+    );
   }
   if (
     !verifyTransactionPin(

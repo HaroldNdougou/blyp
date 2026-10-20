@@ -79,6 +79,10 @@ object PaymentPushParser {
     return parseTyped(data, "conversation_typing")
   }
 
+  fun parseConversationPresence(data: Map<String, String>): Map<String, String>? {
+    return parseTyped(data, "conversation_presence")
+  }
+
   fun parseMoneyUpdated(data: Map<String, String>): Map<String, String>? {
     return parseTyped(data, "money_updated")
   }

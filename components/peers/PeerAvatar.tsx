@@ -1,5 +1,5 @@
 import { useTheme } from "@/contexts/ThemeContext";
-import { peerAvatarUrl } from "@/lib/peers/peerAvatarUrl";
+import { resolvePeerAvatarUri } from "@/lib/peers/resolvePeerAvatarUri";
 import { Image } from "expo-image";
 import React, { memo, useEffect, useMemo, useState } from "react";
 import {
@@ -38,14 +38,10 @@ export const PeerAvatar = memo(function PeerAvatar({
   recyclingKey,
 }: Props) {
   const { colors } = useTheme();
-  const cdnUri = useMemo(() => peerAvatarUrl(phone), [phone]);
-  const uri = useMemo(() => {
-    const remote = String(remoteUrl ?? "").trim();
-    if (remote) return remote;
-    const local = String(localUri ?? "").trim();
-    if (local) return local;
-    return cdnUri;
-  }, [remoteUrl, localUri, cdnUri]);
+  const uri = useMemo(
+    () => resolvePeerAvatarUri({ remoteUrl, localUri, phone }),
+    [remoteUrl, localUri, phone],
+  );
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     setFailed(false);

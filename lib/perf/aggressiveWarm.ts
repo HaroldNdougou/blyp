@@ -18,7 +18,8 @@ function warmJsModules(token: string | null): void {
     void m.Ionicons.loadFont().catch(() => {});
   });
   void import("@/components/pay/PayRegisterOverlay");
-  void import("@/app/(tabs)/messages");
+  void import("@/app/(tabs)/index");
+  void import("@/app/(tabs)/pay");
   void import("@/components/messages/ConversationsScreen");
   void import("@/components/messages/ChatThreadScreen");
   void import("@/app/chat/[id]");
@@ -29,7 +30,6 @@ function warmJsModules(token: string | null): void {
   );
   if (token) {
     void import("@/app/(tabs)/profile");
-    void import("@/app/pocket/[id]");
   }
 }
 
@@ -70,8 +70,6 @@ export function runAggressiveWarm(opts: {
           "@/lib/pay/quickAmounts"
         );
         startQuickAmountsEngine(phone);
-        const { hydratePockets } = await import("@/lib/pockets/store");
-        await hydratePockets(phone);
       } catch {
         /* best effort */
       }
@@ -97,9 +95,6 @@ export function runAggressiveWarm(opts: {
       } catch {
         /* best effort */
       }
-      void import("@/lib/pockets/store")
-        .then((m) => m.syncPocketsFromNetwork(token, phone))
-        .catch(() => {});
       try {
         const api = await import("@/lib/api/client");
         const cache = await import("@/lib/messagesCache");

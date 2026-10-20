@@ -1,9 +1,11 @@
 import { DocumentBubble } from "@/components/messages/DocumentBubble";
+import { FruitMoneyBubble } from "@/components/messages/FruitMoneyBubble";
 import { ImageBubble } from "@/components/messages/ImageBubble";
 import { MessageReplyQuote } from "@/components/messages/MessageReplyQuote";
 import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
 import { ReactionBadge } from "@/components/messages/MessageReactions";
 import { SwipeToReplyWrap } from "@/components/messages/SwipeToReplyWrap";
+import { MessageForwardedLabel } from "@/components/messages/MessageForwardedLabel";
 import { MessageTranslatedText } from "@/components/messages/MessageTranslatedText";
 import { VoiceBubble } from "@/components/messages/VoiceBubble";
 import type { createMessagesStyles } from "@/components/messages/messagesStyles";
@@ -41,6 +43,8 @@ export type ChatMessageRowHandlers = {
   startReplyTo: (msg: ChatMessage) => void;
   scrollToMessageId: (messageId: string) => void;
   onClaim: (transferId: string, mine: boolean) => void;
+  onBeginReceiptClaim: (transferId: string) => void;
+  onToggleMoneyReceipt: (transferId: string, required: boolean) => void;
   setRecallTransferId: (transferId: string) => void;
   dismissHighlight: () => void;
   applyReaction: (msg: ChatMessage, emoji: string) => void;
@@ -98,6 +102,10 @@ function ChatMessageListRowInner({
     unpackReceiptGeneration(receiptGeneration);
 
   const deleted = Boolean(item.deletedForAll);
+  const forwarded = Boolean(item.forwarded) && !deleted;
+  const forwardedLabel = forwarded ? (
+    <MessageForwardedLabel mine={mine} styles={styles} />
+  ) : null;
   const isMoney = !deleted && item.type === "money" && item.moneyTransfer;
   const isVoice = !deleted && item.type === "voice" && item.voice;
   const isImage = !deleted && item.type === "image" && item.image;
@@ -107,6 +115,8 @@ function ChatMessageListRowInner({
       ? parseJumboEmojiBody(item.body)
       : null;
   const tr = item.moneyTransfer;
+  const fruitMoneyEmoji =
+    isMoney && tr && item.moneyFruitEmoji ? item.moneyFruitEmoji : null;
   const recipientMe = isMoney ? !mine : false;
   const statusTxt = tr ? moneyStatusText(tr, recipientMe, mine, peerName, t) : "";
   const thanksTxt = tr ? thanksLabel(tr, recipientMe, peerName, t) : "";
@@ -134,6 +144,15 @@ function ChatMessageListRowInner({
         })
     : isVoice
       ? t("messages.voiceA11y", { time: voiceTime })
+      : isMoney && tr && fruitMoneyEmoji
+        ? showClaim
+          ? t(mine ? "messages.reclaimTapA11y" : "messages.claimTapA11y", {
+              amount: formatFcfa(tr.amountFcfa),
+            })
+          : t("messages.fruitMoneyA11y", {
+              amount: formatFcfa(tr.amountFcfa),
+              fruit: fruitMoneyEmoji,
+            })
       : isMoney && tr
         ? showClaim
           ? t(mine ? "messages.reclaimTapA11y" : "messages.claimTapA11y", {
@@ -161,6 +180,21 @@ function ChatMessageListRowInner({
     ? tickForMessage(item, peerLastReadAt, peerLastDeliveredAt)
     : null;
 
+  const fruitMoneyClaimedLabel =
+    fruitMoneyEmoji && tr && tr.status === "claimed"
+      ? t("messages.fruitMoneyClaimedMeta")
+      : null;
+
+  const moneyPending = Boolean(isMoney && tr && tr.status === "pending");
+  const showMoneyReceiptMeta = moneyPending && !fruitMoneyEmoji;
+  const triggerMoneyReceiptToggle = () => {
+    if (!showMoneyReceiptMeta || !tr || !mine) return;
+    handlersRef.current.onToggleMoneyReceipt(
+      tr.transferId,
+      !tr.receiptRequired,
+    );
+  };
+
   const metaTextProps = {
     createdAt: item.createdAt,
     mine,
@@ -168,7 +202,21 @@ function ChatMessageListRowInner({
     colors,
     styles,
     deletedForAll: deleted && mine,
+    fruitMoneyClaimedLabel,
+    moneyReceiptToggle:
+      showMoneyReceiptMeta && mine
+        ? {
+            on: Boolean(tr?.receiptRequired),
+            onPress: triggerMoneyReceiptToggle,
+            disabled: claimingThis,
+          }
+        : undefined,
+    moneyReceiptOn:
+      showMoneyReceiptMeta && !mine ? Boolean(tr?.receiptRequired) : undefined,
   };
+
+  const detachMoneyReceiptMeta = Boolean(isMoney && tr && !fruitMoneyEmoji && !deleted);
+  const moneyMetaRow = <MessageBubbleMetaRow {...metaTextProps} />;
 
   const renderImageOverlayMeta = () => (
     <View>
@@ -187,10 +235,31 @@ function ChatMessageListRowInner({
     handlersRef.current.openReactPicker(item.id);
   };
 
+  const triggerMoneyClaim = () => {
+    if (!showClaim || !tr || claimingThis) return;
+    const handler = handlersRef.current;
+    if (mine) {
+      handler.setRecallTransferId(tr.transferId);
+      return;
+    }
+    if (tr.receiptRequired) {
+      handler.onBeginReceiptClaim(tr.transferId);
+      return;
+    }
+    void handler.onClaim(tr.transferId, false);
+  };
+
   const replyInnerStyle = itemReplyTo ? styles.bubbleReplyInner : undefined;
+  const translatedPeerText = Boolean(!mine && peerTranslation);
+  const textStackStyle = itemReplyTo
+    ? styles.bubbleTextStackInReply
+    : translatedPeerText
+      ? styles.bubbleTextStackTranslate
+      : styles.bubbleTextStack;
 
   const bubbleBody = isImage ? (
     <>
+      {forwardedLabel}
       {replyQuoteEl ? (
         <View style={styles.bubbleImageReplyPad}>{replyQuoteEl}</View>
       ) : null}
@@ -224,6 +293,7 @@ function ChatMessageListRowInner({
     </>
   ) : isDocument ? (
     <>
+      {forwardedLabel}
       {replyQuoteEl}
       <DocumentBubble
         message={item}
@@ -262,6 +332,7 @@ function ChatMessageListRowInner({
     </>
   ) : (
     <>
+      {forwardedLabel}
       {replyQuoteEl}
       {isVoice ? (
         <VoiceBubble
@@ -270,6 +341,7 @@ function ChatMessageListRowInner({
           ink={mine ? colors.bubbleMineText : colors.bubbleTheirsText}
           styles={styles}
           onToggle={handlersRef.current.playVoiceMsg}
+          metaTextProps={metaTextProps}
         />
       ) : jumbo ? (
         <View
@@ -294,14 +366,16 @@ function ChatMessageListRowInner({
             <MessageBubbleMetaRow {...metaTextProps} imageOverlay bare />
           </View>
         </View>
+      ) : fruitMoneyEmoji && tr ? (
+        <FruitMoneyBubble
+          fruitEmoji={fruitMoneyEmoji}
+          mine={mine}
+          claimingThis={claimingThis}
+          styles={styles}
+          metaTextProps={metaTextProps}
+        />
       ) : (
-        <View
-          style={
-            itemReplyTo
-              ? styles.bubbleTextStackInReply
-              : styles.bubbleTextStack
-          }
-        >
+        <View style={textStackStyle}>
           {deleted || isMoney ? (
             <Text
               style={[
@@ -317,25 +391,47 @@ function ChatMessageListRowInner({
             >
               {body}
               {isMoney && tr ? (
-                <Text
-                  style={[
-                    styles.bubbleMetaTime,
-                    showClaim
-                      ? { color: colors.moneyClaimAction }
-                      : tr.status !== "pending" && amountColor
-                        ? { color: amountColor }
-                        : null,
-                  ]}
-                >
-                  {`\n💰 ${
-                    showClaim
-                      ? t(mine ? "messages.reclaim" : "messages.claim")
-                      : statusTxt
-                  }`}
+                <>
+                  {showClaim ? (
+                    <Text style={styles.bubbleMetaTime}>
+                      {"\n💰 "}
+                      <Text
+                        onPress={triggerMoneyClaim}
+                        suppressHighlighting={false}
+                        style={[
+                          styles.bubbleMetaTime,
+                          { color: colors.moneyClaimAction },
+                        ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={
+                          mine
+                            ? t("messages.reclaimTapA11y", {
+                                amount: formatFcfa(tr.amountFcfa),
+                              })
+                            : t("messages.claimTapA11y", {
+                                amount: formatFcfa(tr.amountFcfa),
+                              })
+                        }
+                      >
+                        {t(mine ? "messages.reclaim" : "messages.claim")}
+                      </Text>
+                    </Text>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.bubbleMetaTime,
+                        tr.status !== "pending" && amountColor
+                          ? { color: amountColor }
+                          : null,
+                      ]}
+                    >
+                      {`\n💰 ${statusTxt}`}
+                    </Text>
+                  )}
                   {expiresTxt ? (
                     <Text style={styles.bubbleMetaTime}>{`\n${expiresTxt}`}</Text>
                   ) : null}
-                </Text>
+                </>
               ) : null}
             </Text>
           ) : (
@@ -352,10 +448,10 @@ function ChatMessageListRowInner({
               ]}
             />
           )}
-          <MessageBubbleMetaRow {...metaTextProps} />
+          {!detachMoneyReceiptMeta ? moneyMetaRow : null}
         </View>
       )}
-      {isMoney && moneyCaption ? (
+      {isMoney && moneyCaption && !fruitMoneyEmoji ? (
         <View style={styles.bubbleImageCaption}>
           <MessageTranslatedText
             original={moneyCaption}
@@ -370,38 +466,58 @@ function ChatMessageListRowInner({
           />
         </View>
       ) : null}
-      {isVoice ? <MessageBubbleMetaRow {...metaTextProps} /> : null}
     </>
   );
 
+  const bubbleShellStyle = [
+    styles.bubble,
+    isVoice && styles.bubbleVoice,
+    isImage && styles.bubbleImage,
+    itemReplyTo && styles.bubbleHasReply,
+    !isImage &&
+      !isDocument &&
+      (fruitMoneyEmoji
+        ? styles.bubbleFruitMoney
+        : jumbo
+          ? styles.bubbleJumbo
+          : mine
+            ? styles.bubbleMine
+            : styles.bubbleTheirs),
+    (isImage || isDocument) &&
+      (mine ? styles.bubbleMine : styles.bubbleTheirs),
+    highlighted && !fruitMoneyEmoji && styles.bubbleHighlight,
+    newArrival && !highlighted && !fruitMoneyEmoji && styles.bubbleNewArrival,
+  ];
+
+  const bubbleInner = replyInnerStyle ? (
+    <View style={replyInnerStyle}>{bubbleBody}</View>
+  ) : (
+    bubbleBody
+  );
+
   const bubble = (
-    <View
-      style={[
-        styles.bubble,
-        isImage && styles.bubbleImage,
-        itemReplyTo && styles.bubbleHasReply,
-        !isImage &&
-          !isDocument &&
-          (jumbo
-            ? styles.bubbleJumbo
-            : mine
-              ? styles.bubbleMine
-              : styles.bubbleTheirs),
-        (isImage || isDocument) &&
-          (mine ? styles.bubbleMine : styles.bubbleTheirs),
-        highlighted && styles.bubbleHighlight,
-        newArrival && !highlighted && styles.bubbleNewArrival,
-      ]}
-    >
-      {replyInnerStyle ? (
-        <View style={replyInnerStyle}>{bubbleBody}</View>
-      ) : (
-        bubbleBody
-      )}
+    <View style={bubbleShellStyle}>
+      {bubbleInner}
+      {detachMoneyReceiptMeta ? moneyMetaRow : null}
     </View>
   );
 
   const h = handlersRef.current;
+
+  const onBubblePress = () => {
+    if (selectionActive) {
+      h.toggleMessageSelection(item.id);
+      return;
+    }
+    if (highlighted) return;
+    if (highlightedTransferId) {
+      h.dismissHighlight();
+      return;
+    }
+    if (showClaim && tr && fruitMoneyEmoji) {
+      triggerMoneyClaim();
+    }
+  };
 
   return (
     <View>
@@ -443,40 +559,47 @@ function ChatMessageListRowInner({
                 enabled={canReact && !selectionActive}
                 onReply={() => h.startReplyTo(item)}
               >
-                <Pressable
-                  style={itemReplyTo ? styles.bubblePressableInReply : undefined}
-                  onLongPress={triggerReactPicker}
-                  delayLongPress={CHAT_LONG_PRESS_MS}
-                  onPress={() => {
-                    if (selectionActive) {
-                      h.toggleMessageSelection(item.id);
-                      return;
-                    }
-                    if (highlighted) return;
-                    if (highlightedTransferId) {
-                      h.dismissHighlight();
-                      return;
-                    }
-                    if (showClaim && tr) {
-                      if (mine) {
-                        h.setRecallTransferId(tr.transferId);
-                        return;
+                {detachMoneyReceiptMeta ? (
+                  <View style={bubbleShellStyle}>
+                    <Pressable
+                      style={[
+                        itemReplyTo ? styles.bubblePressableInReply : undefined,
+                        { alignSelf: "stretch" },
+                      ]}
+                      onLongPress={triggerReactPicker}
+                      delayLongPress={CHAT_LONG_PRESS_MS}
+                      onPress={onBubblePress}
+                      disabled={
+                        showClaim && claimingThis && Boolean(fruitMoneyEmoji)
                       }
-                      void h.onClaim(tr.transferId, false);
+                      accessibilityRole="button"
+                      accessibilityLabel={a11y ?? t("messages.reactA11y")}
+                    >
+                      {bubbleInner}
+                    </Pressable>
+                    {moneyMetaRow}
+                  </View>
+                ) : (
+                  <Pressable
+                    style={itemReplyTo ? styles.bubblePressableInReply : undefined}
+                    onLongPress={triggerReactPicker}
+                    delayLongPress={CHAT_LONG_PRESS_MS}
+                    onPress={onBubblePress}
+                    disabled={
+                      showClaim && claimingThis && Boolean(fruitMoneyEmoji)
                     }
-                  }}
-                  disabled={showClaim && claimingThis}
-                  accessibilityRole="button"
-                  accessibilityLabel={a11y ?? t("messages.reactA11y")}
-                >
-                  {bubble}
-                </Pressable>
+                    accessibilityRole="button"
+                    accessibilityLabel={a11y ?? t("messages.reactA11y")}
+                  >
+                    {bubble}
+                  </Pressable>
+                )}
               </SwipeToReplyWrap>
               {selected ? (
                 <View style={styles.messageSelectVeil} pointerEvents="none" />
               ) : null}
             </View>
-            {thanksTxt ? (
+            {thanksTxt && !fruitMoneyEmoji ? (
               <View
                 style={[styles.thanksChip, mine && styles.thanksChipMine]}
               >

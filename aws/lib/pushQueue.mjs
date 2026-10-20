@@ -93,6 +93,9 @@ export async function enqueueMessageReceivedPush(payload) {
         transferId: String(payload?.transferId ?? "").trim(),
         amountFcfa: Math.floor(Number(payload?.amountFcfa) || 0),
         expiresAt: String(payload?.expiresAt ?? "").trim(),
+        ...(payload?.receiptRequired
+          ? { receiptRequired: "1" }
+          : {}),
       }),
     }),
   );
@@ -269,6 +272,37 @@ export async function enqueueMessageDeletedPush(payload) {
  *   on?: boolean | string,
  * }} payload
  */
+/**
+ * Data-only — l’interlocuteur est en ligne (heartbeat fil).
+ * @param {{
+ *   recipientUserId: string,
+ *   conversationId: string,
+ *   at: string,
+ * }} payload
+ */
+export async function enqueueConversationPresencePush(payload) {
+  const queueUrl = process.env.PUSH_QUEUE_URL?.trim();
+  if (!queueUrl) return { skipped: true, reason: "NO_QUEUE" };
+  const recipientUserId = String(payload?.recipientUserId ?? "").trim();
+  const conversationId = String(payload?.conversationId ?? "").trim();
+  const at = String(payload?.at ?? "").trim();
+  if (!recipientUserId || !conversationId || !at) {
+    return { skipped: true, reason: "INVALID" };
+  }
+  await sqs.send(
+    new SendMessageCommand({
+      QueueUrl: queueUrl,
+      MessageBody: JSON.stringify({
+        type: "conversation_presence",
+        recipientUserId,
+        conversationId,
+        at,
+      }),
+    }),
+  );
+  return { ok: true };
+}
+
 export async function enqueueConversationTypingPush(payload) {
   const queueUrl = process.env.PUSH_QUEUE_URL?.trim();
   if (!queueUrl) return { skipped: true, reason: "NO_QUEUE" };
@@ -287,6 +321,9 @@ export async function enqueueConversationTypingPush(payload) {
         conversationId,
         fromName,
         on: payload?.on === false || payload?.on === "0" ? "0" : "1",
+        ...(payload?.presenceAt
+          ? { presenceAt: String(payload.presenceAt) }
+          : {}),
       }),
     }),
   );
@@ -328,6 +365,11 @@ export async function enqueueMoneyUpdatedPush(payload) {
         claimedByUserId: String(payload?.claimedByUserId ?? "").trim(),
         thanksFirstName: String(payload?.thanksFirstName ?? "").trim(),
         thanksUserId: String(payload?.thanksUserId ?? "").trim(),
+        ...(payload?.receiptRequired === true || payload?.receiptRequired === false
+          ? {
+              receiptRequired: payload.receiptRequired ? "1" : "0",
+            }
+          : {}),
       }),
     }),
   );

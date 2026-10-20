@@ -89,7 +89,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Blyp accède à vos photos pour les envoyer dans le chat."
+          "photosPermission": "Blyp accède à vos photos pour les envoyer dans le chat.",
+          "cameraPermission": "Blyp utilise l’appareil photo pour vérifier votre identité et envoyer des images."
         }
       ],
       [

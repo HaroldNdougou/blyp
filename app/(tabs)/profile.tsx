@@ -1,7 +1,3 @@
-import {
-  PocketsSection,
-  PocketsSetAsideLine,
-} from "@/components/pockets/PocketsSection";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { CommerceSection } from "@/components/profile/CommerceSection";
 import { createProfileStyles } from "@/components/profile/profileStyles";
@@ -15,7 +11,7 @@ import {
 } from "@/lib/format";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
-import { Redirect } from "expo-router";
+import { Redirect, router } from "expo-router";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -33,6 +29,12 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { CountBadge } from "@/components/ui/CountBadge";
+import {
+  getReceiptsUnreadCount,
+  hydrateReceiptsUnread,
+  subscribeReceiptsUnread,
+} from "@/lib/receipts/receiptsUnread";
 
 function initialsFromName(first: string | null, last: string | null): string {
   const a = (first ?? "").trim().charAt(0);
@@ -46,9 +48,27 @@ export default function ProfileTabScreen() {
   const { user, token, signOut, isLoading, refreshUser } = useAuth();
   const [avatarBusy, setAvatarBusy] = useState(false);
   const { colors } = useTheme();
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const styles = useMemo(() => createProfileStyles(colors), [colors]);
   const [signingOut, setSigningOut] = useState(false);
+  const [receiptsUnreadTick, setReceiptsUnreadTick] = useState(0);
+  const accountId = String(user?.id ?? "").trim();
+  const receiptsUnread = accountId
+    ? getReceiptsUnreadCount(accountId)
+    : 0;
+
+  useEffect(
+    () => subscribeReceiptsUnread(() => setReceiptsUnreadTick((n) => n + 1)),
+    [],
+  );
+  useFocusEffect(
+    useCallback(() => {
+      if (!accountId) return;
+      void hydrateReceiptsUnread(accountId).then(() =>
+        setReceiptsUnreadTick((n) => n + 1),
+      );
+    }, [accountId]),
+  );
   const [announcePayments, setAnnouncePayments] = useState(false);
   const bleBroadcastAccount = useMemo(
     () => resolveBleBroadcastAccount(user),
@@ -56,6 +76,11 @@ export default function ProfileTabScreen() {
   );
   const broadcast = useTaxiBroadcast(bleBroadcastAccount);
   const isPro = user?.activeContext?.type === "commerce";
+  const kycStatus = user?.kycStatus ?? "none";
+  const kycCtaLabel =
+    kycStatus === "rejected"
+      ? t("profile.kycCtaUnlock")
+      : t("profile.kycCtaVerify");
   const personalFirst = user?.personalFirstName ?? null;
   const personalLast = user?.personalLastName ?? null;
 
@@ -157,9 +182,6 @@ export default function ProfileTabScreen() {
       ? `${user!.firstName!.trim()} ${user!.lastName!.trim()}`
       : t("common.account");
   const accountComplete = Boolean(user && !user.needsOnboarding);
-  const pinOk = user?.onboardingStep !== "pin" && Boolean(user);
-  const langLabel =
-    i18n.language === "fr" ? t("profile.languageFr") : t("profile.languageEn");
   const appVersion =
     Constants.expoConfig?.version ??
     Constants.nativeAppVersion ??
@@ -275,12 +297,49 @@ export default function ProfileTabScreen() {
             </Text>
             <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
           </View>
-          {!isPro ? <PocketsSetAsideLine /> : null}
         </View>
 
-        {!isPro ? <PocketsSection profileStyles={styles} /> : null}
-
         <CommerceSection styles={styles} onContextChanged={onContextChanged} />
+
+        <Text style={styles.sectionTitle}>{t("vault.profileSection")}</Text>
+        <View style={styles.sectionCard}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.row,
+              styles.rowBorder,
+              pressed && styles.actionBtnPressed,
+            ]}
+            onPress={() => router.push("/documents")}
+            accessibilityRole="button"
+            accessibilityLabel={t("vault.title")}
+          >
+            <Text style={styles.commerceTitle}>{t("vault.title")}</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={20}
+              color={colors.textMuted}
+            />
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.row,
+              pressed && styles.actionBtnPressed,
+            ]}
+            onPress={() => router.push("/receipts")}
+            accessibilityRole="button"
+            accessibilityLabel={t("receipts.title")}
+          >
+            <Text style={styles.commerceTitle}>{t("receipts.title")}</Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <CountBadge count={receiptsUnread} />
+              <Ionicons
+                name="chevron-forward"
+                size={20}
+                color={colors.textMuted}
+              />
+            </View>
+          </Pressable>
+        </View>
 
         <Text style={styles.sectionTitle}>{t("profile.sectionTaxi")}</Text>
         <View style={styles.sectionCard}>
@@ -408,37 +467,37 @@ export default function ProfileTabScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>{t("profile.sectionSecurity")}</Text>
-        <View style={styles.sectionCard}>
-          <View style={[styles.row, styles.rowBorder]}>
-            <Text style={styles.rowLabel}>{t("profile.security")}</Text>
-            <Text
-              style={[
-                styles.rowValue,
-                styles.rowValueSoft,
-                pinOk && accountComplete
-                  ? { color: colors.accent }
-                  : styles.rowValueMuted,
-              ]}
-            >
-              {pinOk && accountComplete
-                ? t("profile.pinSet")
-                : t("profile.pinMissing")}
+        {kycStatus !== "approved" ? (
+          <>
+            <Text style={styles.sectionTitle}>
+              {t("profile.sectionSecurity")}
             </Text>
-          </View>
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>{t("profile.language")}</Text>
-            <Text
-              style={[
-                styles.rowValue,
-                styles.rowValueMuted,
-                styles.rowValueSoft,
-              ]}
-            >
-              {langLabel}
+            {kycStatus === "pending" ? (
+              <View style={styles.kycPendingChip}>
+                <Text style={styles.kycPendingChipText}>
+                  {t("profile.kycStatusPending")}
+                </Text>
+              </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.kycCtaBtn,
+                  pressed && styles.kycCtaBtnPressed,
+                ]}
+                onPress={() => router.push("/kyc")}
+                accessibilityRole="button"
+                accessibilityLabel={kycCtaLabel}
+              >
+                <Text style={styles.kycCtaBtnText}>{kycCtaLabel}</Text>
+              </Pressable>
+            )}
+            <Text style={styles.kycLead}>
+              {t("profile.kycLead", {
+                amount: formatFcfa(999_999),
+              })}
             </Text>
-          </View>
-        </View>
+          </>
+        ) : null}
 
         <Pressable
           style={({ pressed }) => [

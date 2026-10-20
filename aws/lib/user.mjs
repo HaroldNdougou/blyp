@@ -81,6 +81,13 @@ export function userToApi(profile, walletOrBalance = 0) {
     avatarUrl: profile.avatarUpdatedAt
       ? publicAvatarUrl(profile.phone, Date.parse(profile.avatarUpdatedAt))
       : null,
+    kycStatus: profile.kycStatus ?? "none",
+    kycLevel:
+      profile.kycStatus === "approved"
+        ? Number(profile.kycLevel) > 0
+          ? Number(profile.kycLevel)
+          : 1
+        : 0,
   };
 }
 

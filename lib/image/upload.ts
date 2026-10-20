@@ -6,12 +6,13 @@ export async function uploadImageFile(
   uploadUrl: string,
   localUri: string,
   contentType: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<void> {
   if (uploadUrl.startsWith("mock://")) return;
   const ct = String(contentType ?? "image/jpeg").trim() || "image/jpeg";
   const result = await FS.uploadAsync(uploadUrl, localUri, {
     httpMethod: "PUT",
-    headers: { "Content-Type": ct },
+    headers: { "Content-Type": ct, ...extraHeaders },
     uploadType: FS.FileSystemUploadType.BINARY_CONTENT,
   });
   if (result.status < 200 || result.status >= 300) {

@@ -3,6 +3,10 @@ import type { ThemeColors } from "@/lib/theme/colors";
 import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
+import {
+  PeerAvatarLightbox,
+  type PeerAvatarLightboxTarget,
+} from "@/components/peers/PeerAvatarLightbox";
 import { createMessagesStyles } from "@/components/messages/messagesStyles";
 import {
   ReactionBadge,
@@ -27,7 +31,7 @@ import {
   type PendingImageAsset,
 } from "@/components/messages/ImageCaptionComposer";
 import { VoiceBubble } from "@/components/messages/VoiceBubble";
-import { formatVoiceClock } from "@/lib/voice/record";
+import { VoiceRecordComposer } from "@/components/messages/VoiceRecordComposer";
 import {
   copyVoiceIntoCache,
   ensureVoiceCached,
@@ -36,20 +40,41 @@ import {
 } from "@/lib/voice/cache";
 import { copyImageIntoCache } from "@/lib/image/cache";
 import {
+  ensureCameraPermission,
   ensureImageLibraryPermission,
+  pickImageFromCamera,
   pickImagesFromLibrary,
   warmImageLibraryPermission,
 } from "@/lib/image/pickFromLibrary";
 import { kickImageOutbox, subscribeImageOutbox } from "@/lib/image/outbox";
+import {
+  kickMoneyOutbox,
+  subscribeMoneyOutbox,
+} from "@/lib/messages/moneyOutbox";
+import { clearMoneyOutboxSecrets } from "@/lib/messages/moneyOutboxSecrets";
+import { isRetryableMoneySendError } from "@/lib/messages/moneySendRetry";
+import {
+  clearMoneyReceiptOverride,
+  setMoneyReceiptOverride,
+} from "@/lib/messages/moneyReceiptOverride";
+import {
+  saveTransactionPinVault,
+  tryUnlockTransactionPinVault,
+} from "@/lib/security/transactionPinVault";
 import { kickVoiceOutbox, subscribeVoiceOutbox } from "@/lib/voice/outbox";
 import { AmountNumericKeypad } from "@/components/pay/AmountNumericKeypad";
 import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
+import {
+  MoneyReceiptClaimSheet,
+  type MoneyReceiptClaimContext,
+} from "@/components/messages/MoneyReceiptClaimSheet";
+import { MoneyReceiptSendToggle } from "@/components/messages/MoneyReceiptSendToggle";
 import { useAuth } from "@/contexts/AuthContext";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { useTheme } from "@/contexts/ThemeContext";
 import { parseAmountFcfa } from "@/lib/amountLimits";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
-import type { ChatMessage, Conversation } from "@/lib/api/types";
+import type { ChatMessage, Conversation, MoneyTransfer } from "@/lib/api/types";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { formatMessageDayLabel } from "@/lib/format";
 import {
@@ -63,6 +88,7 @@ import {
   getConversationsSnapshot,
   getMessagesSnapshot,
   getReceiptsSnapshot,
+  isDemoConversationId,
   mergeNewerOrPending,
   messagesEqual,
   setConversationsSnapshot,
@@ -73,7 +99,9 @@ import {
 } from "@/lib/messagesCache";
 import {
   getTypingSnapshot,
+  isConversationPeerOnline,
   setActiveConversation,
+  subscribeConversationPresence,
   subscribeConversationReceipt,
   subscribeConversationTyping,
   subscribeIncomingMessage,
@@ -83,6 +111,16 @@ import {
   subscribeMoneyUpdated,
 } from "@/lib/messages/live";
 import { Ionicons } from "@expo/vector-icons";
+import {
+  canForwardMessage,
+  setForwardDraft,
+} from "@/lib/messages/forwardDraft";
+import { consumeForwardLand } from "@/lib/messages/forwardLand";
+import {
+  markThreadMessagesPulled,
+  shouldPullThreadMessages,
+} from "@/lib/messages/threadPullGate";
+import { chatPeerHeaderStatus } from "@/lib/messages/chatPeerPresence";
 import {
   encodeReactionListPreview,
   encodeReactionSync,
@@ -150,6 +188,7 @@ const DELETE_FOR_ALL_MS = 60 * 60 * 1000;
 type ChatEmojiPickerProps = {
   colors: ThemeColors;
   onPick: (emoji: string) => void;
+  onPickMoney?: (denom: import("@/lib/messages/chatMoneyDenoms").ChatMoneyDenom) => void;
   backgroundColor: string;
   borderColor: string;
 };
@@ -260,11 +299,14 @@ export default function ChatThreadScreen() {
     [],
   );
   const [loading, setLoading] = useState(!cachedInit);
+  const [peerPhotoLightbox, setPeerPhotoLightbox] =
+    useState<PeerAvatarLightboxTarget | null>(null);
   const [text, setText] = useState("");
   const composerTextRef = useRef("");
   composerTextRef.current = text;
   const sendingRef = useRef(false);
   const lastLocalSendAtRef = useRef(0);
+  const pendingForwardLandRef = useRef(false);
   const [emojiPickerMounted, setEmojiPickerMounted] = useState(false);
   const [EmojiPickerView, setEmojiPickerView] = useState<
     React.ComponentType<ChatEmojiPickerProps> | null
@@ -277,15 +319,31 @@ export default function ChatThreadScreen() {
     null,
   );
   const pendingMoneyAmountRef = useRef<number | null>(null);
+  const pendingMoneyFruitRef = useRef<string | null>(null);
+  const fruitMoneySendRef = useRef(false);
   const pendingMoneyCaptionRef = useRef("");
+  const [moneyReceiptRequired, setMoneyReceiptRequired] = useState(false);
+  const pendingMoneyReceiptRequiredRef = useRef(false);
+  const clearMoneyReceiptRequired = useCallback(() => {
+    setMoneyReceiptRequired(false);
+    pendingMoneyReceiptRequiredRef.current = false;
+  }, []);
+  const receiptToggleInflightRef = useRef<Set<string>>(new Set());
+  const [receiptClaimOpen, setReceiptClaimOpen] = useState(false);
+  const [receiptClaimContext, setReceiptClaimContext] =
+    useState<MoneyReceiptClaimContext | null>(null);
   const [pinDigits, setPinDigits] = useState("");
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinInputKey, setPinInputKey] = useState(0);
   const [amount, setAmount] = useState("");
   const [claimingId, setClaimingId] = useState<string | null>(null);
+  const [receiptClaimBusy, setReceiptClaimBusy] = useState(false);
   const [recallTransferId, setRecallTransferId] = useState<string | null>(null);
   const [recUi, setRecUi] = useState<"idle" | "recording" | "paused">("idle");
   const [recMs, setRecMs] = useState(0);
+  const [recPreviewUri, setRecPreviewUri] = useState<string | null>(null);
+  const [recPreviewPlaying, setRecPreviewPlaying] = useState(false);
+  const [recPreviewPosMs, setRecPreviewPosMs] = useState(0);
   /** Stop du clip en cours — pas l’upload (WhatsApp : rec suivant tout de suite). */
   const [recBusy, setRecBusy] = useState(false);
   const [selectedMessageIds, setSelectedMessageIds] = useState<string[]>([]);
@@ -385,6 +443,7 @@ export default function ChatThreadScreen() {
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const recTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const recSegmentsRef = useRef<{ uri: string; durationMs: number }[]>([]);
   const prefetchVoicesRef = useRef<(list: ChatMessage[]) => void>(() => {});
   const [peerLastReadAt, setPeerLastReadAt] = useState<string | null>(
     () => getReceiptsSnapshot(conversationId)?.peerLastReadAt ?? null,
@@ -392,6 +451,10 @@ export default function ChatThreadScreen() {
   const [peerLastDeliveredAt, setPeerLastDeliveredAt] = useState<string | null>(
     () => getReceiptsSnapshot(conversationId)?.peerLastDeliveredAt ?? null,
   );
+  const [peerLastPresenceAt, setPeerLastPresenceAt] = useState<string | null>(
+    null,
+  );
+  const [presenceClock, setPresenceClock] = useState(0);
   const [peerTypingName, setPeerTypingName] = useState(
     () => getTypingSnapshot(conversationId)?.fromName ?? "",
   );
@@ -545,9 +608,43 @@ export default function ChatThreadScreen() {
     scrollAnchoredConvRef.current = null;
   }, [conversationId]);
 
+  useFocusEffect(
+    useCallback(() => {
+      if (!conversationId) return;
+      if (!consumeForwardLand(conversationId)) return;
+      pendingForwardLandRef.current = true;
+      lastLocalSendAtRef.current = Date.now();
+      atLatestRef.current = true;
+      setPinListOnInsert(false);
+      setNewBelowCount(0);
+      pendingNewMsgIdsRef.current.clear();
+      scrollAnchoredConvRef.current = null;
+      const cached = token ? getMessagesSnapshot(token, conversationId) : null;
+      if (cached?.length) {
+        setMessages((prev) => {
+          const next = mergeNewerOrPending(prev, cached);
+          return messagesEqual(prev, next) ? prev : next;
+        });
+        setLoading(false);
+      }
+    }, [conversationId, token]),
+  );
+
   useEffect(() => {
     if (!conversationId || loading) return;
     if (newestFirst.length === 0) return;
+    if (pendingForwardLandRef.current) {
+      pendingForwardLandRef.current = false;
+      scrollAnchoredConvRef.current = conversationId;
+      scrollToLatest(false);
+      requestAnimationFrame(() => scrollToLatest(false));
+      const t1 = setTimeout(() => scrollToLatest(true), 80);
+      const t2 = setTimeout(() => scrollToLatest(true), 200);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
     if (scrollAnchoredConvRef.current === conversationId) return;
     scrollAnchoredConvRef.current = conversationId;
     scrollToLatest(false);
@@ -703,6 +800,24 @@ export default function ChatThreadScreen() {
     };
   }, [conversationId]);
 
+  useEffect(() => {
+    if (recUi !== "paused") {
+      setRecPreviewPosMs(0);
+      setRecPreviewPlaying(false);
+      return;
+    }
+    let unsub: (() => void) | undefined;
+    void import("@/lib/voice/recDraftPreview").then((draft) => {
+      unsub = draft.subscribeRecDraftPreview((s) => {
+        setRecPreviewPosMs(s.positionMs);
+        setRecPreviewPlaying(s.playing);
+      });
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [recUi]);
+
   useFocusEffect(
     useCallback(() => {
       if (!conversationId) return;
@@ -717,6 +832,28 @@ export default function ChatThreadScreen() {
       const activate = () => {
         setActiveConversation(conversationId);
         markRead();
+        if (token) {
+          const snap = getMessagesSnapshot(token, conversationId);
+          if (snap?.length) {
+            let idemPatched = false;
+            const patched = snap.map((m) => {
+              if (
+                m.type === "money" &&
+                m.clientId &&
+                m.id === m.clientId &&
+                !m.moneySendIdempotencyKey
+              ) {
+                idemPatched = true;
+                return { ...m, moneySendIdempotencyKey: m.clientId };
+              }
+              return m;
+            });
+            if (idemPatched) {
+              setMessagesSnapshot(token, conversationId, patched);
+            }
+          }
+          kickMoneyOutbox(token);
+        }
       };
       const suspend = () => {
         setActiveConversation(null);
@@ -753,10 +890,23 @@ export default function ChatThreadScreen() {
   }, [conversationId]);
 
   useEffect(() => {
+    if (!conversationId) return;
+    return subscribeMoneyOutbox((cid, items, meta) => {
+      if (cid !== conversationId) return;
+      setMessages((prev) => (messagesEqual(prev, items) ? prev : items));
+      if (meta?.balanceFcfa != null) {
+        updateBalance(meta.balanceFcfa);
+        void refreshUser().catch(() => {});
+      }
+    });
+  }, [conversationId, updateBalance, refreshUser]);
+
+  useEffect(() => {
     if (!token) return;
     const task = InteractionManager.runAfterInteractions(() => {
       kickVoiceOutbox(token);
       kickImageOutbox(token);
+      kickMoneyOutbox(token);
     });
     return () => task.cancel?.();
   }, [token, conversationId]);
@@ -891,6 +1041,10 @@ export default function ChatThreadScreen() {
               thanksFirstName:
                 patch.thanksFirstName || tr.thanksFirstName || null,
               thanksUserId: patch.thanksUserId || tr.thanksUserId || null,
+              receiptRequired:
+                patch.receiptRequired !== undefined
+                  ? Boolean(patch.receiptRequired)
+                  : tr.receiptRequired,
             },
           };
         });
@@ -908,6 +1062,22 @@ export default function ChatThreadScreen() {
       setPeerTypingName(patch.on ? patch.fromName : "");
     });
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    return subscribeConversationPresence((patch) => {
+      if (patch.conversationId !== conversationId) return;
+      setPeerLastPresenceAt((prev) =>
+        prev === patch.at ? prev : patch.at,
+      );
+      setPresenceClock((n) => n + 1);
+    });
+  }, [conversationId]);
+
+  useEffect(() => {
+    const t = setInterval(() => setPresenceClock((n) => n + 1), 12_000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -966,9 +1136,19 @@ export default function ChatThreadScreen() {
     if (Date.now() - lastLocalSendAtRef.current < PULL_COOLDOWN_AFTER_SEND_MS) {
       return;
     }
+    const cached = getMessagesSnapshot(token, conversationId);
+    if (
+      !shouldPullThreadMessages(conversationId, Boolean(cached?.length))
+    ) {
+      return;
+    }
     try {
-      const { items, peerLastReadAt: r, peerLastDeliveredAt: d } =
-        await listChatMessages(token, conversationId);
+      const {
+        items,
+        peerLastReadAt: r,
+        peerLastDeliveredAt: d,
+        peerLastPresenceAt: p,
+      } = await listChatMessages(token, conversationId);
       const folded = foldReactionSyncMessages(items);
       applyServerMessagesSnapshot(token, conversationId, folded);
       setReceiptsSnapshot(conversationId, {
@@ -979,12 +1159,16 @@ export default function ChatThreadScreen() {
       setPeerLastDeliveredAt((prev) =>
         prev === (d ?? null) ? prev : d ?? null,
       );
+      setPeerLastPresenceAt((prev) =>
+        prev === (p ?? null) ? prev : p ?? null,
+      );
       const stored = getMessagesSnapshot(token, conversationId) ?? folded;
       setMessages((prev) => {
         const next = mergeNewerOrPending(prev, stored);
         return messagesEqual(prev, next) ? prev : next;
       });
       prefetchVoicesRef.current(stored);
+      markThreadMessagesPulled(conversationId);
     } catch {
       /* garde le fil */
     }
@@ -1237,10 +1421,10 @@ export default function ChatThreadScreen() {
     }
     if (!token || !conversationId || typingPulseAtRef.current === 0) return;
     typingPulseAtRef.current = 0;
-    void import("@/lib/api/client")
-      .then((api) => api.sendConversationTyping(token, conversationId, false))
-      .catch(() => {});
-  }, [token, conversationId]);
+    void import("@/lib/messages/chatRealtimeLink").then((m) =>
+      m.sendChatTyping(conversationId, false),
+    );
+  }, [conversationId]);
 
   const sendTypingOn = useCallback(() => {
     if (!token || !conversationId) return;
@@ -1249,9 +1433,9 @@ export default function ChatThreadScreen() {
       return;
     }
     typingPulseAtRef.current = now;
-    void import("@/lib/api/client")
-      .then((api) => api.sendConversationTyping(token, conversationId, true))
-      .catch(() => {});
+    void import("@/lib/messages/chatRealtimeLink").then((m) =>
+      m.sendChatTyping(conversationId, true),
+    );
   }, [token, conversationId]);
 
   /** « écrit... » : à la frappe, puis tant que le champ contient du texte. */
@@ -1290,9 +1474,9 @@ export default function ChatThreadScreen() {
   const warmEmojiPicker = useCallback(() => {
     if (emojiPickerLoadRef.current) return;
     emojiPickerLoadRef.current = true;
-    void import("@/lib/messages/chatEmojiCatalog").then((m) =>
-      m.loadChatEmojiCategories(),
-    );
+    void import("@/lib/messages/chatEmojiCatalog").then((m) => {
+      m.loadChatEmojiCategories?.();
+    });
     void import("@/components/messages/ChatEmojiPicker").then((m) => {
       setEmojiPickerView(() => m.ChatEmojiPicker);
     });
@@ -1449,6 +1633,38 @@ export default function ChatThreadScreen() {
     }
   };
 
+  const totalRecDurationMs = () =>
+    recSegmentsRef.current.reduce((a, s) => a + s.durationMs, 0);
+
+  const refreshRecPreviewUri = async (uri: string) => {
+    const draft = await import("@/lib/voice/recDraftPreview");
+    try {
+      const copied = await draft.copyDraftRecordingPreview(uri);
+      setRecPreviewUri(copied);
+    } catch {
+      setRecPreviewUri(draft.normalizeVoiceFileUri(uri));
+    }
+  };
+
+  const stopRecPreviewPlayback = async () => {
+    const draft = await import("@/lib/voice/recDraftPreview");
+    await draft.stopRecDraftPreview();
+    setRecPreviewPlaying(false);
+  };
+
+  const toggleRecPreviewPlayback = async () => {
+    if (recUi !== "paused") return;
+    const uri = String(recPreviewUri ?? "").trim();
+    if (!uri) return;
+    void import("@/lib/voice/play").then((m) => m.stopVoice());
+    const draft = await import("@/lib/voice/recDraftPreview");
+    try {
+      await draft.toggleRecDraftPreview(uri, recMs);
+    } catch {
+      Alert.alert(t("messages.title"), t("messages.voicePlayFailed"));
+    }
+  };
+
   const startVoiceRec = async () => {
     if (recUi !== "idle" || recBusy) return;
     closeEmojiPanel();
@@ -1462,7 +1678,10 @@ export default function ChatThreadScreen() {
       void import("@/lib/voice/play").then((m) => m.stopVoice());
       const rec = await voice.createVoiceRecorder();
       recRef.current = rec;
+      recSegmentsRef.current = [];
       setRecMs(0);
+      setRecPreviewUri(null);
+      setRecPreviewPlaying(false);
       await rec.start();
       setRecUi("recording");
       void import("@/lib/messages/chatSounds").then((m) =>
@@ -1472,9 +1691,7 @@ export default function ChatThreadScreen() {
         setRecMs((prev) => {
           const n = prev + 200;
           if (n >= 60_000) {
-            void recRef.current?.pause();
-            clearRecTick();
-            setRecUi("paused");
+            void pauseVoiceRec();
             return 60_000;
           }
           return n;
@@ -1490,61 +1707,6 @@ export default function ChatThreadScreen() {
 
   const pauseVoiceRec = async () => {
     if (recUi !== "recording") return;
-    try {
-      await recRef.current?.pause();
-    } catch {
-      /* ignore */
-    }
-    clearRecTick();
-    setRecUi("paused");
-    void import("@/lib/messages/chatSounds").then((m) =>
-      m.playChatSound("recordStop", { keepRecording: true }),
-    );
-  };
-
-  const resumeVoiceRec = async () => {
-    if (recUi !== "paused") return;
-    try {
-      await recRef.current?.resume();
-      setRecUi("recording");
-      void import("@/lib/messages/chatSounds").then((m) =>
-        m.playChatSound("recordStart", { keepRecording: true }),
-      );
-      recTickRef.current = setInterval(() => {
-        setRecMs((prev) => {
-          const n = prev + 200;
-          if (n >= 60_000) {
-            void recRef.current?.pause();
-            clearRecTick();
-            setRecUi("paused");
-            return 60_000;
-          }
-          return n;
-        });
-      }, 200);
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const deleteVoiceRec = async () => {
-    clearRecTick();
-    try {
-      await recRef.current?.discard();
-    } catch {
-      /* ignore */
-    }
-    recRef.current = null;
-    setRecUi("idle");
-    setRecMs(0);
-    void import("@/lib/messages/chatSounds").then((m) =>
-      m.playChatSound("recordStop", { keepRecording: true }),
-    );
-  };
-
-  const sendVoice = async () => {
-    if (!token || recUi === "idle" || recBusy) return;
-    setRecBusy(true);
     clearRecTick();
     let clip: { uri: string; durationMs: number } | null = null;
     try {
@@ -1553,10 +1715,110 @@ export default function ChatThreadScreen() {
       clip = null;
     }
     recRef.current = null;
+    if (!clip || clip.durationMs < 400) {
+      await stopRecPreviewPlayback();
+      recSegmentsRef.current = [];
+      setRecUi("idle");
+      setRecMs(0);
+      setRecPreviewUri(null);
+      if (clip) {
+        Alert.alert(t("messages.title"), t("messages.voiceTooShort"));
+      }
+      return;
+    }
+    recSegmentsRef.current.push({
+      uri: clip.uri,
+      durationMs: clip.durationMs,
+    });
+    const total = totalRecDurationMs();
+    setRecMs(total);
+    await refreshRecPreviewUri(clip.uri);
+    setRecUi("paused");
+    void import("@/lib/messages/chatSounds").then((m) =>
+      m.playChatSound("recordStop", { keepRecording: true }),
+    );
+  };
+
+  const resumeVoiceRec = async () => {
+    if (recUi !== "paused") return;
+    await stopRecPreviewPlayback();
+    try {
+      const voice = await import("@/lib/voice/record");
+      await voice.setVoiceRecordingAudioMode(true);
+      const rec = await voice.createVoiceRecorder();
+      recRef.current = rec;
+      await rec.start();
+      setRecUi("recording");
+      void import("@/lib/messages/chatSounds").then((m) =>
+        m.playChatSound("recordStart", { keepRecording: true }),
+      );
+      const baseMs = totalRecDurationMs();
+      recTickRef.current = setInterval(() => {
+        setRecMs((prev) => {
+          const n = prev + 200;
+          if (n >= 60_000) {
+            void pauseVoiceRec();
+            return 60_000;
+          }
+          return n;
+        });
+      }, 200);
+      setRecMs(baseMs);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const deleteVoiceRec = async () => {
+    clearRecTick();
+    await stopRecPreviewPlayback();
+    try {
+      await recRef.current?.discard();
+    } catch {
+      /* ignore */
+    }
+    recRef.current = null;
+    recSegmentsRef.current = [];
     setRecUi("idle");
     setRecMs(0);
+    setRecPreviewUri(null);
+    setRecPreviewPlaying(false);
+    void import("@/lib/messages/chatSounds").then((m) =>
+      m.playChatSound("recordStop", { keepRecording: true }),
+    );
+  };
+
+  const sendVoice = async () => {
+    if (!token || recUi === "idle" || recBusy) return;
+    setRecBusy(true);
+    await stopRecPreviewPlayback();
+    clearRecTick();
+    const parts = [...recSegmentsRef.current];
+    if (recRef.current) {
+      try {
+        const tail = (await recRef.current.stop()) ?? null;
+        if (tail) parts.push(tail);
+      } catch {
+        /* ignore */
+      }
+      recRef.current = null;
+    }
+    let clip: { uri: string; durationMs: number } | null = null;
+    try {
+      const { mergeVoiceSegmentsForSend } = await import("@/lib/voice/recSegments");
+      clip = await mergeVoiceSegmentsForSend(parts);
+    } catch {
+      setRecBusy(false);
+      Alert.alert(t("messages.title"), t("common.genericError"));
+      return;
+    }
+    recSegmentsRef.current = [];
+    setRecUi("idle");
+    setRecMs(0);
+    setRecPreviewUri(null);
+    setRecPreviewPlaying(false);
     setRecBusy(false);
-    if (!clip) {
+    if (!clip || clip.durationMs < 400) {
       Alert.alert(t("messages.title"), t("messages.voiceTooShort"));
       return;
     }
@@ -1735,6 +1997,26 @@ export default function ChatThreadScreen() {
       const assets = await pickImagesFromLibrary();
       if (!assets?.length) return;
       setPendingImages(assets);
+    } catch {
+      Alert.alert(t("messages.title"), t("messages.imageSendFailed"));
+    } finally {
+      imagePickBusyRef.current = false;
+    }
+  };
+
+  const takeAndQueuePhoto = async () => {
+    if (!token || imagePickBusyRef.current || recUi !== "idle") return;
+    imagePickBusyRef.current = true;
+    try {
+      closeEmojiPanel();
+      const granted = await ensureCameraPermission();
+      if (!granted) {
+        Alert.alert(t("messages.title"), t("messages.cameraPermissionDenied"));
+        return;
+      }
+      const shot = await pickImageFromCamera();
+      if (!shot) return;
+      setPendingImages([shot]);
     } catch {
       Alert.alert(t("messages.title"), t("messages.imageSendFailed"));
     } finally {
@@ -2018,10 +2300,12 @@ export default function ChatThreadScreen() {
   }, [playVoiceMsg]);
 
   const sendMoney = async (pinOverride?: string) => {
-    const pin = String(pinOverride ?? pinDigits).replace(/\D/g, "");
+    let pin = String(pinOverride ?? pinDigits).replace(/\D/g, "");
     const n =
       parseAmountFcfa(amount) ?? pendingMoneyAmountRef.current ?? null;
-    if (!token || n == null || sending || pin.length !== 4) return;
+    if (!token || n == null || sending) return;
+
+    if (pin.length !== 4) return;
     const moneyCaption = pendingMoneyCaptionRef.current.trim() || null;
     const bal = user?.balanceFcfa ?? 0;
     if (bal < n) {
@@ -2042,12 +2326,16 @@ export default function ChatThreadScreen() {
     const clientId = newClientId();
     const idem = newClientId();
     const createdAt = new Date().toISOString();
+    const moneyFruitEmoji = pendingMoneyFruitRef.current;
+    const receiptRequired = pendingMoneyReceiptRequiredRef.current;
     const optimistic: ChatMessage = {
       id: clientId,
       conversationId,
       senderUserId: myId ?? "me",
       type: "money",
       body: moneyCaption,
+      moneyFruitEmoji: moneyFruitEmoji ?? null,
+      moneySendIdempotencyKey: idem,
       moneyTransfer: {
         transferId: clientId,
         amountFcfa: n,
@@ -2058,6 +2346,7 @@ export default function ChatThreadScreen() {
         expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
         claimedAt: null,
         createdAt,
+        ...(receiptRequired ? { receiptRequired: true } : {}),
       },
       replyTo,
       createdAt,
@@ -2073,6 +2362,7 @@ export default function ChatThreadScreen() {
     pendingMoneyCaptionRef.current = "";
     pendingMoneyAmountRef.current = null;
     setPendingMoneyAmount(null);
+    pendingMoneyFruitRef.current = null;
     setReplyDraft(null);
     lastLocalSendAtRef.current = Date.now();
     atLatestRef.current = true;
@@ -2089,6 +2379,17 @@ export default function ChatThreadScreen() {
     );
     scrollToLatest(false);
 
+    const { storeMoneyOutboxSecrets } = await import(
+      "@/lib/messages/moneyOutboxSecrets"
+    );
+    await storeMoneyOutboxSecrets(clientId, pin, {
+      idempotencyKey: idem,
+      replyToMessageId,
+      caption: moneyCaption,
+      moneyFruitEmoji,
+      receiptRequired,
+    });
+
     try {
       const { sendMoneyMessage } = await import("@/lib/api/client");
       const { message, balanceFcfa } = await sendMoneyMessage(
@@ -2100,27 +2401,46 @@ export default function ChatThreadScreen() {
         pin,
         replyToMessageId,
         moneyCaption,
+        moneyFruitEmoji,
+        receiptRequired,
       );
+      await clearMoneyOutboxSecrets(clientId);
       setMessages((m) => {
         const next = m.map((x) =>
-          x.clientId === clientId ? { ...message, clientId } : x,
+          x.clientId === clientId
+            ? {
+                ...message,
+                clientId,
+                moneyFruitEmoji:
+                  message.moneyFruitEmoji ?? moneyFruitEmoji ?? null,
+              }
+            : x,
         );
         setMessagesSnapshot(token, conversationId, next);
         return next;
       });
       updateBalance(balanceFcfa);
+      clearMoneyReceiptRequired();
       void refreshUser().catch(() => {});
-      void import("@/lib/security/transactionPinVault").then((m) => {
-        void m.saveTransactionPinVault(pin);
-      });
+      void saveTransactionPinVault(pin);
     } catch (e) {
       setPinDigits("");
+      if (isRetryableMoneySendError(e)) {
+        kickMoneyOutbox(token);
+        return;
+      }
+      await clearMoneyOutboxSecrets(clientId);
       setMessages((m) => {
         const next = m.filter((x) => x.clientId !== clientId);
         setMessagesSnapshot(token, conversationId, next);
         return next;
       });
       if (isTransactionPinInvalidError(e)) {
+        if (fruitMoneySendRef.current) {
+          pendingMoneyAmountRef.current = n;
+          pendingMoneyFruitRef.current = moneyFruitEmoji;
+          setAmount(String(n));
+        }
         setMoneyStep("pin");
         setMoneyOpen(true);
         setPinError(t("messages.pinIncorrect"));
@@ -2134,26 +2454,52 @@ export default function ChatThreadScreen() {
           : t("messages.sendFailed"),
       );
     } finally {
+      fruitMoneySendRef.current = false;
       setSending(false);
     }
   };
 
   const beginMoneyPinOrBio = useCallback(async () => {
-    const { tryUnlockTransactionPinVault } = await import(
-      "@/lib/security/transactionPinVault"
-    );
-    const vaulted = await tryUnlockTransactionPinVault(
-      t("pay.deviceAuthPrompt"),
-    );
-    if (vaulted) {
-      void sendMoney(vaulted);
-      return;
+    try {
+      const vaulted = await tryUnlockTransactionPinVault(
+        t("pay.deviceAuthPrompt"),
+      );
+      if (vaulted) {
+        void sendMoney(vaulted);
+        return;
+      }
+    } catch {
+      /* module / biométrie indisponible → saisie PIN */
     }
     setPinDigits("");
     setPinError(null);
     setMoneyStep("pin");
     setMoneyOpen(true);
   }, [sendMoney, t]);
+
+  const onPickMoneyFromEmoji = useCallback(
+    (denom: import("@/lib/messages/chatMoneyDenoms").ChatMoneyDenom) => {
+      if (selectionMode || recUi !== "idle" || sending) return;
+      setPendingImages(null);
+      setPendingDocument(null);
+      closeEmojiPanel();
+      clearMoneyReceiptRequired();
+      pendingMoneyAmountRef.current = denom.amountFcfa;
+      pendingMoneyFruitRef.current = denom.fruitEmoji;
+      pendingMoneyCaptionRef.current = "";
+      setAmount(String(denom.amountFcfa));
+      fruitMoneySendRef.current = true;
+      void beginMoneyPinOrBio();
+    },
+    [
+      beginMoneyPinOrBio,
+      clearMoneyReceiptRequired,
+      closeEmojiPanel,
+      recUi,
+      selectionMode,
+      sending,
+    ],
+  );
 
   const sendPendingMoneyCaption = useCallback(
     (caption: string) => {
@@ -2173,18 +2519,18 @@ export default function ChatThreadScreen() {
     transfer: ChatMessage["moneyTransfer"],
   ) => {
     if (!transfer) return;
-    setMessages((m) => {
-      const next = m.map((msg) =>
-        msg.moneyTransfer?.transferId === transferId
+      setMessages((m) => {
+        const next = m.map((msg) =>
+          msg.moneyTransfer?.transferId === transferId
           ? {
               ...msg,
               moneyTransfer: mergeMoneyTransfer(msg.moneyTransfer, transfer),
             }
-          : msg,
-      );
+            : msg,
+        );
       if (token) setMessagesSnapshot(token, conversationId, next);
-      return next;
-    });
+        return next;
+      });
   };
 
   const onClaim = async (transferId: string, mine: boolean) => {
@@ -2206,6 +2552,122 @@ export default function ChatThreadScreen() {
       setClaimingId(null);
     }
   };
+
+  const onBeginReceiptClaim = useCallback(
+    (transferId: string) => {
+      const msg = messages.find((m) => m.moneyTransfer?.transferId === transferId);
+      const tr = msg?.moneyTransfer;
+      if (!tr || tr.status !== "pending") return;
+      setReceiptClaimContext({
+        transferId,
+        amountFcfa: tr.amountFcfa,
+        defaultClientName: peerName,
+      });
+      setReceiptClaimOpen(true);
+    },
+    [messages, peerName],
+  );
+
+  const onToggleMoneyReceipt = useCallback(
+    async (transferId: string, required: boolean) => {
+      if (!token) return;
+      const id = String(transferId ?? "").trim();
+      if (!id || receiptToggleInflightRef.current.has(id)) return;
+
+      const hit = messages.find(
+        (m) =>
+          m.moneyTransfer?.transferId === id ||
+          m.clientId === id ||
+          m.id === id,
+      );
+      const tr = hit?.moneyTransfer;
+      if (!tr || tr.status !== "pending") return;
+      const rollback = tr;
+      const transferKey = String(tr.transferId ?? id).trim();
+
+      setMoneyReceiptOverride(transferKey, required);
+      setMessages((prev) => {
+        const next = prev.map((m) => {
+          const mt = m.moneyTransfer;
+          if (!mt) return m;
+          const same =
+            mt.transferId === transferKey ||
+            mt.transferId === id ||
+            m.clientId === id ||
+            m.id === id;
+          if (!same) return m;
+          return {
+            ...m,
+            moneyTransfer: { ...mt, receiptRequired: required },
+          };
+        });
+        if (token) setMessagesSnapshot(token, conversationId, next);
+        return next;
+      });
+
+      receiptToggleInflightRef.current.add(transferKey);
+      try {
+        const { setMoneyTransferReceiptRequired } = await import(
+          "@/lib/api/client"
+        );
+        const { transfer } = await setMoneyTransferReceiptRequired(
+          token,
+          transferKey,
+          required,
+        );
+        clearMoneyReceiptOverride(transferKey);
+        applyTransfer(transferKey, transfer);
+      } catch (e) {
+        const apiErr = e instanceof ApiError ? e : null;
+        if (!apiErr || apiErr.status === 0 || apiErr.status >= 500) {
+          return;
+        }
+        if (apiErr.status === 404) {
+          return;
+        }
+        clearMoneyReceiptOverride(transferKey);
+        applyTransfer(transferKey, rollback);
+      } finally {
+        receiptToggleInflightRef.current.delete(id);
+        receiptToggleInflightRef.current.delete(transferKey);
+      }
+    },
+    [token, conversationId, messages],
+  );
+
+  const onReceiptClaimSubmit = useCallback(
+    async (draft: {
+      clientName: string;
+      reason: string;
+      stamp: import("@/lib/receipts/commerceStampTypes").CommerceStamp;
+    }) => {
+      const ctx = receiptClaimContext;
+      const id = ctx?.transferId;
+      const accountId = String(user?.id ?? "").trim();
+      if (!id || !ctx || !accountId || !token) return;
+      setReceiptClaimBusy(true);
+      try {
+        const { saveBlypMoneyReceiptToProfile } = await import(
+          "@/lib/receipts/blypMoneyReceipt"
+        );
+        await saveBlypMoneyReceiptToProfile(accountId, {
+          transferId: id,
+          amountFcfa: ctx.amountFcfa,
+          clientName: draft.clientName,
+          reason: draft.reason,
+          stamp: draft.stamp,
+        });
+        setReceiptClaimOpen(false);
+        setReceiptClaimContext(null);
+        await onClaim(id, false);
+      } catch {
+        Alert.alert(t("moneyReceipt.claimTitle"), t("common.genericError"));
+      } finally {
+        setReceiptClaimBusy(false);
+      }
+    },
+    [onClaim, receiptClaimContext, token, t, user?.id],
+  );
 
   const canDeleteForEveryone = useCallback(
     (msg: ChatMessage) => {
@@ -2264,6 +2726,21 @@ export default function ChatThreadScreen() {
             });
           }
         });
+      } else if (token) {
+        void import("@/lib/messagesCache").then(
+          ({ syncConversationPreviewFromThread }) => {
+            syncConversationPreviewFromThread(token, conversationId);
+          },
+        );
+        void import("@/lib/messages/live").then(({ notifyMessageDeleted }) => {
+          for (const m of msgs) {
+            notifyMessageDeleted({
+              conversationId,
+              messageId: m.id,
+              deletedForAll: false,
+            });
+          }
+        });
       }
     },
     [token, conversationId],
@@ -2296,6 +2773,34 @@ export default function ChatThreadScreen() {
     },
     [token, conversationId, applyDeleteLocalMany, pullThread, t, closeReactPicker],
   );
+
+  const openForwardSelected = useCallback(() => {
+    const msgs = selectedMessageIds
+      .map((id) => messages.find((m) => m.id === id))
+      .filter((m): m is ChatMessage => Boolean(m))
+      .filter(canForwardMessage);
+    if (!msgs.length) {
+      Alert.alert(t("messages.forwardNone"));
+      return;
+    }
+    if (isDemoConversationId(conversationId)) {
+      Alert.alert(t("messages.forwardFailed"));
+      return;
+    }
+    const ordered = messages.filter((m) => msgs.some((x) => x.id === m.id));
+    setForwardDraft({
+      sourceConversationId: conversationId,
+      messages: ordered,
+    });
+    closeReactPicker();
+    router.push("/forward");
+  }, [
+    selectedMessageIds,
+    messages,
+    conversationId,
+    closeReactPicker,
+    t,
+  ]);
 
   const promptDeleteSelected = useCallback(() => {
     const msgs = selectedMessageIds
@@ -2372,6 +2877,8 @@ export default function ChatThreadScreen() {
     startReplyTo: () => {},
     scrollToMessageId: () => {},
     onClaim: () => {},
+    onBeginReceiptClaim: () => {},
+    onToggleMoneyReceipt: () => {},
     setRecallTransferId: () => {},
     dismissHighlight: () => {},
     applyReaction: () => {},
@@ -2392,6 +2899,8 @@ export default function ChatThreadScreen() {
     startReplyTo,
     scrollToMessageId,
     onClaim,
+    onBeginReceiptClaim,
+    onToggleMoneyReceipt,
     setRecallTransferId,
     dismissHighlight,
     applyReaction: (msg, emoji) => void applyReaction(msg, emoji),
@@ -2507,6 +3016,34 @@ export default function ChatThreadScreen() {
     ],
   );
 
+  const peerTypingActive = Boolean(
+    peerTypingName || getTypingSnapshot(conversationId),
+  );
+
+  const threadHeaderStatus = useMemo(() => {
+    if (!peerOnBlyp) return null;
+    void presenceClock;
+    return chatPeerHeaderStatus({
+      peerTyping: peerTypingActive,
+      peerFirstName: firstNameOf(peerName),
+      peerOnline: isConversationPeerOnline(
+        conversationId,
+        peerLastPresenceAt,
+      ),
+      peerLastReadAt,
+      peerLastDeliveredAt,
+    });
+  }, [
+    peerOnBlyp,
+    peerTypingActive,
+    peerName,
+    conversationId,
+    peerLastPresenceAt,
+    peerLastReadAt,
+    peerLastDeliveredAt,
+    presenceClock,
+  ]);
+
   const typingHeader = useMemo(() => {
     if (!peerTypingName) return null;
     const name = firstNameOf(peerName) || t("messages.someone");
@@ -2522,18 +3059,24 @@ export default function ChatThreadScreen() {
   }, [peerTypingName, peerName, styles, t]);
 
   const closeMoneySheet = useCallback(() => {
+    if (fruitMoneySendRef.current) {
+      fruitMoneySendRef.current = false;
+      pendingMoneyAmountRef.current = null;
+      pendingMoneyFruitRef.current = null;
+    }
+    clearMoneyReceiptRequired();
     setMoneyOpen(false);
     setMoneyStep("amount");
     setPinDigits("");
     setPinError(null);
-  }, []);
+  }, [clearMoneyReceiptRequired]);
 
   const navigation = useNavigation();
 
   const leaveChat = useCallback(() => {
     stopTyping();
     if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)/messages");
+    else router.replace("/(tabs)");
   }, [stopTyping]);
 
   const handleThreadBack = useCallback(() => {
@@ -2607,8 +3150,8 @@ export default function ChatThreadScreen() {
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
       {selectionMode ? (
         <View style={styles.threadSelectHeader}>
-          <Pressable
-            style={styles.headerBtn}
+        <Pressable
+          style={styles.headerBtn}
             onPress={closeReactPicker}
             accessibilityRole="button"
             accessibilityLabel={t("common.cancel")}
@@ -2653,6 +3196,14 @@ export default function ChatThreadScreen() {
             </Pressable>
             <Pressable
               style={styles.headerBtn}
+              onPress={openForwardSelected}
+              accessibilityRole="button"
+              accessibilityLabel={t("messages.forwardA11y")}
+            >
+              <Ionicons name="arrow-redo" size={22} color={colors.text} />
+            </Pressable>
+            <Pressable
+              style={styles.headerBtn}
               onPress={() => promptDeleteSelected()}
               accessibilityRole="button"
               accessibilityLabel={t("messages.deleteA11y")}
@@ -2675,33 +3226,63 @@ export default function ChatThreadScreen() {
               stopTyping();
               leaveChat();
             }}
-            accessibilityLabel={t("common.back")}
+          accessibilityLabel={t("common.back")}
+        >
+          <Ionicons name="chevron-back" size={26} color={colors.text} />
+        </Pressable>
+          <Pressable
+            onPress={() =>
+              setPeerPhotoLightbox({
+                name: peerName,
+                phone: peerPhone,
+                remoteUrl: peerAvatarUrl ?? demoAvatarUrlForPhone(peerPhone),
+                localUri: contactPhotoUriForPhone(peerPhone),
+                conversationId,
+                inThread: true,
+              })
+            }
+            accessibilityLabel={t("messages.peerPhotoOpenA11y", {
+              name: peerName,
+            })}
+            accessibilityRole="button"
           >
-            <Ionicons name="chevron-back" size={26} color={colors.text} />
+            <PeerAvatar
+              name={peerName}
+              phone={peerPhone}
+              remoteUrl={peerAvatarUrl ?? demoAvatarUrlForPhone(peerPhone)}
+              localUri={contactPhotoUriForPhone(peerPhone)}
+              size={40}
+              style={styles.threadHeaderAvatar}
+              recyclingKey={conversationId}
+            />
           </Pressable>
-          <PeerAvatar
-            name={peerName}
-            phone={peerPhone}
-            remoteUrl={peerAvatarUrl ?? demoAvatarUrlForPhone(peerPhone)}
-            localUri={contactPhotoUriForPhone(peerPhone)}
-            size={40}
-            style={styles.threadHeaderAvatar}
-            recyclingKey={conversationId}
-          />
-          <View style={styles.threadHeaderText}>
-            <Text style={styles.threadTitle} numberOfLines={1}>
-              {peerName}
+        <View style={styles.threadHeaderText}>
+          <Text style={styles.threadTitle} numberOfLines={1}>
+            {peerName}
+          </Text>
+          {!peerOnBlyp ? (
+            <View>
+              <Text style={styles.badge}>{t("messages.notOnBlyp")}</Text>
+              <Text style={styles.badgeHint} numberOfLines={2}>
+                {t("messages.notOnBlypInvite")}
+              </Text>
+            </View>
+          ) : threadHeaderStatus ? (
+            <Text
+              style={[
+                styles.threadSubtitle,
+                threadHeaderStatus.mode === "online" &&
+                  styles.threadSubtitleOnline,
+                threadHeaderStatus.mode === "typing" &&
+                  styles.threadSubtitleTyping,
+              ]}
+              numberOfLines={1}
+            >
+              {threadHeaderStatus.text}
             </Text>
-            {!peerOnBlyp ? (
-              <View>
-                <Text style={styles.badge}>{t("messages.notOnBlyp")}</Text>
-                <Text style={styles.badgeHint} numberOfLines={2}>
-                  {t("messages.notOnBlypInvite")}
-                </Text>
-              </View>
-            ) : null}
-          </View>
+          ) : null}
         </View>
+      </View>
       )}
 
       <View style={{ flex: 1, paddingBottom: composerLift }}>
@@ -2793,12 +3374,12 @@ export default function ChatThreadScreen() {
                 />
                 <Text style={styles.newBelowPillText}>
                   {t("messages.unreadCount", { count: newBelowCount })}
-                </Text>
+                  </Text>
               </Pressable>
-            </View>
+                </View>
           ) : pinListOnInsert ? (
             <Pressable
-              style={[
+                  style={[
                 styles.scrollDownFab,
                 { backgroundColor: colors.modal, borderColor: colors.borderLight },
               ]}
@@ -2807,7 +3388,7 @@ export default function ChatThreadScreen() {
                 setPinListOnInsert(false);
                 scrollToLatest(true);
               }}
-              accessibilityRole="button"
+                      accessibilityRole="button"
               accessibilityLabel={t("messages.scrollToBottomA11y")}
               hitSlop={8}
             >
@@ -2816,7 +3397,7 @@ export default function ChatThreadScreen() {
                 size={22}
                 color={colors.textSecondary}
               />
-            </Pressable>
+                    </Pressable>
           ) : null}
           {selectionMode ? (
             <>
@@ -2926,6 +3507,7 @@ export default function ChatThreadScreen() {
                   setPendingDocument(null);
                   pendingMoneyAmountRef.current = null;
                   setPendingMoneyAmount(null);
+                  pendingMoneyFruitRef.current = null;
                 }}
                 onSend={
                   pendingMoneyAmount != null
@@ -2937,109 +3519,93 @@ export default function ChatThreadScreen() {
               />
             </View>
           ) : (
-          <View style={styles.composerField}>
-          <Pressable
-            style={styles.moneyIconBtn}
-              onPress={() => {
-                setAmount("");
-                setPinDigits("");
-                setMoneyStep("amount");
-                setMoneyOpen(true);
-              }}
-            accessibilityLabel={t("messages.sendMoney")}
+          <View
+            style={[
+              styles.composerField,
+              recUi !== "idle" && {
+                borderWidth: 0,
+                backgroundColor: colors.background,
+                paddingHorizontal: 0,
+                maxHeight: undefined,
+              },
+            ]}
           >
-            <Text style={{ fontSize: 18 }}>💰</Text>
-          </Pressable>
             {recUi === "idle" ? (
-          <TextInput
-                ref={composerRef}
-            style={styles.composerInput}
-            placeholder={t("messages.composerPlaceholder")}
-            placeholderTextColor={colors.placeholder}
-            value={text}
-                onChangeText={onComposerChange}
-                onFocus={() => closeEmojiPanel()}
-            multiline
-          />
-            ) : (
-              <View style={styles.recBar}>
-                <View
-                  style={[
-                    styles.recDot,
-                    recUi === "paused" && { opacity: 0.35 },
-                  ]}
-                />
-                <Text style={styles.recTime}>{formatVoiceClock(recMs)}</Text>
+              <>
                 <Pressable
-                  onPress={() =>
-                    recUi === "recording"
-                      ? void pauseVoiceRec()
-                      : void resumeVoiceRec()
-                  }
-                  accessibilityLabel={
-                    recUi === "recording"
-                      ? t("messages.voicePause")
-                      : t("messages.voiceResume")
-                  }
-                  hitSlop={8}
+                  style={styles.moneyIconBtn}
+                  onPress={() => {
+                    clearMoneyReceiptRequired();
+                    setAmount("");
+                    setPinDigits("");
+                    setMoneyStep("amount");
+                    setMoneyOpen(true);
+                  }}
+                  accessibilityLabel={t("messages.sendMoney")}
+                >
+                  <Text style={{ fontSize: 18 }}>💰</Text>
+                </Pressable>
+                <TextInput
+                  ref={composerRef}
+                  style={styles.composerInput}
+                  placeholder={t("messages.composerPlaceholder")}
+                  placeholderTextColor={colors.placeholder}
+                  value={text}
+                  onChangeText={onComposerChange}
+                  onFocus={() => closeEmojiPanel()}
+                  multiline
+                />
+                <Pressable
+                  style={styles.composerEmojiBtn}
+                  onPress={() => setAttachSheetOpen(true)}
+                  accessibilityLabel={t("messages.attachA11y")}
                 >
                   <Ionicons
-                    name={recUi === "recording" ? "pause" : "play"}
+                    name="document-outline"
                     size={22}
-                    color={colors.text}
+                    color={colors.textMuted}
                   />
                 </Pressable>
                 <Pressable
-                  onPress={() => void deleteVoiceRec()}
-                  accessibilityLabel={t("messages.voiceDelete")}
-                  hitSlop={8}
+                  style={styles.composerEmojiBtn}
+                  onPress={toggleEmojiKeyboard}
+                  accessibilityLabel={
+                    emojiOpen || emojiPanelVisible
+                      ? t("messages.emojiShowKeyboard")
+                      : t("messages.emojiShowPicker")
+                  }
                 >
                   <Ionicons
-                    name="trash-outline"
-                    size={20}
-                    color={colors.destructive}
+                    name={
+                      emojiOpen || emojiPanelVisible
+                        ? "keypad-outline"
+                        : "happy-outline"
+                    }
+                    size={22}
+                    color={colors.textMuted}
                   />
                 </Pressable>
-              </View>
+              </>
+            ) : (
+              <VoiceRecordComposer
+                mode={recUi}
+                durationMs={recMs}
+                previewPlaying={recPreviewPlaying}
+                previewPositionMs={recPreviewPosMs}
+                previewReady={Boolean(recPreviewUri)}
+                sendBusy={recBusy}
+                colors={colors}
+                onPause={() => void pauseVoiceRec()}
+                onResume={() => void resumeVoiceRec()}
+                onTogglePreview={() => void toggleRecPreviewPlayback()}
+                onDelete={() => void deleteVoiceRec()}
+                onSend={() => void sendVoice()}
+              />
             )}
-            {recUi === "idle" ? (
-              <Pressable
-                style={styles.composerEmojiBtn}
-                onPress={() => setAttachSheetOpen(true)}
-                accessibilityLabel={t("messages.attachA11y")}
-              >
-                <Ionicons
-                  name="document-outline"
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </Pressable>
-            ) : null}
-            {recUi === "idle" ? (
-              <Pressable
-                style={styles.composerEmojiBtn}
-                onPress={toggleEmojiKeyboard}
-                accessibilityLabel={
-                  emojiOpen || emojiPanelVisible
-                    ? t("messages.emojiShowKeyboard")
-                    : t("messages.emojiShowPicker")
-                }
-              >
-                <Ionicons
-                  name={
-                    emojiOpen || emojiPanelVisible
-                      ? "keypad-outline"
-                      : "happy-outline"
-                  }
-                  size={22}
-                  color={colors.textMuted}
-                />
-              </Pressable>
-            ) : null}
           </View>
           )}
-          {pendingImages?.length && recUi === "idle" ? null : recUi ===
-            "idle" && !text.trim() ? (
+          {recUi === "idle" &&
+          (pendingImages?.length ? null : !text.trim() ? (
             <Pressable
               style={styles.sendBtn}
               onPress={() => void startVoiceRec()}
@@ -3048,23 +3614,18 @@ export default function ChatThreadScreen() {
               <Ionicons name="mic" size={20} color={colors.accentOn} />
             </Pressable>
           ) : (
-          <Pressable
-            style={[
-              styles.sendBtn,
-                recUi === "idle" && !text.trim() && styles.sendBtnDisabled,
-                recUi !== "idle" && recBusy && styles.sendBtnDisabled,
+            <Pressable
+              style={[
+                styles.sendBtn,
+                !text.trim() && styles.sendBtnDisabled,
               ]}
-              disabled={recUi === "idle" ? !text.trim() : recBusy}
-              onPress={() =>
-                recUi === "idle" ? void sendText() : void sendVoice()
-              }
-              accessibilityLabel={
-                recUi === "idle" ? t("messages.send") : t("messages.voiceSend")
-              }
-          >
-            <Ionicons name="send" size={18} color={colors.accentOn} />
-          </Pressable>
-          )}
+              disabled={!text.trim()}
+              onPress={() => void sendText()}
+              accessibilityLabel={t("messages.send")}
+            >
+              <Ionicons name="send" size={18} color={colors.accentOn} />
+            </Pressable>
+          ))}
         </View>
         {emojiPickerMounted && recUi === "idle" ? (
           <View
@@ -3082,6 +3643,7 @@ export default function ChatThreadScreen() {
               <EmojiPickerView
                 colors={colors}
                 onPick={onEmojiPick}
+                onPickMoney={onPickMoneyFromEmoji}
                 backgroundColor={colors.background}
                 borderColor={colors.borderLight}
               />
@@ -3107,6 +3669,10 @@ export default function ChatThreadScreen() {
         animationType="fade"
         onRequestClose={() => {
           if (moneyStep === "pin") {
+            if (fruitMoneySendRef.current) {
+              closeMoneySheet();
+              return;
+            }
             setMoneyStep("amount");
             setPinDigits("");
             setPinError(null);
@@ -3133,11 +3699,23 @@ export default function ChatThreadScreen() {
           </Text>
           {moneyStep === "pin" ? (
             <View style={{ alignItems: "center", marginBottom: 16 }}>
+              <MoneyReceiptSendToggle
+                on={moneyReceiptRequired}
+                disabled={sending}
+                onToggle={() => {
+                  setMoneyReceiptRequired((v) => {
+                    const next = !v;
+                    pendingMoneyReceiptRequiredRef.current = next;
+                    return next;
+                  });
+                }}
+              />
               <Text
                 style={{
                   textAlign: "center",
                   color: colors.textMuted,
                   marginBottom: 16,
+                  marginTop: 8,
                 }}
               >
                 {t("messages.pinHint")}
@@ -3190,6 +3768,17 @@ export default function ChatThreadScreen() {
             </View>
           ) : (
             <>
+          <MoneyReceiptSendToggle
+            on={moneyReceiptRequired}
+            disabled={sending}
+            onToggle={() => {
+              setMoneyReceiptRequired((v) => {
+                const next = !v;
+                pendingMoneyReceiptRequiredRef.current = next;
+                return next;
+              });
+            }}
+          />
           <Text
             style={{
               textAlign: "center",
@@ -3197,6 +3786,7 @@ export default function ChatThreadScreen() {
               fontWeight: "800",
               color: colors.text,
               marginBottom: 8,
+              marginTop: 4,
             }}
           >
             {amount === "" ? "0" : formatFcfa(parseAmountFcfa(amount) ?? 0)}{" "}
@@ -3222,6 +3812,7 @@ export default function ChatThreadScreen() {
               if (n == null) return;
               pendingMoneyAmountRef.current = n;
               setPendingMoneyAmount(n);
+              pendingMoneyFruitRef.current = null;
               setAmount("");
               setMoneyOpen(false);
             }}
@@ -3249,6 +3840,7 @@ export default function ChatThreadScreen() {
                 if (n == null) return;
                 pendingMoneyAmountRef.current = n;
                 setPendingMoneyAmount(n);
+                pendingMoneyFruitRef.current = null;
                 setAmount("");
                 setMoneyOpen(false);
                 return;
@@ -3268,6 +3860,10 @@ export default function ChatThreadScreen() {
       <ChatAttachSheet
         visible={attachSheetOpen}
         onClose={() => setAttachSheetOpen(false)}
+        onTakePhoto={() => {
+          setAttachSheetOpen(false);
+          void takeAndQueuePhoto();
+        }}
         onPickPhoto={() => {
           setAttachSheetOpen(false);
           void pickAndQueueImages();
@@ -3348,6 +3944,32 @@ export default function ChatThreadScreen() {
           </Pressable>
         </View>
       </Modal>
+
+      <MoneyReceiptClaimSheet
+        visible={receiptClaimOpen}
+        context={receiptClaimContext}
+        userId={String(user?.id ?? "")}
+        commerceId={
+          user?.activeContext?.type === "commerce"
+            ? user.activeContext.commerceId
+            : null
+        }
+        submitting={Boolean(
+          receiptClaimBusy ||
+            (receiptClaimContext &&
+              claimingId === receiptClaimContext.transferId),
+        )}
+        onClose={() => {
+          setReceiptClaimOpen(false);
+          setReceiptClaimContext(null);
+        }}
+        onSubmit={onReceiptClaimSubmit}
+      />
+
+      <PeerAvatarLightbox
+        target={peerPhotoLightbox}
+        onClose={() => setPeerPhotoLightbox(null)}
+      />
     </SafeAreaView>
   );
 }

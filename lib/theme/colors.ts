@@ -28,6 +28,7 @@ export type ThemeColors = {
   placeholder: string;
   tabBar: string;
   tabBarBorder: string;
+  tabBarActivePill: string;
   tabInactive: string;
   keypadBackground: string;
   keypadBackgroundFn: string;
@@ -60,6 +61,12 @@ export type ThemeColors = {
   moneyClaimAction: string;
   moneyHighlightBackground: string;
   moneyHighlightBorder: string;
+  /** Pastilles montants rapides (picker emoji Argent). */
+  chatMoneyPillBackground: string;
+  chatMoneyPillBorder: string;
+  chatMoneyPillText: string;
+  chatMoneyPillPressedBackground: string;
+  chatMoneyPillPressedText: string;
   /** Appui long — bande pleine largeur (style WhatsApp). */
   messageSelectRowBackground: string;
   tickSent: string;
@@ -73,6 +80,9 @@ export type ThemeColors = {
   switchTrackOn: string;
   switchThumbOff: string;
   switchThumbOn: string;
+  /** Cachet reçu Blyp (tampon rouge / bleu). */
+  moneyReceiptStampRed: string;
+  moneyReceiptStampBlue: string;
 };
 
 const accent = "#5dc705";
@@ -104,6 +114,7 @@ export const lightColors: ThemeColors = {
   placeholder: "#CCCCCC",
   tabBar: "#FFFFFF",
   tabBarBorder: "#F0F0F0",
+  tabBarActivePill: "rgba(93, 199, 5, 0.11)",
   tabInactive: "#8E8E93",
   keypadBackground: "#F3F3F3",
   keypadBackgroundFn: "#EEEEEE",
@@ -135,6 +146,11 @@ export const lightColors: ThemeColors = {
   moneyClaimAction: "#1E88E5",
   moneyHighlightBackground: "#E8F8D8",
   moneyHighlightBorder: accent,
+  chatMoneyPillBackground: "#FFF8E1",
+  chatMoneyPillBorder: "#F5D547",
+  chatMoneyPillText: "#5C4A00",
+  chatMoneyPillPressedBackground: "#FFCA28",
+  chatMoneyPillPressedText: "#3E2723",
   messageSelectRowBackground: "rgba(93, 199, 5, 0.30)",
   tickSent: "#8E8E93",
   tickRead: "#53BDEB",
@@ -145,6 +161,8 @@ export const lightColors: ThemeColors = {
   switchTrackOn: "#A8E07A",
   switchThumbOff: "#FFFFFF",
   switchThumbOn: "#FFFFFF",
+  moneyReceiptStampRed: "#C62828",
+  moneyReceiptStampBlue: "#1565C0",
 };
 
 export const darkColors: ThemeColors = {
@@ -173,6 +191,7 @@ export const darkColors: ThemeColors = {
   placeholder: "#636366",
   tabBar: "#141416",
   tabBarBorder: "#2C2C2E",
+  tabBarActivePill: "rgba(93, 199, 5, 0.16)",
   tabInactive: "#8E8E93",
   keypadBackground: "#2C2C2E",
   keypadBackgroundFn: "#252528",
@@ -204,6 +223,11 @@ export const darkColors: ThemeColors = {
   moneyClaimAction: "#64B5F6",
   moneyHighlightBackground: "#1A2E18",
   moneyHighlightBorder: accent,
+  chatMoneyPillBackground: "#3D3520",
+  chatMoneyPillBorder: "#8D6E00",
+  chatMoneyPillText: "#FFE082",
+  chatMoneyPillPressedBackground: "#FFC107",
+  chatMoneyPillPressedText: "#1C1400",
   messageSelectRowBackground: "rgba(93, 199, 5, 0.36)",
   tickSent: "#8E8E93",
   tickRead: "#53BDEB",
@@ -214,6 +238,8 @@ export const darkColors: ThemeColors = {
   switchTrackOn: "#4BB004",
   switchThumbOff: "#F5F5F7",
   switchThumbOn: "#FFFFFF",
+  moneyReceiptStampRed: "#EF5350",
+  moneyReceiptStampBlue: "#42A5F5",
 };
 
 export function getThemeColors(scheme: ColorScheme | null | undefined): ThemeColors {

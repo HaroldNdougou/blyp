@@ -71,6 +71,13 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
   const commerces = user?.commerces ?? [];
   const active = user?.activeContext;
 
+  const personalDisplayName = useMemo(() => {
+    const first = (user?.personalFirstName ?? user?.firstName ?? "").trim();
+    const last = (user?.personalLastName ?? user?.lastName ?? "").trim();
+    const full = [first, last].filter(Boolean).join(" ");
+    return full || t("commerce.personal");
+  }, [user?.personalFirstName, user?.personalLastName, user?.firstName, user?.lastName, t]);
+
   const categoryLabel = useCallback(
     (c: string) => {
       if (c === "taxi") return t("commerce.categoryTaxi");
@@ -180,7 +187,7 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
           disabled={busyId != null}
         >
           <View style={styles.commerceTexts}>
-            <Text style={styles.commerceTitle}>{t("commerce.personal")}</Text>
+            <Text style={styles.commerceTitle}>{personalDisplayName}</Text>
             <Text style={styles.commerceMeta}>
               {active?.type === "personal"
                 ? t("commerce.active")

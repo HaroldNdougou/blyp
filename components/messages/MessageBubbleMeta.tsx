@@ -1,3 +1,4 @@
+import { FruitMoneyDollarGlyph } from "@/components/messages/FruitMoneyDollarGlyph";
 import {
   DeletedMessageTick,
   MessageTicks,
@@ -8,6 +9,7 @@ import { Ionicons } from "@expo/vector-icons";
 import React from "react";
 import { useTranslation } from "react-i18next";
 import {
+  Pressable,
   Text,
   View,
   type StyleProp,
@@ -44,6 +46,13 @@ export function MessageBubbleMetaRow({
   imageOverlay,
   bare,
   deletedForAll,
+  fruitMoneyMeta,
+  fruitMoneyClaimedLabel,
+  /** Vocal : durée à droite, même ligne que l’heure. */
+  trailingText,
+  trailingTextStyle,
+  moneyReceiptOn,
+  moneyReceiptToggle,
 }: {
   createdAt: string;
   mine: boolean;
@@ -54,16 +63,68 @@ export function MessageBubbleMetaRow({
   bare?: boolean;
   /** Bulle « Vous avez supprimé ce message » — pas de coche. */
   deletedForAll?: boolean;
+  /** Heure jaune — fruit money uniquement. */
+  fruitMoneyMeta?: boolean;
+  /** Destinataire — fruit money récupéré (remplace l’heure). */
+  fruitMoneyClaimedLabel?: string | null;
+  trailingText?: string | null;
+  trailingTextStyle?: StyleProp<TextStyle>;
+  /** Reçu exigé (destinataire, en attente). */
+  moneyReceiptOn?: boolean;
+  /** Émetteur — activer / désactiver le reçu (transfert en attente). */
+  moneyReceiptToggle?: { on: boolean; onPress: () => void; disabled?: boolean };
 }) {
   const { t } = useTranslation();
+  const claimedMeta = String(fruitMoneyClaimedLabel ?? "").trim();
+  if (claimedMeta) {
+    const claimedRow = (
+      <Text
+        style={[
+          styles.imageMetaTime,
+          {
+            color: colors.textMuted,
+            fontStyle: "italic",
+            fontWeight: "400",
+          },
+        ]}
+      >
+        {claimedMeta}
+      </Text>
+    );
+    if (bare) {
+      return (
+        <View
+          style={styles.bubbleMetaRow}
+          accessibilityLabel={claimedMeta}
+        >
+          {claimedRow}
+        </View>
+      );
+    }
+    return (
+      <View
+        style={[styles.bubbleMeta, styles.bubbleMetaRow]}
+        accessibilityLabel={claimedMeta}
+      >
+        {claimedRow}
+      </View>
+    );
+  }
+
   const time = formatMessageTime(createdAt);
   if (!time) return null;
 
-  const timeStyle = imageOverlay
-    ? styles.imageMetaTime
-    : mine
-      ? styles.bubbleMetaTimeMine
-      : styles.bubbleMetaTimeTheirs;
+  const fruitMetaYellow = colors.chatMoneyPillPressedBackground;
+  const timeStyle = fruitMoneyMeta
+    ? [
+        imageOverlay ? styles.imageMetaTime : styles.bubbleMetaTime,
+        { color: fruitMetaYellow, fontWeight: "500" },
+      ]
+    : imageOverlay
+      ? styles.imageMetaTime
+      : mine
+        ? styles.bubbleMetaTimeMine
+        : styles.bubbleMetaTimeTheirs;
 
   const showDeletedTick = Boolean(mine && deletedForAll);
   const tickLabel = showDeletedTick
@@ -71,20 +132,63 @@ export function MessageBubbleMetaRow({
     : mine && tick
       ? tickA11y(tick, t)
       : "";
-  const tickColor = imageOverlay
-    ? tick === "read"
-      ? colors.tickRead
-      : colors.textInverse
-    : tick === "read"
-      ? colors.tickRead
-      : colors.tickSent;
+  const tickColor =
+    fruitMoneyMeta
+      ? fruitMetaYellow
+      : imageOverlay
+        ? tick === "read"
+          ? colors.tickRead
+          : colors.textInverse
+        : tick === "read"
+          ? colors.tickRead
+          : colors.tickSent;
 
   const row = (
     <>
+      {fruitMoneyMeta ? (
+        <FruitMoneyDollarGlyph color={fruitMetaYellow} size={9} />
+      ) : null}
       <Text style={timeStyle}>{time}</Text>
+      {!fruitMoneyMeta && moneyReceiptToggle ? (
+        <Pressable
+          onPress={() => {
+            moneyReceiptToggle.onPress();
+          }}
+          disabled={moneyReceiptToggle.disabled}
+          hitSlop={12}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: moneyReceiptToggle.on }}
+          accessibilityLabel={t("moneyReceipt.toggleA11y")}
+          style={{ marginLeft: 3, paddingVertical: 1 }}
+        >
+          <Ionicons
+            name="receipt-outline"
+            size={13}
+            color={
+              moneyReceiptToggle.on ? colors.accent : colors.tickSent
+            }
+            style={
+              moneyReceiptToggle.on ? undefined : { opacity: 0.72 }
+            }
+          />
+        </Pressable>
+      ) : !fruitMoneyMeta && moneyReceiptOn ? (
+        <View
+          style={{ marginLeft: 3, paddingVertical: 1 }}
+          accessibilityLabel={t("moneyReceipt.badgeA11y")}
+        >
+          <Ionicons name="receipt-outline" size={13} color={colors.accent} />
+        </View>
+      ) : null}
       {showDeletedTick ? (
         <DeletedMessageTick
-          color={imageOverlay ? colors.textInverse : colors.tickSent}
+          color={
+            fruitMoneyMeta && imageOverlay
+              ? fruitMetaYellow
+              : imageOverlay
+                ? colors.textInverse
+                : colors.tickSent
+          }
         />
       ) : null}
       {mine && tick === "sending" ? (
@@ -116,23 +220,49 @@ export function MessageBubbleMetaRow({
     </>
   );
 
+  const trail = String(trailingText ?? "").trim();
+  const a11y =
+    trail && mine && tick
+      ? `${time}, ${trail}, ${tickLabel}`
+      : trail
+        ? `${time}, ${trail}`
+        : mine && tick
+          ? `${time}, ${tickLabel}`
+          : time;
+
+  const metaLine = trail ? (
+    <View
+      style={[
+        styles.bubbleMetaRow,
+        { width: "100%", justifyContent: "space-between" },
+      ]}
+    >
+      <View style={styles.bubbleMetaRow}>{row}</View>
+      <Text style={trailingTextStyle} accessibilityElementsHidden>
+        {trail}
+      </Text>
+    </View>
+  ) : (
+    row
+  );
+
   if (bare) {
     return (
-      <View
-        style={styles.bubbleMetaRow}
-        accessibilityLabel={mine && tick ? `${time}, ${tickLabel}` : time}
-      >
-        {row}
+      <View style={styles.bubbleMetaRow} accessibilityLabel={a11y}>
+        {metaLine}
       </View>
     );
   }
 
   return (
     <View
-      style={[styles.bubbleMeta, styles.bubbleMetaRow]}
-      accessibilityLabel={mine && tick ? `${time}, ${tickLabel}` : time}
+      style={[
+        styles.bubbleMeta,
+        trail ? { alignSelf: "stretch", width: "100%" } : styles.bubbleMetaRow,
+      ]}
+      accessibilityLabel={a11y}
     >
-      {row}
+      {metaLine}
     </View>
   );
 }

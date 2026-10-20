@@ -18,3 +18,15 @@ const configured = readConfiguredApiUrl();
 export const USE_MOCK_API = configured.length === 0;
 
 export const API_BASE_URL = USE_MOCK_API ? "" : configured.replace(/\/$/, "");
+
+function readRealtimeWsUrl(): string {
+  const extra = Constants.expoConfig?.extra as
+    | { EXPO_PUBLIC_REALTIME_WS_URL?: string }
+    | undefined;
+  const fromExtra = extra?.EXPO_PUBLIC_REALTIME_WS_URL?.trim() ?? "";
+  const fromEnv = process.env.EXPO_PUBLIC_REALTIME_WS_URL?.trim() ?? "";
+  return (fromExtra || fromEnv).replace(/\/$/, "");
+}
+
+/** WebSocket messagerie (wss://…) — défini après déploiement infra realtime. */
+export const REALTIME_WS_URL = readRealtimeWsUrl();

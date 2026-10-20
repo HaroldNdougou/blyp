@@ -49,6 +49,17 @@ import {
   isAvatarKeyForPhone,
 } from "../../lib/avatar.mjs";
 import {
+  presignKycDocumentUpload,
+  submitKycApplication,
+} from "../../lib/kyc.mjs";
+import {
+  confirmVaultDocument,
+  deleteVaultDocument,
+  listVaultDocuments,
+  presignVaultDownload,
+  presignVaultUpload,
+} from "../../lib/vault.mjs";
+import {
   createCommerce,
   getPublicAccountLabel,
   listCommercesForUser,
@@ -251,6 +262,44 @@ async function handleAvatarPresign(userId, body) {
   return ok(signed);
 }
 
+async function handleKycPresign(userId, body) {
+  const docType = String(body?.docType ?? "").trim();
+  const side = String(body?.side ?? "").trim();
+  const contentType = String(body?.contentType ?? "image/jpeg").trim();
+  const signed = await presignKycDocumentUpload(
+    userId,
+    docType,
+    side,
+    contentType,
+  );
+  if (signed.error === "KYC_STORAGE_UNAVAILABLE") {
+    return serviceUnavailable("Vérification indisponible");
+  }
+  if (signed.error) return badRequest("Requête invalide");
+  return ok(signed);
+}
+
+async function handleKycSubmit(userId, body) {
+  const profile = await getUserProfile(userId);
+  if (!profile) return unauthorized("Utilisateur introuvable");
+  if (profile.kycStatus === "pending") {
+    return badRequest("Vérification déjà en cours");
+  }
+  if (profile.kycStatus === "approved") {
+    const user = await getUserApiPayload(userId);
+    return ok({ user });
+  }
+  const result = await submitKycApplication(userId, body);
+  if (result.error === "BACK_REQUIRED") {
+    return badRequest("Photo verso de la CNI requise");
+  }
+  if (result.error === "INVALID_KEY" || result.error === "INVALID_DOC") {
+    return badRequest("Documents invalides");
+  }
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
+}
+
 async function handleAvatarConfirm(userId, body) {
   const profile = await getUserProfile(userId);
   if (!profile?.phone) return unauthorized("Utilisateur introuvable");
@@ -300,6 +349,57 @@ async function handleCreateCommerce(userId, body) {
 async function handleListCommerces(userId) {
   const commerces = await listCommercesForUser(userId);
   return ok({ items: commerces });
+}
+
+async function handleVaultList(userId) {
+  const result = await listVaultDocuments(userId);
+  if (result.error === "ACCOUNT_INVALID") return badRequest("Compte invalide");
+  return ok(result);
+}
+
+async function handleVaultPresign(userId, body) {
+  const result = await presignVaultUpload(userId, body);
+  if (result.error === "VAULT_UNAVAILABLE") {
+    return serviceUnavailable("Coffre indisponible");
+  }
+  if (result.error === "QUOTA_EXCEEDED") {
+    return badRequest("Espace documents plein pour ce compte");
+  }
+  if (result.error === "SIZE_INVALID") {
+    return badRequest("Fichier trop volumineux (max 25 Mo)");
+  }
+  if (result.error) return badRequest("Requête invalide");
+  return ok(result);
+}
+
+async function handleVaultConfirm(userId, body) {
+  const result = await confirmVaultDocument(userId, body);
+  if (result.error === "QUOTA_EXCEEDED") {
+    return badRequest("Espace documents plein pour ce compte");
+  }
+  if (result.error === "KEY_INVALID" || result.error === "INVALID_INPUT") {
+    return badRequest("Document invalide");
+  }
+  if (result.error === "SIZE_INVALID") {
+    return badRequest("Fichier trop volumineux (max 25 Mo)");
+  }
+  if (result.error) return badRequest("Enregistrement impossible");
+  return ok(result);
+}
+
+async function handleVaultDownload(userId, docId) {
+  const result = await presignVaultDownload(userId, docId);
+  if (result.error === "NOT_FOUND") return notFound("Document introuvable");
+  if (result.error === "VAULT_UNAVAILABLE") {
+    return serviceUnavailable("Coffre indisponible");
+  }
+  return ok(result);
+}
+
+async function handleVaultDelete(userId, docId) {
+  const result = await deleteVaultDocument(userId, docId);
+  if (result.error === "NOT_FOUND") return notFound("Document introuvable");
+  return ok({ ok: true });
 }
 
 async function handleSetContext(userId, body) {
@@ -424,6 +524,22 @@ export async function handler(event, context) {
       return await handleAvatarConfirm(auth.userId, body);
     }
 
+    if (method === "POST" && path === "/kyc/presign") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleKycPresign(auth.userId, body);
+    }
+
+    if (method === "POST" && path === "/kyc/submit") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleKycSubmit(auth.userId, body);
+    }
+
     if (method === "POST" && path === "/auth/merchant/enable") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
@@ -442,6 +558,37 @@ export async function handler(event, context) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handleListCommerces(auth.userId);
+    }
+
+    if (method === "GET" && path === "/vault/documents") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return await handleVaultList(auth.userId);
+    }
+
+    if (method === "POST" && path === "/vault/documents/presign") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleVaultPresign(auth.userId, body);
+    }
+
+    if (method === "POST" && path === "/vault/documents") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleVaultConfirm(auth.userId, body);
+    }
+
+    const vaultDoc = path.match(/^\/vault\/documents\/([^/]+)$/);
+    if (vaultDoc) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const id = decodeURIComponent(vaultDoc[1]);
+      if (method === "GET") return await handleVaultDownload(auth.userId, id);
+      if (method === "DELETE") return await handleVaultDelete(auth.userId, id);
     }
 
     if (method === "PUT" && path === "/me/context") {

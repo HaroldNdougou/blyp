@@ -3,8 +3,11 @@
  * Mémoire OK (règle produit) ; réseau / SQLite reste dans aggressiveWarm.
  */
 export function floodAllTabs(token: string | null): void {
+  void import("@/app/(tabs)/index");
+  void import("@/app/(tabs)/pay");
+  void import("@/components/pay/PayHomeScreen");
+  void import("@/components/pay/CommerceHomeScreen");
   void import("@/app/(tabs)/history");
-  void import("@/app/(tabs)/messages");
   void import("@/app/(tabs)/profile");
   void import("@/app/deposit");
   void import("@/components/history/HistoryScreen");
@@ -17,7 +20,4 @@ export function floodAllTabs(token: string | null): void {
   void import("@/components/pay/CommerceHomeScreen");
   void import("@/lib/messages/prefetchChatThread");
   void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
-  if (token) {
-    void import("@/app/pocket/[id]");
-  }
 }

@@ -6,6 +6,8 @@ import type {
 } from "@/lib/api/types";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { isOutboundMessagePending } from "@/lib/messages/outboundPending";
+import { applyMoneyReceiptOverride } from "@/lib/messages/moneyReceiptOverride";
 import {
   foldReactionSyncMessages,
   sanitizeReactionPreviews,
@@ -15,6 +17,7 @@ import {
   withNormalizedReplyTo,
 } from "@/lib/messages/replyPreview";
 import { bindRecentEmojiOwner } from "@/lib/messages/recentChatEmojis";
+import { conversationFieldsFromLastMessage } from "@/lib/messages/conversationListPreview";
 
 const MSG_CAP = 80;
 
@@ -36,7 +39,7 @@ function conversationActivityAt(c: Conversation): string {
 
 const DEMO_CONVERSATION_PREFIX = "demo-conv-";
 
-function isDemoConversationId(id: string): boolean {
+export function isDemoConversationId(id: string): boolean {
   return String(id ?? "").startsWith(DEMO_CONVERSATION_PREFIX);
 }
 
@@ -58,6 +61,14 @@ export function sortConversationsByActivity(
 }
 
 /** Garde l’aperçu local si plus récent que le fetch serveur (évite qu’un fil démo repasse devant). */
+function threadHasOutboundPending(conversationId: string): boolean {
+  const cid = String(conversationId ?? "").trim();
+  if (!cid || !ownerPhone) return false;
+  const msgs = messagesByKey.get(`${ownerPhone}::${cid}`);
+  const last = msgs?.[msgs.length - 1];
+  return last ? isOutboundMessagePending(last) : false;
+}
+
 function mergeNewerConversationPreview(
   prev: Conversation | undefined,
   next: Conversation,
@@ -65,6 +76,20 @@ function mergeNewerConversationPreview(
   if (!prev) return next;
   const prevAt = conversationActivityAt(prev);
   const nextAt = conversationActivityAt(next);
+  if (
+    prev.lastMessageFromSelf &&
+    String(prev.lastMessagePreview ?? "").trim() &&
+    threadHasOutboundPending(next.id)
+  ) {
+    return {
+      ...next,
+      lastMessagePreview: prev.lastMessagePreview,
+      lastMessageType: prev.lastMessageType ?? next.lastMessageType,
+      lastMessageAt: prev.lastMessageAt ?? next.lastMessageAt,
+      updatedAt: prevAt.localeCompare(nextAt) > 0 ? prev.updatedAt : next.updatedAt,
+      lastMessageFromSelf: true,
+    };
+  }
   if (prevAt && prevAt.localeCompare(nextAt) > 0) {
     return {
       ...next,
@@ -187,6 +212,9 @@ export function messagesEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
     const xt = x.moneyTransfer;
     const yt = y.moneyTransfer;
     if ((xt?.status ?? "") !== (yt?.status ?? "")) return false;
+    if (Boolean(xt?.receiptRequired) !== Boolean(yt?.receiptRequired)) {
+      return false;
+    }
     if ((xt?.claimedByFirstName ?? "") !== (yt?.claimedByFirstName ?? "")) {
       return false;
     }
@@ -202,6 +230,9 @@ export function messagesEqual(a: ChatMessage[], b: ChatMessage[]): boolean {
       return false;
     }
     if (reactionsKey(x.reactions) !== reactionsKey(y.reactions)) return false;
+    if ((x.moneyFruitEmoji ?? "") !== (y.moneyFruitEmoji ?? "")) {
+      return false;
+    }
   }
   return true;
 }
@@ -252,17 +283,22 @@ function preserveMessageTimestamps(
           ? lt.expiresAt
           : st.expiresAt;
     }
-    moneyTransfer = {
+    moneyTransfer = applyMoneyReceiptOverride({
       ...st,
       expiresAt,
       createdAt: pickEarlierIso(lt.createdAt, st.createdAt),
-    };
+    });
   }
+  const moneyFruitEmoji =
+    String(server.moneyFruitEmoji ?? "").trim() ||
+    String(local.moneyFruitEmoji ?? "").trim() ||
+    null;
   return {
     ...server,
     createdAt,
     moneyTransfer,
     replyTo: coalesceReplyTo(local, server),
+    moneyFruitEmoji,
   };
 }
 
@@ -279,11 +315,12 @@ export function mergeMoneyTransfer(
         ? local.expiresAt
         : incoming.expiresAt;
   }
-  return {
+  const merged: MoneyTransfer = {
     ...incoming,
     expiresAt,
     createdAt: pickEarlierIso(local.createdAt, incoming.createdAt),
   };
+  return applyMoneyReceiptOverride(merged);
 }
 
 function stitchServerMessages(
@@ -353,6 +390,33 @@ function mergeLocalReactions(
     if (!loc || loc.length === 0) return m;
     changed = true;
     return { ...m, reactions: loc };
+  });
+  return changed ? out : next;
+}
+
+function mergeLocalMoneyFruitEmoji(
+  prev: ChatMessage[] | undefined,
+  next: ChatMessage[],
+): ChatMessage[] {
+  if (!prev?.length) return next;
+  const byId = new Map<string, string>();
+  const byClient = new Map<string, string>();
+  for (const m of prev) {
+    const fruit = String(m.moneyFruitEmoji ?? "").trim();
+    if (!fruit) continue;
+    byId.set(m.id, fruit);
+    if (m.clientId) byClient.set(m.clientId, fruit);
+  }
+  if (byId.size === 0 && byClient.size === 0) return next;
+  let changed = false;
+  const out = next.map((m) => {
+    if (String(m.moneyFruitEmoji ?? "").trim()) return m;
+    const fruit =
+      byId.get(m.id) ??
+      (m.clientId ? byClient.get(m.clientId) : undefined);
+    if (!fruit) return m;
+    changed = true;
+    return { ...m, moneyFruitEmoji: fruit };
   });
   return changed ? out : next;
 }
@@ -736,6 +800,51 @@ export function commitOptimisticImage(
   return commitOptimisticVoice(token, conversationId, clientId, message);
 }
 
+export type OptimisticMoneyJob = {
+  conversationId: string;
+  clientId: string;
+  amountFcfa: number;
+  idempotencyKey: string;
+  replyToMessageId?: string | null;
+  caption?: string | null;
+  moneyFruitEmoji?: string | null;
+  receiptRequired?: boolean;
+};
+
+/** 💰 encore locaux (id = clientId) — PIN en SecureStore, idempotence sur le message. */
+export function listOptimisticMoneyOutbox(token: string): OptimisticMoneyJob[] {
+  const prefix = `${ownerKey(token)}::`;
+  const out: OptimisticMoneyJob[] = [];
+  for (const [key, msgs] of messagesByKey) {
+    if (!key.startsWith(prefix)) continue;
+    const conversationId = key.slice(prefix.length);
+    if (!conversationId) continue;
+    for (const m of msgs) {
+      if (m.type !== "money" || !m.clientId || m.id !== m.clientId) continue;
+      const amountFcfa = Math.max(
+        0,
+        Math.floor(Number(m.moneyTransfer?.amountFcfa) || 0),
+      );
+      if (amountFcfa <= 0) continue;
+      const idempotencyKey = String(
+        m.moneySendIdempotencyKey ?? m.clientId ?? "",
+      ).trim();
+      if (!idempotencyKey) continue;
+      out.push({
+        conversationId,
+        clientId: m.clientId,
+        amountFcfa,
+        idempotencyKey,
+        replyToMessageId: m.replyTo?.messageId ?? null,
+        caption: m.body,
+        moneyFruitEmoji: m.moneyFruitEmoji ?? null,
+        receiptRequired: Boolean(m.moneyTransfer?.receiptRequired),
+      });
+    }
+  }
+  return out;
+}
+
 export function setMessagesSnapshot(
   token: string,
   conversationId: string,
@@ -761,58 +870,56 @@ export function upsertPushedMessage(
     const merged = preserveMessageTimestamps(existing, msg);
     const next = prev.map((m) => (m.id === id ? merged : m));
     setMessagesSnapshot(key, cid, next);
-    bumpConversationFromPushedMessage(key, merged);
+    bumpConversationFromMessage(key, merged);
     return next;
   }
   const next = [...prev, msg].slice(-MSG_CAP);
   setMessagesSnapshot(key, cid, next);
-  bumpConversationFromPushedMessage(key, msg);
+  bumpConversationFromMessage(key, msg);
   return next;
 }
 
-function bumpConversationFromPushedMessage(token: string, msg: ChatMessage) {
+export function bumpConversationFromMessage(token: string, msg: ChatMessage) {
   const prev = getConversationsSnapshot(token);
   if (!prev) return;
   const cid = msg.conversationId;
   const cur = prev.find((c) => c.id === cid);
   if (!cur) return;
-  const now = msg.createdAt || new Date().toISOString();
-  const preview =
-    msg.type === "money"
-      ? `💰 ${msg.moneyTransfer?.amountFcfa ?? ""} F`
-      : msg.type === "voice"
-        ? "🎤"
-        : msg.type === "image"
-          ? String(msg.body ?? "").trim() || "📷"
-          : msg.type === "document"
-            ? (() => {
-                const name = String(msg.document?.fileName ?? "").trim();
-                return name
-                  ? name.length > 72
-                    ? `📄 ${name.slice(0, 69)}…`
-                    : `📄 ${name}`
-                  : "📄";
-              })()
-            : String(msg.body ?? "");
-  const lastMessageType: Conversation["lastMessageType"] =
-    msg.type === "money" ||
-    msg.type === "voice" ||
-    msg.type === "image" ||
-    msg.type === "document"
-      ? msg.type
-      : "text";
-  const sub = accessTokenSubject(token);
-  const fromSelf = Boolean(
-    msg.senderUserId &&
-      (msg.senderUserId === "me" || (sub && msg.senderUserId === sub)),
-  );
+  const fields = conversationFieldsFromLastMessage(msg, token);
+  const now = fields.lastMessageAt;
   const updated: Conversation = {
     ...cur,
-    lastMessagePreview: preview,
-    lastMessageType,
-    lastMessageAt: now,
+    ...fields,
     updatedAt: now,
-    lastMessageFromSelf: fromSelf,
+  };
+  setConversationsSnapshot(
+    token,
+    sortConversationsByActivity([
+      updated,
+      ...prev.filter((c) => c.id !== cid),
+    ]),
+  );
+}
+
+/** Recalcule l’aperçu liste depuis le fil local (ex. après « supprimer pour moi »). */
+export function syncConversationPreviewFromThread(
+  token: string,
+  conversationId: string,
+): void {
+  const cid = String(conversationId ?? "").trim();
+  if (!cid || !token) return;
+  const prev = getConversationsSnapshot(token);
+  if (!prev) return;
+  const cur = prev.find((c) => c.id === cid);
+  if (!cur) return;
+  const msgs = getMessagesSnapshot(token, cid);
+  if (!msgs?.length) return;
+  const last = msgs[msgs.length - 1];
+  const fields = conversationFieldsFromLastMessage(last, token);
+  const updated: Conversation = {
+    ...cur,
+    ...fields,
+    updatedAt: fields.lastMessageAt,
   };
   setConversationsSnapshot(
     token,
@@ -855,7 +962,10 @@ function writeMessagesSnapshot(
       prevFolded,
       mergeLocalImageUris(
         prevFolded,
-        mergeLocalVoiceUris(prevFolded, base),
+        mergeLocalVoiceUris(
+          prevFolded,
+          mergeLocalMoneyFruitEmoji(prevFolded, base),
+        ),
       ),
     ),
   ).slice(-MSG_CAP);
@@ -948,6 +1058,7 @@ export type MoneyUpdatedPatch = {
   thanksFirstName?: string;
   thanksUserId?: string;
   claimedAt?: string;
+  receiptRequired?: boolean;
 };
 
 /** Patch RAM — no-op si déjà claimed. */
@@ -1013,18 +1124,26 @@ export function patchMoneyTransfer(
         claimedByUserId: patch.claimedByUserId || tr.claimedByUserId || null,
         thanksFirstName: patch.thanksFirstName || tr.thanksFirstName || null,
         thanksUserId: patch.thanksUserId || tr.thanksUserId || null,
+        receiptRequired:
+          patch.receiptRequired !== undefined
+            ? Boolean(patch.receiptRequired)
+            : tr.receiptRequired,
       };
       if (
         nextTr.status === tr.status &&
         nextTr.claimedByUserId === (tr.claimedByUserId ?? null) &&
         nextTr.thanksUserId === (tr.thanksUserId ?? null) &&
         nextTr.claimedByFirstName === (tr.claimedByFirstName ?? null) &&
-        nextTr.thanksFirstName === (tr.thanksFirstName ?? null)
+        nextTr.thanksFirstName === (tr.thanksFirstName ?? null) &&
+        Boolean(nextTr.receiptRequired) === Boolean(tr.receiptRequired)
       ) {
         return msg;
       }
       hit = true;
-      return { ...msg, moneyTransfer: nextTr };
+      return {
+        ...msg,
+        moneyTransfer: applyMoneyReceiptOverride(nextTr),
+      };
     });
     if (hit) {
       messagesByKey.set(key, next);

@@ -1,3 +1,4 @@
+import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
 import { formatVoiceClock } from "@/lib/voice/record";
 import type { ChatMessage } from "@/lib/api/types";
 import {
@@ -25,7 +26,8 @@ type Styles = {
   voiceRow: StyleProp<ViewStyle>;
   voicePlayCol: StyleProp<ViewStyle>;
   voicePlayBtn: StyleProp<ViewStyle>;
-  voiceDurUnderPlay: StyleProp<TextStyle>;
+  voiceDurMeta: StyleProp<TextStyle>;
+  voiceBubbleStack: StyleProp<ViewStyle>;
   voiceSeek: StyleProp<ViewStyle>;
   voiceTrackWrap: StyleProp<ViewStyle>;
   voiceTrack: StyleProp<ViewStyle>;
@@ -36,12 +38,15 @@ type Styles = {
   voiceSpeedText: StyleProp<TextStyle>;
 };
 
+type MetaProps = React.ComponentProps<typeof MessageBubbleMetaRow>;
+
 type Props = {
   message: ChatMessage;
   durationMs: number;
   ink: string;
   styles: Styles;
   onToggle: (msg: ChatMessage) => void;
+  metaTextProps: MetaProps;
 };
 
 function rateLabel(rate: number, t: (key: string) => string): string {
@@ -56,6 +61,7 @@ export const VoiceBubble = React.memo(function VoiceBubble({
   ink,
   styles,
   onToggle,
+  metaTextProps,
 }: Props) {
   const { t } = useTranslation();
   const [st, setSt] = useState<VoicePlayStatus>(getVoiceStatus);
@@ -141,9 +147,11 @@ export const VoiceBubble = React.memo(function VoiceBubble({
     playing || (active && st.paused) ? Math.max(0, total - pos) : total;
   const pct = total > 0 ? Math.max(0, Math.min(1, pos / total)) : 0;
   const durLabel = total > 0 ? formatVoiceClock(shownMs) : "0:00";
+  const durStyle = [styles.voiceDurMeta, { color: ink, opacity: 0.58 }];
 
   return (
-    <View style={styles.voiceRow}>
+    <View style={styles.voiceBubbleStack}>
+      <View style={styles.voiceRow}>
       <View style={styles.voicePlayCol}>
         <Pressable
           style={styles.voicePlayBtn}
@@ -168,13 +176,6 @@ export const VoiceBubble = React.memo(function VoiceBubble({
             style={playing ? undefined : { marginLeft: 2 }}
           />
         </Pressable>
-        <Text
-          style={[styles.voiceDurUnderPlay, { color: ink }]}
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-        >
-          {durLabel}
-        </Text>
       </View>
       <View
         style={styles.voiceSeek}
@@ -225,6 +226,12 @@ export const VoiceBubble = React.memo(function VoiceBubble({
           </Pressable>
         </View>
       ) : null}
+      </View>
+      <MessageBubbleMetaRow
+        {...metaTextProps}
+        trailingText={durLabel}
+        trailingTextStyle={durStyle}
+      />
     </View>
   );
 });

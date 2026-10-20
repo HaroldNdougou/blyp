@@ -19,11 +19,6 @@ export function prefetchChatThreadOnPressIn(opts: {
     void ensureMessagesSnapshotFromDb(opts.phone, opts.token, cid);
   }
   InteractionManager.runAfterInteractions(() => {
-    void import("@/lib/image/pickFromLibrary").then((m) =>
-      m.warmImageLibraryPermission(),
-    );
     void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
-    void import("@/lib/messages/chatLongPressHaptic");
-    void import("@/components/messages/SwipeToReplyWrap");
   });
 }

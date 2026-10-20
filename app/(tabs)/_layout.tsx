@@ -1,8 +1,9 @@
 import "@/lib/perf/eagerRoutes";
 import { floodAllTabs } from "@/lib/perf/floodAllTabs";
+import { AnimatedTabBarButton } from "@/components/tabs/AnimatedTabBarButton";
+import { CommentDollarTabIcon } from "@/components/tabs/CommentDollarTabIcon";
 import {
   CashTabIcon,
-  ChatTabIcon,
   NineDotKeypadIcon,
   PersonTabIcon,
   SwapTabIcon,
@@ -10,9 +11,15 @@ import {
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getTotalUnread, subscribeUnread } from "@/lib/messages/unread";
+import {
+  getReceiptsUnreadCount,
+  hydrateReceiptsUnread,
+  subscribeReceiptsUnread,
+} from "@/lib/receipts/receiptsUnread";
 import { Tabs } from "expo-router";
 import { useEffect, useState } from "react";
-import { Text, View } from "react-native";
+import { CountBadge } from "@/components/ui/CountBadge";
+import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabLayout() {
@@ -21,19 +28,32 @@ export default function TabLayout() {
   const { colors } = useTheme();
   const isPro = user?.activeContext?.type === "commerce";
   const [unreadTick, setUnreadTick] = useState(0);
+  const [receiptsUnreadTick, setReceiptsUnreadTick] = useState(0);
   const tabUnread = getTotalUnread();
+  const accountId = String(user?.id ?? "").trim();
+  const receiptsUnread = accountId
+    ? getReceiptsUnreadCount(accountId)
+    : 0;
 
   useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
+  useEffect(
+    () => subscribeReceiptsUnread(() => setReceiptsUnreadTick((n) => n + 1)),
+    [],
+  );
+  useEffect(() => {
+    if (!accountId) return;
+    void hydrateReceiptsUnread(accountId).then(() =>
+      setReceiptsUnreadTick((n) => n + 1),
+    );
+  }, [accountId]);
 
   useEffect(() => {
     floodAllTabs(token);
-    void import("@expo/vector-icons").then((m) => {
-      void m.Ionicons.loadFont().catch(() => {});
-    });
   }, [token]);
 
   return (
     <Tabs
+      initialRouteName="index"
       detachInactiveScreens={false}
       sceneContainerStyle={{ backgroundColor: colors.background }}
       screenOptions={{
@@ -56,6 +76,32 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
+          tabBarButton: (props) => (
+            <AnimatedTabBarButton {...props} routeName="index" />
+          ),
+          tabBarIcon: ({ color }) =>
+            token ? (
+              <View>
+                <CommentDollarTabIcon color={color} />
+                <CountBadge
+                  count={tabUnread}
+                  style={{ position: "absolute", top: -5, right: -8 }}
+                />
+              </View>
+            ) : isPro ? (
+              <CashTabIcon color={color} />
+            ) : (
+              <NineDotKeypadIcon color={color} />
+            ),
+        }}
+      />
+      <Tabs.Screen
+        name="pay"
+        options={{
+          tabBarButton: (props) =>
+            token ? (
+              <AnimatedTabBarButton {...props} routeName="pay" />
+            ) : null,
           tabBarIcon: ({ color }) =>
             isPro ? (
               <CashTabIcon color={color} />
@@ -67,51 +113,28 @@ export default function TabLayout() {
       <Tabs.Screen
         name="history"
         options={{
-          tabBarIcon: ({ color }) => <SwapTabIcon color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="messages"
-        options={{
-          tabBarButton: token ? undefined : () => null,
-          tabBarIcon: ({ color }) => (
-            <View>
-              <ChatTabIcon color={color} />
-              {tabUnread > 0 ? (
-                <View
-                  style={{
-                    position: "absolute",
-                    top: -5,
-                    right: -8,
-                    minWidth: 16,
-                    height: 16,
-                    borderRadius: 8,
-                    paddingHorizontal: 4,
-                    backgroundColor: colors.accent,
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Text
-                    style={{
-                      color: colors.accentOn,
-                      fontSize: 10,
-                      fontWeight: "700",
-                    }}
-                  >
-                    {tabUnread > 99 ? "99+" : String(tabUnread)}
-                  </Text>
-                </View>
-              ) : null}
-            </View>
+          tabBarButton: (props) => (
+            <AnimatedTabBarButton {...props} routeName="history" />
           ),
+          tabBarIcon: ({ color }) => <SwapTabIcon color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          tabBarButton: token ? undefined : () => null,
-          tabBarIcon: ({ color }) => <PersonTabIcon color={color} />,
+          tabBarButton: (props) =>
+            token ? (
+              <AnimatedTabBarButton {...props} routeName="profile" />
+            ) : null,
+          tabBarIcon: ({ color }) => (
+            <View>
+              <PersonTabIcon color={color} />
+              <CountBadge
+                count={receiptsUnread}
+                style={{ position: "absolute", top: -5, right: -8 }}
+              />
+            </View>
+          ),
         }}
       />
     </Tabs>

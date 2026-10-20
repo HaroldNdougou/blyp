@@ -5,7 +5,9 @@ import { formatConversationWhen } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import {
   conversationsEqual,
+  ensureMessagesSnapshotFromDb,
   getConversationsSnapshot,
+  getMessagesSnapshot,
   hydrateMessagesCache,
   setConversationsSnapshot,
 } from "@/lib/messagesCache";
@@ -23,11 +25,18 @@ import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import {
+  PeerAvatarLightbox,
+  type PeerAvatarLightboxTarget,
+} from "@/components/peers/PeerAvatarLightbox";
+import {
   DeletedMessageTick,
   MessageTicks,
 } from "@/components/messages/MessageTicks";
+import { Ionicons } from "@expo/vector-icons";
+import { displayListPreviewForMessage } from "@/lib/messages/conversationListPreview";
 import {
   lastDeletedMessageInThread,
+  lastMessageInThread,
   messageFromSelf,
 } from "@/lib/messages/deletedListPreview";
 import { createMessagesStyles } from "@/components/messages/messagesStyles";
@@ -36,9 +45,10 @@ import { DocumentListGlyph } from "@/components/messages/DocumentListGlyph";
 import { documentNameFromListPreview } from "@/lib/document/kind";
 import { previewTickForConversation } from "@/lib/messages/previewTicks";
 import { prefetchChatThreadOnPressIn } from "@/lib/messages/prefetchChatThread";
+import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
+import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import type { ThemeColors } from "@/lib/theme/colors";
-import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -59,12 +69,13 @@ type ConversationRowProps = {
   myId: string;
   unread: number;
   typing: boolean;
-  previewTick: "sent" | "delivered" | "read" | null;
+  previewTick: "sending" | "sent" | "delivered" | "read" | null;
   previewDeleted: boolean;
   previewText: string;
   previewDocumentIcon: boolean;
   onOpen: (id: string) => void;
   onPressIn: (id: string) => void;
+  onAvatarPress: (item: Conversation) => void;
   unreadLabel: string;
 };
 
@@ -80,8 +91,10 @@ const ConversationRow = React.memo(function ConversationRow({
   previewDocumentIcon,
   onOpen,
   onPressIn,
+  onAvatarPress,
   unreadLabel,
 }: ConversationRowProps) {
+  const { t } = useTranslation();
   const previewStyle = typing
     ? styles.rowPreviewTyping
     : unread > 0
@@ -95,17 +108,25 @@ const ConversationRow = React.memo(function ConversationRow({
       onPressIn={() => onPressIn(item.id)}
       onPress={() => onOpen(item.id)}
     >
-      <PeerAvatar
-        name={item.peerName}
-        phone={item.peerPhone}
-        remoteUrl={
-          item.peerAvatarUrl ?? demoAvatarUrlForPhone(item.peerPhone)
-        }
-        localUri={contactPhotoUriForPhone(item.peerPhone)}
-        size={48}
-        style={styles.avatarSlot}
-        recyclingKey={item.id}
-      />
+      <Pressable
+        onPress={() => onAvatarPress(item)}
+        accessibilityLabel={t("messages.peerPhotoOpenA11y", {
+          name: item.peerName,
+        })}
+        accessibilityRole="button"
+      >
+        <PeerAvatar
+          name={item.peerName}
+          phone={item.peerPhone}
+          remoteUrl={
+            item.peerAvatarUrl ?? demoAvatarUrlForPhone(item.peerPhone)
+          }
+          localUri={contactPhotoUriForPhone(item.peerPhone)}
+          size={48}
+          style={styles.avatarSlot}
+          recyclingKey={item.id}
+        />
+      </Pressable>
       <View style={styles.rowBody}>
         <Text style={styles.rowTitle} numberOfLines={1}>
           {item.peerName}
@@ -113,6 +134,25 @@ const ConversationRow = React.memo(function ConversationRow({
         <View style={styles.rowPreviewLine}>
           {previewDeleted ? (
             <DeletedMessageTick compact color={colors.tickSent} />
+          ) : previewTick === "sending" ? (
+            <View
+              style={{
+                width: 16,
+                height: 15,
+                marginRight: 4,
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+              accessibilityLabel={t("messages.sendingA11y")}
+              accessibilityRole="image"
+            >
+              <Ionicons
+                name="time-outline"
+                size={14}
+                color={colors.tickSent}
+                style={{ opacity: 0.72 }}
+              />
+            </View>
           ) : previewTick ? (
             <MessageTicks
               compact
@@ -167,7 +207,8 @@ export default function ConversationsScreen() {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createMessagesStyles(colors), [colors]);
-  const { token, user } = useAuth();
+  const { token, user, isLoading: authLoading } = useAuth();
+  useMarkRootShellReady();
   const ownerPhone = user?.phone ?? "";
   const cachedInit = token ? getConversationsSnapshot(token) : null;
   const [items, setItems] = useState<Conversation[]>(cachedInit ?? []);
@@ -176,7 +217,24 @@ export default function ConversationsScreen() {
   const [typingTick, setTypingTick] = useState(0);
   const [receiptTick, setReceiptTick] = useState(0);
   const [threadTick, setThreadTick] = useState(0);
+  const [avatarLightbox, setAvatarLightbox] =
+    useState<PeerAvatarLightboxTarget | null>(null);
   const myId = useMemo(() => accessTokenSubject(token), [token]);
+
+  const openAvatarLightbox = useCallback((c: Conversation) => {
+    setAvatarLightbox({
+      name: c.peerName,
+      phone: c.peerPhone,
+      remoteUrl: c.peerAvatarUrl ?? demoAvatarUrlForPhone(c.peerPhone),
+      localUri: contactPhotoUriForPhone(c.peerPhone),
+      conversationId: c.id,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (authLoading) return;
+    runAggressiveWarm({ token, phone: user?.phone });
+  }, [authLoading, token, user?.phone]);
 
   useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
   useEffect(
@@ -187,10 +245,47 @@ export default function ConversationsScreen() {
     () => subscribeConversationTyping(() => setTypingTick((n) => n + 1)),
     [],
   );
-  useEffect(
-    () => subscribeMessageDeleted(() => setThreadTick((n) => n + 1)),
-    [],
-  );
+  useEffect(() => {
+    if (!token) return;
+    return subscribeMessageDeleted(() => {
+      setThreadTick((n) => n + 1);
+      const snap = getConversationsSnapshot(token);
+      if (snap) {
+        setItems((prev) => (conversationsEqual(prev, snap) ? prev : snap));
+      }
+    });
+  }, [token]);
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    const bump = () => {
+      if (alive) setThreadTick((n) => n + 1);
+    };
+    const unsubs: (() => void)[] = [];
+    void (async () => {
+      const [v, i, m] = await Promise.all([
+        import("@/lib/voice/outbox"),
+        import("@/lib/image/outbox"),
+        import("@/lib/messages/moneyOutbox"),
+      ]);
+      if (!alive) return;
+      unsubs.push(v.subscribeVoiceOutbox(() => bump()));
+      unsubs.push(i.subscribeImageOutbox(() => bump()));
+      unsubs.push(
+        m.subscribeMoneyOutbox(() => {
+          bump();
+          const snap = getConversationsSnapshot(token);
+          if (snap) {
+            setItems((prev) => (conversationsEqual(prev, snap) ? prev : snap));
+          }
+        }),
+      );
+    })();
+    return () => {
+      alive = false;
+      unsubs.forEach((u) => u());
+    };
+  }, [token]);
 
   useEffect(() => {
     if (!token) return;
@@ -230,9 +325,11 @@ export default function ConversationsScreen() {
           requestAnimationFrame(() => perfMarkEnd("tab_messages"));
         });
       };
-      void import("@/lib/messages/chatEmojiCatalog").then((m) =>
-        m.loadChatEmojiCategories(),
-      );
+      InteractionManager.runAfterInteractions(() => {
+        void import("@/lib/messages/chatEmojiCatalog").then((m) => {
+          m.loadChatEmojiCategories?.();
+        });
+      });
       if (!token) {
         setItems([]);
         setLoading(false);
@@ -260,6 +357,12 @@ export default function ConversationsScreen() {
       const syncNet = () => {
         void (async () => {
           try {
+            const { shouldPullConversationsList, markConversationsListPulled } =
+              await import("@/lib/messages/conversationsListGate");
+            if (!shouldPullConversationsList()) {
+              if (!cancelled) endMark();
+              return;
+            }
             const { ensureSessionFresh, listConversations } = await import(
               "@/lib/api/client"
             );
@@ -273,6 +376,7 @@ export default function ConversationsScreen() {
             setItems((prev) =>
               conversationsEqual(prev, stored) ? prev : stored,
             );
+            markConversationsListPulled();
           } catch {
             // hors-ligne : on garde la copie locale
           } finally {
@@ -299,11 +403,22 @@ export default function ConversationsScreen() {
       return t("messages.typing", { name });
     }
     if (token) {
-      const tomb = lastDeletedMessageInThread(token, c.id);
-      if (tomb) {
-        return messageFromSelf(tomb, myId)
-          ? t("messages.deletedForAllMine")
-          : t("messages.deletedForAllTheirs");
+      const threadLast = lastMessageInThread(token, c.id);
+      if (threadLast) {
+        if (threadLast.deletedForAll) {
+          return messageFromSelf(threadLast, myId)
+            ? t("messages.deletedForAllMine")
+            : t("messages.deletedForAllTheirs");
+        }
+        const fromThread = displayListPreviewForMessage(threadLast, t, c);
+        if (fromThread) return fromThread;
+      } else {
+        const tomb = lastDeletedMessageInThread(token, c.id);
+        if (tomb) {
+          return messageFromSelf(tomb, myId)
+            ? t("messages.deletedForAllMine")
+            : t("messages.deletedForAllTheirs");
+        }
       }
     }
     if (c.lastMessageType === "voice") {
@@ -341,9 +456,26 @@ export default function ConversationsScreen() {
     [t, token, myId],
   );
 
-  const openChat = useCallback((id: string) => {
-    router.push(`/chat/${encodeURIComponent(id)}` as const);
-  }, []);
+  const openChat = useCallback(
+    (id: string) => {
+      const cid = String(id ?? "").trim();
+      if (!cid) return;
+      const ram =
+        token ? getMessagesSnapshot(token, cid) : null;
+      if (ram && ram.length > 0) {
+        router.push(`/chat/${encodeURIComponent(cid)}` as const);
+        return;
+      }
+      if (!token || !ownerPhone) {
+        router.push(`/chat/${encodeURIComponent(cid)}` as const);
+        return;
+      }
+      void ensureMessagesSnapshotFromDb(ownerPhone, token, cid).finally(() => {
+        router.push(`/chat/${encodeURIComponent(cid)}` as const);
+      });
+    },
+    [token, ownerPhone],
+  );
 
   const warmChatOnPressIn = useCallback(
     (id: string) => {
@@ -436,13 +568,18 @@ export default function ConversationsScreen() {
                 }
                 onOpen={openChat}
                 onPressIn={warmChatOnPressIn}
+                onAvatarPress={openAvatarLightbox}
                 unreadLabel={t("messages.unreadCount", { count: unread })}
               />
             );
           }}
         />
       )}
-
+      <PeerAvatarLightbox
+        target={avatarLightbox}
+        onClose={() => setAvatarLightbox(null)}
+        onOpenChat={openChat}
+      />
     </SafeAreaView>
   );
 }

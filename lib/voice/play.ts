@@ -218,11 +218,18 @@ export async function warmVoiceEngine(): Promise<void> {
   });
 }
 
+function normalizePlayUri(uri: string): string {
+  const u = String(uri ?? "").trim();
+  if (!u) return u;
+  if (u.startsWith("file://") || u.startsWith("content://")) return u;
+  return `file://${u}`;
+}
+
 export async function playVoice(
   uri: string,
   opts?: { messageId?: string; durationMs?: number },
 ): Promise<void> {
-  const src = String(uri ?? "").trim();
+  const src = normalizePlayUri(String(uri ?? "").trim());
   if (!src) return;
   if (current && currentUri === src && currentMessageId === (opts?.messageId ?? currentMessageId)) {
     if (paused) {

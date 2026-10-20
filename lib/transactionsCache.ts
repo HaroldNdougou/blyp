@@ -62,14 +62,53 @@ function isMoneyRefund(t: TransactionItem): boolean {
   return String(t.counterpartyName ?? "").trim().startsWith("Message Money (");
 }
 
-function normalizeTransactionItem(t: TransactionItem): TransactionItem {
+function coerceAmountFcfa(raw: unknown): number | null {
+  const n = Math.floor(Number(raw));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n;
+}
+
+/** SQLite exige `id` — certains vieux TX API n’en ont pas. */
+function withStableTxId(t: TransactionItem): TransactionItem | null {
+  const amountFcfa = coerceAmountFcfa(t.amountFcfa);
+  if (amountFcfa === null) return null;
+  const createdAt = String(t.createdAt ?? "").trim();
+  if (!createdAt) return null;
+  const id = String(t.id ?? "").trim();
+  if (id) return { ...t, amountFcfa, createdAt };
+  const ref = String(t.reference ?? "").trim();
+  if (ref) return { ...t, id: ref, amountFcfa, createdAt };
+  const type = t.type === "received" ? "received" : "sent";
+  return {
+    ...t,
+    id: `tx-${createdAt}-${type}-${amountFcfa}`,
+    amountFcfa,
+    createdAt,
+  };
+}
+
+function normalizeTransactionItem(t: TransactionItem): TransactionItem | null {
+  const base = withStableTxId(t);
+  if (!base) return null;
+  const amountFcfa = coerceAmountFcfa(base.amountFcfa);
+  if (amountFcfa === null) return null;
+  const createdAt = String(base.createdAt ?? "").trim();
+  if (!createdAt) return null;
+  let type = base.type === "received" ? "received" : "sent";
   if (
-    t.type === "sent" &&
-    (isClaimedMoneyLabel(t.counterpartyName) || isMoneyRefund(t))
+    type === "sent" &&
+    (isClaimedMoneyLabel(base.counterpartyName) || isMoneyRefund(base))
   ) {
-    return { ...t, type: "received" };
+    type = "received";
   }
-  return t;
+  const counterpartyName = String(base.counterpartyName ?? "").trim() || "—";
+  return {
+    ...base,
+    amountFcfa,
+    createdAt,
+    type,
+    counterpartyName,
+  };
 }
 
 function sortTx(items: TransactionItem[]): TransactionItem[] {
@@ -87,10 +126,13 @@ export function mergeTransactionsDelta(
   const prev = byPhone.get(phone) ?? [];
   if (delta.length === 0) return prev;
   const map = new Map<string, TransactionItem>();
-  for (const t of prev) map.set(t.id, normalizeTransactionItem(t));
+  for (const t of prev) {
+    const n = normalizeTransactionItem(t);
+    if (n) map.set(n.id, n);
+  }
   for (const t of delta) {
     const n = normalizeTransactionItem(t);
-    map.set(n.id, n);
+    if (n) map.set(n.id, n);
   }
   const next = sortTx([...map.values()]).slice(0, 200);
   if (listsEqual(prev, next)) return prev;
@@ -111,18 +153,26 @@ async function insertTxRow(
   phone: string,
   t: TransactionItem,
 ) {
+  const id = String(t.id ?? "").trim();
+  if (!id) return;
+  const amountFcfa = coerceAmountFcfa(t.amountFcfa);
+  if (amountFcfa === null) return;
+  const createdAt = String(t.createdAt ?? "").trim();
+  if (!createdAt) return;
+  const type = t.type === "received" ? "received" : "sent";
+  const counterpartyName = String(t.counterpartyName ?? "").trim() || "—";
   await db.runAsync(
     `INSERT INTO transactions
       (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     phone,
-    t.id,
-    t.type,
-    t.amountFcfa,
-    t.counterpartyName,
+    id,
+    type,
+    amountFcfa,
+    counterpartyName,
     t.counterpartyPhone,
-    t.createdAt,
-    t.reference || fallbackTxReference(t.id),
+    createdAt,
+    t.reference || fallbackTxReference(id),
     t.kind ?? null,
   );
 }
@@ -160,18 +210,20 @@ export function hydrateTransactionsCache(phone: string): Promise<void> {
       phone,
     );
     if (!byPhone.has(phone) && rows.length > 0) {
-      const items = rows.map((r) =>
-        normalizeTransactionItem({
-          id: r.id,
-          reference: r.reference || fallbackTxReference(r.id),
-          type: r.type as "sent" | "received",
-          kind: r.kind ?? null,
-          amountFcfa: r.amountFcfa,
-          counterpartyName: r.counterpartyName,
-          counterpartyPhone: r.counterpartyPhone,
-          createdAt: r.createdAt,
-        }),
-      );
+      const items = rows
+        .map((r) =>
+          normalizeTransactionItem({
+            id: r.id,
+            reference: r.reference || fallbackTxReference(r.id),
+            type: r.type as "sent" | "received",
+            kind: r.kind ?? null,
+            amountFcfa: r.amountFcfa,
+            counterpartyName: r.counterpartyName,
+            counterpartyPhone: r.counterpartyPhone,
+            createdAt: r.createdAt,
+          }),
+        )
+        .filter((x): x is TransactionItem => x !== null);
       byPhone.set(phone, items);
       publishUi(phone, items);
     }
@@ -197,7 +249,11 @@ export function setTransactionsSnapshot(
   items: TransactionItem[],
 ) {
   if (!phone) return;
-  const sorted = sortTx(items.map(normalizeTransactionItem)).slice(0, 200);
+  const sorted = sortTx(
+    items
+      .map(normalizeTransactionItem)
+      .filter((x): x is TransactionItem => x !== null),
+  ).slice(0, 200);
   const prev = byPhone.get(phone);
   if (prev && listsEqual(prev, sorted)) {
     publishUi(phone, prev);

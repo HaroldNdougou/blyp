@@ -14,7 +14,8 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "https://nma68tjr78.execute-api.af-south-1.amazonaws.com/dev"
+        "EXPO_PUBLIC_API_URL": "https://nma68tjr78.execute-api.af-south-1.amazonaws.com/dev",
+        "EXPO_PUBLIC_REALTIME_WS_URL": "wss://quryhnp89j.execute-api.af-south-1.amazonaws.com/dev"
       }
     },
     "production": {

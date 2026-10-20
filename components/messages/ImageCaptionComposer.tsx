@@ -34,6 +34,7 @@ export type PendingDocumentCaption = {
 
 export type PendingMoneyCaption = {
   amountLabel: string;
+  fruitEmoji?: string;
 };
 
 type Props = {
@@ -85,12 +86,20 @@ export function ImageCaptionComposer({
     <View style={local.row}>
       <View style={local.thumbWrap}>
         {moneyPreview ? (
-          <View style={[local.thumb, local.moneyThumb]}>
-            <Text style={local.moneyEmoji}>💰</Text>
-            <Text style={local.moneyAmount} numberOfLines={1}>
-              {moneyPreview.amountLabel}
-            </Text>
-          </View>
+          moneyPreview.fruitEmoji ? (
+            <View style={[local.thumb, local.fruitMoneyThumb]}>
+              <Text style={local.fruitMoneyEmoji}>
+                {moneyPreview.fruitEmoji}
+              </Text>
+            </View>
+          ) : (
+            <View style={[local.thumb, local.moneyThumb]}>
+              <Text style={local.moneyEmoji}>💰</Text>
+              <Text style={local.moneyAmount} numberOfLines={1}>
+                {moneyPreview.amountLabel}
+              </Text>
+            </View>
+          )
         ) : doc ? (
           doc.previewUri ? (
             <Image
@@ -174,6 +183,17 @@ function createLocalStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
       paddingHorizontal: 2,
+    },
+    fruitMoneyThumb: {
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+    },
+    fruitMoneyEmoji: {
+      fontSize: 28,
+      lineHeight: 30,
+      includeFontPadding: false,
     },
     moneyEmoji: {
       fontSize: 16,

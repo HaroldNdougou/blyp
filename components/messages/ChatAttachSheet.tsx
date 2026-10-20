@@ -77,6 +77,7 @@ function createStyles(c: ThemeColors) {
 type Props = {
   visible: boolean;
   onClose: () => void;
+  onTakePhoto: () => void;
   onPickPhoto: () => void;
   onPickDocument: () => void;
 };
@@ -84,6 +85,7 @@ type Props = {
 export function ChatAttachSheet({
   visible,
   onClose,
+  onTakePhoto,
   onPickPhoto,
   onPickDocument,
 }: Props) {
@@ -111,6 +113,20 @@ export function ChatAttachSheet({
           <View style={styles.handle} />
           <Pressable
             style={styles.row}
+            onPress={() => {
+              onClose();
+              onTakePhoto();
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={t("messages.attachCamera")}
+          >
+            <View style={styles.icon}>
+              <Ionicons name="camera-outline" size={22} color={colors.text} />
+            </View>
+            <Text style={styles.label}>{t("messages.attachCamera")}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.row, styles.rowBorder]}
             onPress={() => {
               onClose();
               onPickPhoto();

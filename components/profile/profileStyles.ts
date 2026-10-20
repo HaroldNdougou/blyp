@@ -114,7 +114,7 @@ export function createProfileStyles(c: ThemeColors) {
       flex: 1,
       fontSize: 28,
       fontWeight: "800",
-      color: c.accent,
+      color: c.textSecondary,
       letterSpacing: -0.4,
     },
     balanceCurrency: {
@@ -242,6 +242,45 @@ export function createProfileStyles(c: ThemeColors) {
     },
     actionBtnPressed: {
       opacity: 0.85,
+    },
+    kycLead: {
+      fontSize: 12,
+      lineHeight: 17,
+      color: c.textMuted,
+      marginTop: 10,
+      marginBottom: 14,
+    },
+    kycCtaBtn: {
+      marginBottom: 0,
+      height: 50,
+      borderRadius: 14,
+      backgroundColor: c.accent,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 16,
+    },
+    kycCtaBtnPressed: {
+      opacity: 0.9,
+    },
+    kycCtaBtnText: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: c.accentOn,
+    },
+    kycPendingChip: {
+      marginBottom: 12,
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderRadius: 14,
+      backgroundColor: c.surfaceMuted,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+    },
+    kycPendingChipText: {
+      fontSize: 14,
+      fontWeight: "600",
+      color: c.textMuted,
+      textAlign: "center",
     },
     actionIconWrap: {
       width: 36,

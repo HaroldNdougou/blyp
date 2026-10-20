@@ -310,6 +310,7 @@ export function demoApiResponse<T>(
       items: demoMessages(profile, userIdFromToken(token)),
       peerLastReadAt: at,
       peerLastDeliveredAt: at,
+      peerLastPresenceAt: at,
     } as T;
   }
   let type = "";
@@ -318,7 +319,13 @@ export function demoApiResponse<T>(
   } catch {
     /* corps non JSON */
   }
-  if (profile && (type === "read" || type === "delivered" || type === "typing")) {
+  if (
+    profile &&
+    (type === "read" ||
+      type === "delivered" ||
+      type === "typing" ||
+      type === "presence")
+  ) {
     return { ok: true, at: new Date().toISOString() } as T;
   }
   if (profile && method.toUpperCase() === "POST" && type === "image-presign") {

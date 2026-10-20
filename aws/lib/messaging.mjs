@@ -114,6 +114,7 @@ function transferPublic(t) {
     thanksUserId: t.thanksUserId ?? null,
     thanksFirstName: t.thanksFirstName ?? null,
     createdAt: t.createdAt,
+    receiptRequired: Boolean(t.receiptRequired),
   };
 }
 
@@ -288,6 +289,8 @@ function messagePublic(m) {
     replyTo: replyToPublic(m),
     createdAt: m.createdAt,
     clientId: m.clientId ?? null,
+    forwarded: Boolean(m.forwarded),
+    moneyFruitEmoji: m.moneyFruitEmoji ?? null,
   };
 }
 
@@ -809,9 +812,14 @@ async function getPeerReceipts(conversationId, userId) {
     return {
       peerLastReadAt: mem.lastReadAt ?? null,
       peerLastDeliveredAt: mem.lastDeliveredAt ?? null,
+      peerLastPresenceAt: mem.lastPresenceAt ?? null,
     };
   }
-  return { peerLastReadAt: null, peerLastDeliveredAt: null };
+  return {
+    peerLastReadAt: null,
+    peerLastDeliveredAt: null,
+    peerLastPresenceAt: null,
+  };
 }
 
 async function notifyConversationReceipt(
@@ -851,6 +859,12 @@ export async function markConversationRead(userId, conversationId) {
     }),
   );
   await notifyConversationReceipt(conversationId, userId, "read", now);
+  await touchMemberPresenceAt(userId, conversationId);
+  await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "conversation_presence",
+    conversationId,
+    at: now,
+  });
   return { ok: true, at: now };
 }
 
@@ -875,6 +889,12 @@ export async function markConversationDelivered(userId, conversationId) {
     return { ok: true, at: now, reused: true };
   }
   await notifyConversationReceipt(conversationId, userId, "delivered", now);
+  await touchMemberPresenceAt(userId, conversationId);
+  await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "conversation_presence",
+    conversationId,
+    at: now,
+  });
   return { ok: true, at: now };
 }
 
@@ -1049,6 +1069,7 @@ async function notifyMessagePush(
         transferId: extra.transferId ?? "",
         amountFcfa: extra.amountFcfa ?? 0,
         expiresAt: extra.expiresAt ?? "",
+        ...(extra.receiptRequired ? { receiptRequired: true } : {}),
       });
     }
   } catch (err) {
@@ -1195,6 +1216,7 @@ export async function sendTextMessage(
   body,
   clientId,
   replyToMessageId,
+  options = {},
 ) {
   const text = String(body ?? "").trim();
   if (!text || text.length > 2000) return { error: "BODY_INVALID" };
@@ -1205,6 +1227,7 @@ export async function sendTextMessage(
   const replyResolved = await resolveReplyFields(conversationId, replyToMessageId);
   if (replyResolved.error) return { error: replyResolved.error };
   const replyFields = replyResolved.replyFields ?? {};
+  const forwarded = Boolean(options.forwarded);
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -1224,6 +1247,7 @@ export async function sendTextMessage(
         body: text,
         createdAt: now,
         clientId: clientId || null,
+        ...(forwarded ? { forwarded: true } : {}),
         ...replyFields,
       },
     }),
@@ -1254,6 +1278,7 @@ export async function sendTextMessage(
       createdAt: now,
       clientId: clientId || null,
       moneyTransfer: null,
+      forwarded,
       ...replyFields,
     }),
   };
@@ -1266,6 +1291,7 @@ export async function sendVoiceMessage(
   durationMs,
   clientId,
   replyToMessageId,
+  options = {},
 ) {
   const { isOwnedVoiceKey, clampVoiceDurationMs } = await import("./media.mjs");
   const key = String(voiceKey ?? "").trim();
@@ -1280,6 +1306,7 @@ export async function sendVoiceMessage(
   const replyResolved = await resolveReplyFields(conversationId, replyToMessageId);
   if (replyResolved.error) return { error: replyResolved.error };
   const replyFields = replyResolved.replyFields ?? {};
+  const forwarded = Boolean(options.forwarded);
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -1301,6 +1328,7 @@ export async function sendVoiceMessage(
         voiceDurationMs: dur,
         createdAt: now,
         clientId: clientId || null,
+        ...(forwarded ? { forwarded: true } : {}),
         ...replyFields,
       },
     }),
@@ -1330,6 +1358,7 @@ export async function sendVoiceMessage(
       createdAt: now,
       clientId: clientId || null,
       moneyTransfer: null,
+      forwarded,
       ...replyFields,
     }),
   };
@@ -1344,6 +1373,7 @@ export async function sendImageMessage(
   clientId,
   caption,
   replyToMessageId,
+  options = {},
 ) {
   const { isOwnedImageKey, clampImageDimensions } = await import("./media.mjs");
   const key = String(imageKey ?? "").trim();
@@ -1360,6 +1390,7 @@ export async function sendImageMessage(
   const replyResolved = await resolveReplyFields(conversationId, replyToMessageId);
   if (replyResolved.error) return { error: replyResolved.error };
   const replyFields = replyResolved.replyFields ?? {};
+  const forwarded = Boolean(options.forwarded);
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -1382,6 +1413,7 @@ export async function sendImageMessage(
         imageHeight: dims.height,
         createdAt: now,
         clientId: clientId || null,
+        ...(forwarded ? { forwarded: true } : {}),
         ...replyFields,
       },
     }),
@@ -1417,6 +1449,7 @@ export async function sendImageMessage(
       createdAt: now,
       clientId: clientId || null,
       moneyTransfer: null,
+      forwarded,
       ...replyFields,
     }),
   };
@@ -1434,6 +1467,7 @@ export async function sendDocumentMessage(
   documentThumbKey,
   pageCount,
   caption,
+  options = {},
 ) {
   const {
     isOwnedDocumentKey,
@@ -1462,6 +1496,7 @@ export async function sendDocumentMessage(
   const replyResolved = await resolveReplyFields(conversationId, replyToMessageId);
   if (replyResolved.error) return { error: replyResolved.error };
   const replyFields = replyResolved.replyFields ?? {};
+  const forwarded = Boolean(options.forwarded);
 
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -1488,6 +1523,7 @@ export async function sendDocumentMessage(
         documentPageCount: pages > 0 ? pages : null,
         createdAt: now,
         clientId: clientId || null,
+        ...(forwarded ? { forwarded: true } : {}),
         ...replyFields,
       },
     }),
@@ -1532,9 +1568,148 @@ export async function sendDocumentMessage(
       createdAt: now,
       clientId: clientId || null,
       moneyTransfer: null,
+      forwarded,
       ...replyFields,
     }),
   };
+}
+
+export async function forwardMessages(
+  userId,
+  targetConversationId,
+  sourceConversationId,
+  messageIds,
+  clientIdsByMessageId = {},
+) {
+  const targetMember = await assertMember(targetConversationId, userId);
+  if (!targetMember) return { error: "FORBIDDEN" };
+  const sourceMember = await assertMember(sourceConversationId, userId);
+  if (!sourceMember) return { error: "FORBIDDEN" };
+
+  const ids = (Array.isArray(messageIds) ? messageIds : [])
+    .map((id) => String(id ?? "").trim())
+    .filter(Boolean);
+  if (!ids.length || ids.length > 30) return { error: "IDS_INVALID" };
+
+  const media = await import("./media.mjs");
+  const fwd = { forwarded: true };
+  const out = [];
+
+  for (const mid of ids) {
+    const m = await getConversationMessage(sourceConversationId, mid);
+    if (!m || m.deletedForAllAt) continue;
+    const type = m.type;
+    if (type === "money") continue;
+    if (type === "text" && parseReactionSyncBody(m.body)) continue;
+
+    const clientId =
+      String(clientIdsByMessageId[mid] ?? "").trim() || null;
+
+    if (type === "text") {
+      const text = String(m.body ?? "").trim();
+      if (!text) continue;
+      const res = await sendTextMessage(
+        userId,
+        targetConversationId,
+        text,
+        clientId,
+        null,
+        fwd,
+      );
+      if (res.message) out.push(res.message);
+      continue;
+    }
+
+    if (type === "voice") {
+      const dup = await media.duplicateVoiceKeyForConversation(
+        userId,
+        sourceConversationId,
+        targetConversationId,
+        m.voiceKey,
+      );
+      if (dup.error || !dup.key) continue;
+      const res = await sendVoiceMessage(
+        userId,
+        targetConversationId,
+        dup.key,
+        m.voiceDurationMs,
+        clientId,
+        null,
+        fwd,
+      );
+      if (res.message) out.push(res.message);
+      continue;
+    }
+
+    if (type === "image") {
+      const dup = await media.duplicateImageKeyForConversation(
+        userId,
+        sourceConversationId,
+        targetConversationId,
+        m.imageKey,
+      );
+      if (dup.error || !dup.key) continue;
+      const res = await sendImageMessage(
+        userId,
+        targetConversationId,
+        dup.key,
+        m.imageWidth,
+        m.imageHeight,
+        clientId,
+        m.body,
+        null,
+        fwd,
+      );
+      if (res.message) out.push(res.message);
+      continue;
+    }
+
+    if (type === "document") {
+      const dup = await media.duplicateDocumentKeyForConversation(
+        userId,
+        sourceConversationId,
+        targetConversationId,
+        m.documentKey,
+        m.documentFileName,
+      );
+      if (dup.error || !dup.key) continue;
+      let thumbKey = null;
+      const srcThumb = String(m.documentThumbKey ?? "").trim();
+      if (srcThumb) {
+        const thumbDup = await media.duplicateDocumentThumbKeyForConversation(
+          userId,
+          sourceConversationId,
+          targetConversationId,
+          srcThumb,
+        );
+        if (!thumbDup.error) thumbKey = thumbDup.key;
+      }
+      const res = await sendDocumentMessage(
+        userId,
+        targetConversationId,
+        dup.key,
+        m.documentFileName,
+        m.documentSizeBytes,
+        m.documentContentType,
+        clientId,
+        null,
+        thumbKey,
+        m.documentPageCount,
+        m.body,
+        fwd,
+      );
+      if (res.message) out.push(res.message);
+    }
+  }
+
+  if (!out.length) return { error: "NOTHING_TO_FORWARD" };
+  return { messages: out };
+}
+
+function sanitizeMoneyFruitEmoji(raw) {
+  const s = String(raw ?? "").trim();
+  if (!s || s.length > 8) return null;
+  return s;
 }
 
 export async function sendMoneyMessage(
@@ -1545,6 +1720,8 @@ export async function sendMoneyMessage(
   idempotencyKey,
   replyToMessageId,
   caption,
+  moneyFruitEmoji,
+  receiptRequired,
 ) {
   if (!isValidTxAmount(amount)) return { error: "AMOUNT_INVALID" };
   const text = String(caption ?? "").trim();
@@ -1617,8 +1794,10 @@ export async function sendMoneyMessage(
     status: "pending",
     createdAt: now,
     expiresAt,
+    ...(receiptRequired ? { receiptRequired: true } : {}),
   };
 
+  const fruitEmoji = sanitizeMoneyFruitEmoji(moneyFruitEmoji);
   const messageItem = {
     PK: convPk(conversationId),
     SK: msgSk(nowMs, messageId),
@@ -1631,6 +1810,7 @@ export async function sendMoneyMessage(
     body: text || null,
     createdAt: now,
     clientId: clientId || null,
+    ...(fruitEmoji ? { moneyFruitEmoji: fruitEmoji } : {}),
     ...replyFields,
   };
 
@@ -1724,6 +1904,7 @@ export async function sendMoneyMessage(
     transferId,
     amountFcfa: amount,
     expiresAt,
+    ...(receiptRequired ? { receiptRequired: true } : {}),
   });
   queueUnregisteredPeerInvite(conversationId, userId, "money", {
     amountFcfa: amount,
@@ -2108,6 +2289,70 @@ function isMoneyRecipient(t, userId, phone) {
   return false;
 }
 
+export async function setMoneyTransferReceiptRequired(
+  senderUserId,
+  transferId,
+  required,
+) {
+  const tRes = await doc.send(
+    new GetCommand({
+      TableName: getTableName(),
+      Key: { PK: mtPk(transferId), SK: "META" },
+    }),
+  );
+  const t = tRes.Item;
+  if (!t) return { error: "NOT_FOUND" };
+  if (t.fromUserId !== senderUserId) return { error: "FORBIDDEN" };
+  if (t.status !== "pending") {
+    return { error: "NOT_PENDING", transfer: transferPublic(t) };
+  }
+
+  const want = Boolean(required);
+  const now = new Date().toISOString();
+  try {
+    await doc.send(
+      new UpdateCommand({
+        TableName: getTableName(),
+        Key: { PK: mtPk(transferId), SK: "META" },
+        UpdateExpression: "SET receiptRequired = :req, updatedAt = :now",
+        ConditionExpression: "#st = :pending AND fromUserId = :uid",
+        ExpressionAttributeNames: { "#st": "status" },
+        ExpressionAttributeValues: {
+          ":pending": "pending",
+          ":uid": senderUserId,
+          ":now": now,
+          ":req": want,
+        },
+      }),
+    );
+  } catch (e) {
+    if (e?.name === "ConditionalCheckFailedException") {
+      const again = await doc.send(
+        new GetCommand({
+          TableName: getTableName(),
+          Key: { PK: mtPk(transferId), SK: "META" },
+        }),
+      );
+      const pub = transferPublic(again.Item ?? t);
+      if (again.Item?.status !== "pending") {
+        return { error: "NOT_PENDING", transfer: pub };
+      }
+      return { error: "CONFLICT", transfer: pub };
+    }
+    throw e;
+  }
+
+  const updated = await doc.send(
+    new GetCommand({
+      TableName: getTableName(),
+      Key: { PK: mtPk(transferId), SK: "META" },
+    }),
+  );
+  const pub = transferPublic(updated.Item ?? t);
+  void notifyMoneyUpdatedPush(pub, senderUserId);
+  return { transfer: pub };
+}
+
 export async function recallMoneyTransfer(userId, transferId) {
   const loaded = await loadPendingTransfer(transferId);
   if (loaded.error) return loaded;
@@ -2182,6 +2427,91 @@ export async function thankMoneyTransfer(userId, transferId) {
   return { ok: true, transfer };
 }
 
+const PRESENCE_PUSH_MIN_MS = 10_000;
+
+async function notifyConversationRealtimePeers(
+  conversationId,
+  fromUserId,
+  payload,
+) {
+  try {
+    const { postRealtimeToUser } = await import("./realtimeWs.mjs");
+    const members = await listConvMembers(conversationId);
+    for (const mem of members) {
+      if (!mem.userId || mem.userId === fromUserId) continue;
+      await postRealtimeToUser(mem.userId, payload);
+    }
+  } catch (err) {
+    console.warn(
+      "[messaging] realtime ws fan-out failed",
+      err?.message ?? err,
+    );
+  }
+}
+
+async function touchMemberPresenceAt(userId, conversationId) {
+  const member = await assertMember(conversationId, userId);
+  if (!member) return null;
+  const now = new Date().toISOString();
+  const key = memberKeyForUser(userId);
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: convPk(conversationId), SK: memberSk(key) },
+      UpdateExpression: "SET lastPresenceAt = :now",
+      ExpressionAttributeValues: { ":now": now },
+    }),
+  );
+  return now;
+}
+
+export async function markConversationPresence(userId, conversationId) {
+  const member = await assertMember(conversationId, userId);
+  if (!member) return { error: "FORBIDDEN" };
+  const now = new Date().toISOString();
+  const nowMs = Date.now();
+  const key = memberKeyForUser(userId);
+  const lastPushMs = member.lastPresencePushAt
+    ? Date.parse(String(member.lastPresencePushAt))
+    : 0;
+  const shouldPush =
+    !lastPushMs || nowMs - lastPushMs >= PRESENCE_PUSH_MIN_MS;
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: convPk(conversationId), SK: memberSk(key) },
+      UpdateExpression: shouldPush
+        ? "SET lastPresenceAt = :now, lastPresencePushAt = :now"
+        : "SET lastPresenceAt = :now",
+      ExpressionAttributeValues: { ":now": now },
+    }),
+  );
+  await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "conversation_presence",
+    conversationId,
+    at: now,
+  });
+  if (shouldPush) {
+    try {
+      const { enqueueConversationPresencePush } = await import(
+        "./pushQueue.mjs"
+      );
+      const members = await listConvMembers(conversationId);
+      for (const mem of members) {
+        if (!mem.userId || mem.userId === userId) continue;
+        await enqueueConversationPresencePush({
+          recipientUserId: mem.userId,
+          conversationId,
+          at: now,
+        });
+      }
+    } catch (err) {
+      console.warn("[messaging] presence push failed", err?.message ?? err);
+    }
+  }
+  return { ok: true, at: now };
+}
+
 export async function markConversationTyping(userId, conversationId, on) {
   const member = await assertMember(conversationId, userId);
   if (!member) return { error: "FORBIDDEN" };
@@ -2190,6 +2520,15 @@ export async function markConversationTyping(userId, conversationId, on) {
     String(profile?.firstName ?? "").trim() ||
     senderLabel(profile).split(/\s+/)[0] ||
     "Blyp";
+  const presenceAt = await touchMemberPresenceAt(userId, conversationId);
+  const onFlag = Boolean(on);
+  await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "conversation_typing",
+    conversationId,
+    fromName,
+    on: onFlag ? "1" : "0",
+    ...(presenceAt ? { presenceAt } : {}),
+  });
   try {
     const { enqueueConversationTypingPush } = await import("./pushQueue.mjs");
     const members = await listConvMembers(conversationId);
@@ -2199,7 +2538,8 @@ export async function markConversationTyping(userId, conversationId, on) {
         recipientUserId: mem.userId,
         conversationId,
         fromName,
-        on: Boolean(on),
+        on: onFlag,
+        ...(presenceAt ? { presenceAt } : {}),
       });
     }
   } catch (err) {
@@ -2227,6 +2567,7 @@ async function notifyMoneyUpdatedPush(transfer, actorUserId) {
         claimedByUserId: transfer.claimedByUserId ?? "",
         thanksFirstName: transfer.thanksFirstName ?? "",
         thanksUserId: transfer.thanksUserId ?? "",
+        receiptRequired: Boolean(transfer.receiptRequired),
       });
     }
   } catch (err) {

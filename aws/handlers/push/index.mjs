@@ -82,6 +82,20 @@ export async function handler(event) {
         }
         continue;
       }
+      if (msg?.type === "conversation_presence") {
+        const { sendConversationPresencePush } = await import(
+          "../../lib/pushSend.mjs"
+        );
+        const result = await sendConversationPresencePush(msg);
+        if (result?.skipped) {
+          console.log(
+            "[push] presence skipped",
+            result.reason,
+            msg.conversationId,
+          );
+        }
+        continue;
+      }
       if (msg?.type === "money_updated") {
         const result = await sendMoneyUpdatedPush(msg);
         if (result?.skipped) {

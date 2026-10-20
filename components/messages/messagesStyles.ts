@@ -85,6 +85,21 @@ export function createMessagesStyles(c: ThemeColors) {
     moneyBubbleWrap: {
       position: "relative",
     },
+    moneyReceiptRequiredBadge: {
+      position: "absolute",
+      top: -5,
+      right: -5,
+      width: 22,
+      height: 22,
+      borderRadius: 11,
+      backgroundColor: c.modal,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.depositHighlightBorder,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 4,
+      elevation: 2,
+    },
     thanksChip: {
       backgroundColor: c.surface,
       borderWidth: StyleSheet.hairlineWidth,
@@ -210,16 +225,25 @@ export function createMessagesStyles(c: ThemeColors) {
     translateBadgeRow: {
       marginBottom: 4,
     },
+    translateColumn: {
+      alignSelf: "flex-start",
+      maxWidth: "100%",
+    },
+    bubbleTextStackTranslate: {
+      alignSelf: "flex-start",
+      maxWidth: "100%",
+    },
     translateOriginalQuote: {
       flexDirection: "row",
       alignItems: "stretch",
       gap: 8,
       marginTop: 6,
       paddingTop: 2,
+      alignSelf: "stretch",
     },
     translateOriginalText: {
-      flex: 1,
-      flexShrink: 1,
+      flexShrink: 0,
+      alignSelf: "flex-start",
     },
     replyComposer: {
       flexDirection: "row",
@@ -312,6 +336,18 @@ export function createMessagesStyles(c: ThemeColors) {
       fontSize: 17,
       fontWeight: "500",
       color: c.text,
+    },
+    threadSubtitle: {
+      fontSize: 12,
+      fontWeight: "400",
+      color: c.textMuted,
+      marginTop: 1,
+    },
+    threadSubtitleOnline: {
+      color: c.accent,
+    },
+    threadSubtitleTyping: {
+      color: c.textMuted,
     },
     badge: {
       fontSize: 11,
@@ -520,6 +556,10 @@ export function createMessagesStyles(c: ThemeColors) {
       paddingHorizontal: 12,
       paddingVertical: 8,
     },
+    bubbleVoice: {
+      alignSelf: "flex-start",
+      maxWidth: 236,
+    },
     bubbleImage: {
       paddingHorizontal: 2,
       paddingVertical: 2,
@@ -579,6 +619,81 @@ export function createMessagesStyles(c: ThemeColors) {
     },
     bubbleTextMine: { color: c.bubbleMineText },
     bubbleTextTheirs: { color: c.bubbleTheirsText },
+    bubbleForwarded: {
+      fontSize: 12,
+      lineHeight: 16,
+      fontStyle: "italic",
+      marginBottom: 4,
+    },
+    bubbleForwardedMine: { color: c.textMuted },
+    bubbleForwardedTheirs: { color: c.textMuted },
+    forwardRowCheck: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      borderWidth: 2,
+      borderColor: c.accent,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: 12,
+    },
+    forwardRowCheckOn: {
+      backgroundColor: c.accent,
+    },
+    forwardHeaderTitle: {
+      flex: 1,
+      fontSize: 17,
+      fontWeight: "600",
+      color: c.text,
+      textAlign: "center",
+    },
+    forwardSendBtn: {
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: c.accent,
+      minWidth: 72,
+      alignItems: "center",
+    },
+    forwardSendBtnDisabled: {
+      opacity: 0.45,
+    },
+    forwardSendBtnText: {
+      color: c.textInverse,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+    forwardSubtitle: {
+      paddingHorizontal: 16,
+      paddingTop: 8,
+      paddingBottom: 4,
+      fontSize: 14,
+      color: c.textMuted,
+    },
+    forwardSearchWrap: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginHorizontal: 16,
+      marginBottom: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 10,
+      backgroundColor: c.inputBackground,
+      gap: 8,
+    },
+    forwardSearchInput: {
+      flex: 1,
+      fontSize: 16,
+      color: c.text,
+      paddingVertical: 0,
+    },
+    forwardEmpty: {
+      textAlign: "center",
+      marginTop: 32,
+      fontSize: 15,
+      color: c.textMuted,
+      paddingHorizontal: 24,
+    },
     bubbleMeta: {
       alignSelf: "flex-start",
       marginTop: 3,
@@ -654,6 +769,27 @@ export function createMessagesStyles(c: ThemeColors) {
       fontSize: 16,
       lineHeight: 21,
       fontWeight: "700",
+    },
+    fruitMoneyWrap: {
+      position: "relative",
+      paddingBottom: 2,
+    },
+    fruitMoneyMetaRow: {
+      marginTop: 4,
+      alignSelf: "flex-end",
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    bubbleFruitMoney: {
+      backgroundColor: "transparent",
+      paddingHorizontal: 0,
+      paddingVertical: 0,
+      borderRadius: 0,
+    },
+    fruitMoneyEmojiJumbo: {
+      fontSize: 56,
+      lineHeight: 60,
+      includeFontPadding: false,
     },
     composer: {
       flexDirection: "row",
@@ -761,17 +897,21 @@ export function createMessagesStyles(c: ThemeColors) {
       fontSize: 12,
       lineHeight: 16,
     },
+    voiceBubbleStack: {
+      alignSelf: "flex-start",
+      width: 208,
+      maxWidth: "100%",
+    },
     voiceRow: {
       flexDirection: "row",
       alignItems: "flex-start",
       gap: 8,
-      minWidth: 196,
       paddingVertical: 2,
     },
     voicePlayCol: {
       alignItems: "center",
-      width: 40,
-      gap: 2,
+      justifyContent: "center",
+      width: 36,
     },
     voicePlayBtn: {
       width: 36,
@@ -782,17 +922,17 @@ export function createMessagesStyles(c: ThemeColors) {
       backgroundColor: "transparent",
       overflow: "hidden",
     },
-    voiceDurUnderPlay: {
+    voiceDurMeta: {
       fontSize: 11,
       fontWeight: "600",
       fontVariant: ["tabular-nums"],
-      lineHeight: 14,
+      lineHeight: 16,
     },
     voiceSeek: {
       flex: 1,
       height: 36,
       justifyContent: "center",
-      minWidth: 88,
+      minWidth: 44,
       marginTop: 4,
     },
     voiceTrackWrap: {

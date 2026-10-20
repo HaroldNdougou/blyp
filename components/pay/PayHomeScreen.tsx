@@ -17,6 +17,7 @@ import { takePendingDepositWatch } from "@/lib/deposit/pendingWatch";
 import { takeTopUpSuccessFlash } from "@/lib/deposit/successFlash";
 import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
+import { maxTxAmountFcfaForUser } from "@/lib/kyc/limits";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
@@ -919,6 +920,20 @@ export default function PayHomeScreen() {
           t("commerce.payAsPersonalTitle"),
           t("commerce.payAsPersonalMessage"),
         );
+        return;
+      }
+
+      const kycMax = maxTxAmountFcfaForUser(user);
+      if (n > kycMax) {
+        Alert.alert(t("kyc.limitTitle"), t("kyc.limitMessage", {
+          amount: formatFcfa(kycMax),
+        }), [
+          { text: t("common.cancel"), style: "cancel" },
+          {
+            text: t("kyc.verifyCta"),
+            onPress: () => router.push("/kyc"),
+          },
+        ]);
         return;
       }
 

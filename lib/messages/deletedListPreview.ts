@@ -14,6 +14,18 @@ export function lastDeletedMessageInThread(
   return last.deletedForAll ? last : null;
 }
 
+/** Dernier message du fil local (hors « supprimer pour moi » — retiré du snapshot). */
+export function lastMessageInThread(
+  token: string,
+  conversationId: string,
+): ChatMessage | null {
+  const cid = String(conversationId ?? "").trim();
+  if (!cid || !token) return null;
+  const msgs = getMessagesSnapshot(token, cid);
+  if (!msgs?.length) return null;
+  return msgs[msgs.length - 1];
+}
+
 export function messageFromSelf(
   msg: ChatMessage,
   myId: string | null,

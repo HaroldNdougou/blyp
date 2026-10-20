@@ -28,13 +28,17 @@ import {
   useWindowDimensions,
 } from "react-native";
 
+import { formatFcfa } from "@/lib/formatFcfa";
 import { CHAT_EMOJI_PANEL_HEIGHT } from "@/lib/messages/chatEmojiConstants";
+import type { ChatMoneyDenom } from "@/lib/messages/chatMoneyDenoms";
 
 export { CHAT_EMOJI_PANEL_HEIGHT };
 
 type Props = {
   colors: ThemeColors;
   onPick: (emoji: string) => void;
+  /** Tap fruit + montant → message money (FCFA). */
+  onPickMoney?: (denom: ChatMoneyDenom) => void;
   backgroundColor: string;
   borderColor: string;
 };
@@ -104,9 +108,147 @@ function RecentEmojiSection({
   );
 }
 
+function MoneySectionLabel({
+  labelKey,
+  colors,
+  first,
+}: {
+  labelKey: string;
+  colors: ThemeColors;
+  /** Premier bloc du panneau Argent (pas de marge haute). */
+  first?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Text
+      style={{
+        fontSize: 12,
+        fontWeight: "600",
+        color: colors.textMuted,
+        marginLeft: 10,
+        marginTop: first ? 0 : 6,
+        marginBottom: 4,
+      }}
+    >
+      {t(labelKey)}
+    </Text>
+  );
+}
+
+function MoneyDenomGrid({
+  denoms,
+  colors,
+  onPickMoney,
+}: {
+  denoms: ChatMoneyDenom[];
+  colors: ThemeColors;
+  onPickMoney: (denom: ChatMoneyDenom) => void;
+}) {
+  if (denoms.length === 0) return null;
+  return (
+    <View
+      style={{
+        flexDirection: "row",
+        flexWrap: "wrap",
+        paddingHorizontal: 8,
+        gap: 10,
+        rowGap: 12,
+      }}
+    >
+      {denoms.map((denom) => (
+        <MoneyDenomPickerCell
+          key={denom.id}
+          denom={denom}
+          colors={colors}
+          onPress={() => onPickMoney(denom)}
+        />
+      ))}
+    </View>
+  );
+}
+
+function MoneyEmojiPanel({
+  moneyDenoms,
+  moneyEmojis,
+  emojiCell,
+  colors,
+  borderColor,
+  onPick,
+  onPickMoney,
+}: {
+  moneyDenoms: ChatMoneyDenom[];
+  moneyEmojis: string[];
+  emojiCell: number;
+  colors: ThemeColors;
+  borderColor: string;
+  onPick: (emoji: string) => void;
+  onPickMoney: (denom: ChatMoneyDenom) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={{ paddingTop: 8, paddingBottom: 8 }}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      {moneyDenoms.length > 0 ? (
+        <MoneySectionLabel
+          labelKey="messages.emojiMoneySectionFruits"
+          colors={colors}
+          first
+        />
+      ) : null}
+      <MoneyDenomGrid
+        denoms={moneyDenoms}
+        colors={colors}
+        onPickMoney={onPickMoney}
+      />
+      {moneyEmojis.length > 0 ? (
+        <>
+          <MoneySectionLabel
+            labelKey="messages.emojiMoneySectionExpressions"
+            colors={colors}
+          />
+          <View
+            style={{
+              flexDirection: "row",
+              flexWrap: "wrap",
+              paddingHorizontal: 4,
+              borderTopWidth: moneyEmojis.length ? StyleSheet.hairlineWidth : 0,
+              borderTopColor: borderColor,
+              marginTop: 4,
+              paddingTop: 4,
+            }}
+          >
+            {moneyEmojis.map((item, index) => (
+              <Pressable
+                key={`${item}-${index}`}
+                style={{
+                  width: emojiCell,
+                  height: 40,
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+                onPress={() => onPick(item)}
+                accessibilityLabel={t("messages.emojiPickA11y", { emoji: item })}
+                accessibilityRole="button"
+              >
+                <Text style={{ fontSize: 28, lineHeight: 32 }}>{item}</Text>
+              </Pressable>
+            ))}
+          </View>
+        </>
+      ) : null}
+    </ScrollView>
+  );
+}
+
 export function ChatEmojiPicker({
   colors,
   onPick,
+  onPickMoney,
   backgroundColor,
   borderColor,
 }: Props) {
@@ -130,11 +272,18 @@ export function ChatEmojiPicker({
     };
   }, []);
 
+  const activeCategory = useMemo(
+    () => categories?.find((c) => c.id === activeId),
+    [activeId, categories],
+  );
+
   const activeEmojis = useMemo(() => {
     if (activeId === "recent") return recent;
-    const cat = categories?.find((c) => c.id === activeId);
-    return cat?.emojis ?? [];
-  }, [activeId, categories, recent]);
+    return activeCategory?.emojis ?? [];
+  }, [activeId, activeCategory, recent]);
+
+  const activeMoneyDenoms = activeCategory?.moneyDenoms ?? [];
+  const isMoneyTab = activeId === "money" && activeMoneyDenoms.length > 0;
 
   const showRecentHeader =
     activeId !== "recent" && recent.length > 0;
@@ -229,6 +378,18 @@ export function ChatEmojiPicker({
             {t("messages.emojiRecentEmpty")}
           </Text>
         </View>
+      ) : isMoneyTab && onPickMoney ? (
+        <View style={{ flex: 1, minHeight: 0 }}>
+          <MoneyEmojiPanel
+            moneyDenoms={activeMoneyDenoms}
+            moneyEmojis={activeEmojis}
+            emojiCell={cell}
+            colors={colors}
+            borderColor={borderColor}
+            onPick={onPick}
+            onPickMoney={onPickMoney}
+          />
+        </View>
       ) : (
         <View style={{ flex: 1, minHeight: 0 }}>
           <FlashList
@@ -283,5 +444,70 @@ export function ChatEmojiPicker({
         })}
       </ScrollView>
     </View>
+  );
+}
+
+function compactMoneyDenomLabel(amountFcfa: number): string {
+  if (amountFcfa >= 10_000) return "10k";
+  if (amountFcfa >= 1000) {
+    const k = amountFcfa / 1000;
+    return Number.isInteger(k) ? `${k}k` : formatFcfa(amountFcfa);
+  }
+  return String(amountFcfa);
+}
+
+function MoneyDenomPickerCell({
+  denom,
+  colors,
+  onPress,
+}: {
+  denom: ChatMoneyDenom;
+  colors: ThemeColors;
+  onPress: () => void;
+}) {
+  const { t } = useTranslation();
+  const amountLabel = compactMoneyDenomLabel(denom.amountFcfa);
+  const fruitName = t(denom.fruitLabelKey);
+
+  return (
+    <Pressable
+      style={{ alignSelf: "flex-start" }}
+      onPress={onPress}
+      accessibilityLabel={t("messages.emojiMoneyPickA11y", {
+        amount: formatFcfa(denom.amountFcfa),
+        fruit: fruitName,
+      })}
+      accessibilityRole="button"
+    >
+      {({ pressed }) => (
+        <View
+          style={[
+            { alignItems: "center", opacity: pressed ? 0.72 : 1 },
+            pressed ? { transform: [{ scale: 0.96 }] } : null,
+          ]}
+        >
+          <Text
+            style={{ fontSize: 34, lineHeight: 38, marginBottom: -2 }}
+            accessibilityElementsHidden
+          >
+            {denom.fruitEmoji}
+          </Text>
+          <Text
+            style={{
+              fontSize: 11,
+              fontWeight: "600",
+              color: pressed
+                ? colors.chatMoneyPillPressedBackground
+                : colors.chatMoneyPillText,
+              textAlign: "center",
+              marginTop: 1,
+            }}
+            numberOfLines={1}
+          >
+            {amountLabel}
+          </Text>
+        </View>
+      )}
+    </Pressable>
   );
 }

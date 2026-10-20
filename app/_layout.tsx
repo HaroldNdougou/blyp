@@ -7,6 +7,7 @@ import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
 import { BleBroadcastBootstrap } from "@/components/network/BleBroadcastBootstrap";
 import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { PushBootstrap } from "@/components/network/PushBootstrap";
+import { ChatRealtimeBootstrap } from "@/components/network/ChatRealtimeBootstrap";
 import { RealtimeSync } from "@/components/network/RealtimeSync";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { getSplashBackground } from "@/lib/theme/splash";
@@ -108,8 +109,12 @@ function RootShell() {
           }}
         />
         <Stack.Screen name="new-chat" />
+        <Stack.Screen name="forward" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="pocket/[id]" />
+        <Stack.Screen name="kyc" />
+        <Stack.Screen name="documents" />
+        <Stack.Screen name="receipts" />
         <Stack.Screen
           name="deposit"
           options={{
@@ -142,6 +147,7 @@ export default function RootLayout() {
           <NetworkProvider>
             <AuthProvider>
               <RealtimeSync />
+              <ChatRealtimeBootstrap />
               <PushBootstrap />
               <BleBroadcastBootstrap />
               <SplashGate>
