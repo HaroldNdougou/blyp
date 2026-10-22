@@ -1,4 +1,5 @@
-import type { StatusPost } from "@/lib/api/types";
+import type { StatusPost, StatusTextPostStyle } from "@/lib/api/types";
+import { normalizeStatusTextPostStyle } from "@/lib/status/textStatusPalette";
 import { ApiError, presignStatusUpload, publishStatus } from "@/lib/api/client";
 import { prepareChatImage } from "@/lib/image/prepareChatImage";
 import { uploadImageFile } from "@/lib/image/upload";
@@ -29,9 +30,15 @@ export async function publishStatusImageFromLocalUri(
 export async function publishStatusText(
   token: string,
   text: string,
+  textStyle: StatusTextPostStyle,
 ): Promise<StatusPost> {
   const body = String(text ?? "").trim();
-  const { post } = await publishStatus(token, { kind: "text", text: body });
+  const style = normalizeStatusTextPostStyle(textStyle);
+  const { post } = await publishStatus(token, {
+    kind: "text",
+    text: body,
+    textStyle: style,
+  });
   if (!post?.id) {
     throw new ApiError("Réponse serveur invalide", 502);
   }

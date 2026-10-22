@@ -13,6 +13,33 @@ import { getUserProfile, userPk } from "./user.mjs";
 
 const doc = getDocClient();
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+const TEXT_BG_COUNT = 8;
+const TEXT_FONT_COUNT = 3;
+
+function clampTextStyleIndex(index, max) {
+  const n = Number(index);
+  if (!Number.isFinite(n) || max <= 0) return 0;
+  return Math.max(0, Math.min(max - 1, Math.floor(n)));
+}
+
+function normalizeTextStyleInput(raw) {
+  if (!raw || typeof raw !== "object") {
+    return { bgIndex: 0, fontIndex: 0 };
+  }
+  return {
+    bgIndex: clampTextStyleIndex(raw.bgIndex, TEXT_BG_COUNT),
+    fontIndex: clampTextStyleIndex(raw.fontIndex, TEXT_FONT_COUNT),
+  };
+}
+
+function textStyleFromItem(it) {
+  const ts = it?.textStyle;
+  if (!ts || typeof ts !== "object") return null;
+  return {
+    bgIndex: clampTextStyleIndex(ts.bgIndex, TEXT_BG_COUNT),
+    fontIndex: clampTextStyleIndex(ts.fontIndex, TEXT_FONT_COUNT),
+  };
+}
 
 function statusSk(createdAtMs, postId) {
   return `STATUS#${String(createdAtMs).padStart(13, "0")}#${postId}`;
@@ -57,6 +84,7 @@ async function listPostsForUser(authorId) {
       kind: it.kind === "text" ? "text" : "image",
       mediaKey: String(it.mediaKey ?? "").trim() || null,
       text: it.text ? String(it.text) : null,
+      textStyle: it.kind === "text" ? textStyleFromItem(it) : null,
       createdAt: String(it.createdAt ?? ""),
       expiresAt: String(it.expiresAtIso ?? ""),
     }))
@@ -91,7 +119,7 @@ async function postToPublic(post) {
     const play = await presignStatusPlay(post.mediaKey);
     if (play.url) mediaUrl = play.url;
   }
-  return {
+  const out = {
     id: post.id,
     userId: post.userId,
     kind: post.kind,
@@ -100,6 +128,10 @@ async function postToPublic(post) {
     createdAt: post.createdAt,
     expiresAt: post.expiresAt,
   };
+  if (post.kind === "text" && post.textStyle) {
+    out.textStyle = post.textStyle;
+  }
+  return out;
 }
 
 async function peerAvatarForUser(peerUserId, peerPhone) {
@@ -188,6 +220,8 @@ export async function publishStatus(userId, body) {
     return { error: "TEXT_REQUIRED" };
   }
 
+  const textStyle = kind === "text" ? normalizeTextStyleInput(body?.textStyle) : null;
+
   const postId = randomUUID();
   const createdAtMs = Date.now();
   const createdAt = new Date(createdAtMs).toISOString();
@@ -207,6 +241,7 @@ export async function publishStatus(userId, body) {
   };
   if (mediaKey) statusItem.mediaKey = mediaKey;
   if (text) statusItem.text = text;
+  if (textStyle) statusItem.textStyle = textStyle;
 
   await doc.send(
     new PutCommand({
@@ -236,6 +271,7 @@ export async function publishStatus(userId, body) {
     kind,
     mediaKey,
     text,
+    textStyle,
     createdAt,
     expiresAt: expiresAtIso,
   });

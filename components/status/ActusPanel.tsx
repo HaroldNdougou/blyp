@@ -1,5 +1,6 @@
 import { StatusRing } from "@/components/status/StatusRing";
 import { createStatusStyles } from "@/components/status/statusStyles";
+import { resolveStatusTextAppearance } from "@/lib/status/textStatusPalette";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -56,6 +57,10 @@ const StatusActusCard = React.memo(function StatusActusCard({
   const previewUri =
     post?.kind === "image" && post.mediaUrl ? post.mediaUrl : null;
   const showTextPreview = !previewUri && !!post?.text;
+  const textPreviewLook =
+    showTextPreview && post?.kind === "text"
+      ? resolveStatusTextAppearance(post.textStyle)
+      : null;
   const addEmpty = isAdd && !previewUri && !post?.text;
 
   return (
@@ -79,7 +84,7 @@ const StatusActusCard = React.memo(function StatusActusCard({
               {
                 backgroundColor: addEmpty
                   ? colors.surfaceMuted
-                  : colors.accentDark,
+                  : (textPreviewLook?.backgroundColor ?? colors.accentDark),
                 alignItems: "center",
                 justifyContent: "center",
                 padding: 8,
@@ -87,7 +92,17 @@ const StatusActusCard = React.memo(function StatusActusCard({
             ]}
           >
             {showTextPreview ? (
-              <Text style={styles.actusCardTextPreview} numberOfLines={6}>
+              <Text
+                style={[
+                  styles.actusCardTextPreview,
+                  textPreviewLook && {
+                    fontSize: Math.round(textPreviewLook.font.fontSize * 0.45),
+                    fontWeight: textPreviewLook.font.fontWeight,
+                    fontStyle: textPreviewLook.font.fontStyle ?? "normal",
+                  },
+                ]}
+                numberOfLines={6}
+              >
                 {post!.text}
               </Text>
             ) : null}

@@ -276,7 +276,10 @@ export function StatusCreateScreen() {
     if (!body) return;
     setBusy(true);
     try {
-      const post = await publishStatusText(token, body);
+      const post = await publishStatusText(token, body, {
+        bgIndex: textBgIndex,
+        fontIndex: textFontIndex,
+      });
       finishAfterPublish(post);
     } catch (e) {
       if (__DEV__) console.warn("[status] publish text failed", e);
@@ -284,7 +287,16 @@ export function StatusCreateScreen() {
     } finally {
       setBusy(false);
     }
-  }, [token, busy, textBody, finishAfterPublish, publishFailureMessage, t]);
+  }, [
+    token,
+    busy,
+    textBody,
+    textBgIndex,
+    textFontIndex,
+    finishAfterPublish,
+    publishFailureMessage,
+    t,
+  ]);
 
   const publishPhotoStatus = useCallback(async () => {
     if (!token || busy || !uri) return;

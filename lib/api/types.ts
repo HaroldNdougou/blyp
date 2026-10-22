@@ -278,6 +278,12 @@ export type ConversationReceipts = {
 /** Statut WhatsApp-like (24 h). */
 export type StatusPostKind = "image" | "text";
 
+/** Indices palette compose (`STATUS_TEXT_*` dans `lib/status/textStatusPalette.ts`). */
+export type StatusTextPostStyle = {
+  bgIndex: number;
+  fontIndex: number;
+};
+
 export type StatusPost = {
   id: string;
   userId: string;
@@ -285,6 +291,8 @@ export type StatusPost = {
   /** Image CDN / locale ; null si texte seul. */
   mediaUrl: string | null;
   text: string | null;
+  /** Présent pour `kind === "text"` (fond + typo à la publication). */
+  textStyle?: StatusTextPostStyle | null;
   createdAt: string;
   expiresAt: string;
 };
@@ -311,4 +319,5 @@ export type PublishStatusBody = {
   /** Prod : clé S3 après presign + PUT. */
   mediaKey?: string | null;
   text?: string | null;
+  textStyle?: StatusTextPostStyle | null;
 };

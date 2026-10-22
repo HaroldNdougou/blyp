@@ -6,6 +6,7 @@ import { deleteMyStatuses } from "@/lib/api/client";
 import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
 import { STATUS_SLIDE_MS } from "@/lib/status/constants";
+import { resolveStatusTextAppearance } from "@/lib/status/textStatusPalette";
 import {
   activePosts,
   findStatusFeedItem,
@@ -23,6 +24,7 @@ import {
   Alert,
   Modal,
   Pressable,
+  StyleSheet,
   Text,
   View,
   useWindowDimensions,
@@ -47,6 +49,10 @@ export default function StatusViewScreen() {
   const posts = row ? activePosts(row.posts) : [];
   const safeIndex = Math.min(index, Math.max(0, posts.length - 1));
   const post = posts[safeIndex];
+  const textAppearance =
+    post?.kind === "text"
+      ? resolveStatusTextAppearance(post.textStyle)
+      : null;
   const myId = getStatusMyUserId();
   const isMine = userId === myId;
   const goNextRef = useRef<() => void>(() => {});
@@ -127,7 +133,10 @@ export default function StatusViewScreen() {
       <SafeAreaView
         style={[
           styles.viewerRoot,
-          { backgroundColor: colors.statusViewerBackground },
+          {
+            backgroundColor:
+              textAppearance?.backgroundColor ?? colors.statusViewerBackground,
+          },
         ]}
       >
         <View style={styles.progressRow}>
@@ -184,21 +193,52 @@ export default function StatusViewScreen() {
             <Text style={{ color: colors.textInverse, fontSize: 22 }}>×</Text>
           </Pressable>
         </View>
-        <View style={{ flex: 1, flexDirection: "row" }}>
-          <Pressable style={{ width: width * 0.35, flex: 0 }} onPress={goPrev} />
-          <Pressable style={{ flex: 1 }} onPress={goNext}>
-            {post.kind === "image" && post.mediaUrl ? (
-              <Image
-                source={{ uri: post.mediaUrl }}
-                style={styles.viewerMedia}
-                contentFit="contain"
+        <View style={{ flex: 1 }}>
+          {post.kind === "image" && post.mediaUrl ? (
+            <View style={{ flex: 1, flexDirection: "row" }}>
+              <Pressable
+                style={{ width: width * 0.35, flex: 0 }}
+                onPress={goPrev}
               />
-            ) : (
-              <View style={styles.viewerTextOnly}>
-                <Text style={styles.viewerTextOnlyLabel}>{post.text}</Text>
+              <Pressable style={{ flex: 1 }} onPress={goNext}>
+                <Image
+                  source={{ uri: post.mediaUrl }}
+                  style={styles.viewerMedia}
+                  contentFit="contain"
+                />
+              </Pressable>
+            </View>
+          ) : (
+            <>
+              <View
+                style={[
+                  StyleSheet.absoluteFill,
+                  styles.viewerTextOnly,
+                  textAppearance && {
+                    backgroundColor: textAppearance.backgroundColor,
+                  },
+                ]}
+                pointerEvents="none"
+              >
+                <Text
+                  style={[
+                    styles.viewerTextOnlyLabel,
+                    textAppearance && {
+                      fontSize: textAppearance.font.fontSize,
+                      fontWeight: textAppearance.font.fontWeight,
+                      fontStyle: textAppearance.font.fontStyle ?? "normal",
+                    },
+                  ]}
+                >
+                  {post.text}
+                </Text>
               </View>
-            )}
-          </Pressable>
+              <View style={[StyleSheet.absoluteFill, { flexDirection: "row" }]}>
+                <Pressable style={{ flex: 1 }} onPress={goPrev} />
+                <Pressable style={{ flex: 1 }} onPress={goNext} />
+              </View>
+            </>
+          )}
         </View>
         {post.text && post.kind === "image" ? (
           <Text style={styles.viewerCaption}>{post.text}</Text>

@@ -1600,12 +1600,23 @@ export function mockPublishStatus(
     throw new ApiError("Texte requis", 400);
   }
   const createdAt = new Date().toISOString();
+  const textStyle =
+    kind === "text"
+      ? {
+          bgIndex: Math.max(0, Math.min(7, Math.floor(Number(body.textStyle?.bgIndex) || 0))),
+          fontIndex: Math.max(
+            0,
+            Math.min(2, Math.floor(Number(body.textStyle?.fontIndex) || 0)),
+          ),
+        }
+      : null;
   const post: StatusPost = {
     id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     userId: myId,
     kind,
     mediaUrl,
     text,
+    textStyle,
     createdAt,
     expiresAt: new Date(Date.now() + STATUS_TTL_MS).toISOString(),
   };
