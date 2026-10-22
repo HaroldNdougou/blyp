@@ -7,7 +7,7 @@ import type { MerchantReceipt } from "@/lib/receipts/types";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { resolveAppLanguage } from "@/lib/i18n/locale";
 import { bytesToBase64 } from "@/lib/ble/base64";
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 import i18n from "@/lib/i18n";
 
 export type BlypMoneyReceiptDraft = {

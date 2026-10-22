@@ -1,4 +1,5 @@
 import { useTheme } from "@/contexts/ThemeContext";
+import { INSTANT_MOTION } from "@/lib/perf/instantMotion";
 import type { BottomTabBarButtonProps } from "@react-navigation/bottom-tabs";
 import { PlatformPressable } from "@react-navigation/elements";
 import { useNavigationState } from "@react-navigation/native";
@@ -80,6 +81,13 @@ function AnimatedTabBarButtonInner({
   useEffect(() => {
     const was = wasSelectedRef.current;
     wasSelectedRef.current = selected;
+
+    if (INSTANT_MOTION) {
+      iconScale.value = 1;
+      pillScale.value = selected ? 1 : 0.5;
+      pillOpacity.value = selected ? 1 : 0;
+      return;
+    }
 
     if (selected && !was) {
       runSelectedAnimation(iconScale, pillScale, pillOpacity);

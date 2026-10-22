@@ -1,5 +1,7 @@
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import type { ThemeColors } from "@/lib/theme/colors";
+import { AnonymousPersonGlyph } from "@/components/peers/AnonymousPersonGlyph";
 import { resolvePeerAvatarUri } from "@/lib/peers/resolvePeerAvatarUri";
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -106,10 +108,6 @@ function createStyles(c: ThemeColors) {
       flex: 1,
       justifyContent: "center",
     },
-    initialLetter: {
-      fontWeight: "700",
-      color: c.avatarText,
-    },
   });
 }
 
@@ -150,7 +148,6 @@ export function PeerAvatarLightbox({
 
   const visible = Boolean(target);
   const name = String(target?.name ?? "").trim();
-  const initial = (name.charAt(0) || "?").toUpperCase();
   const showPhoto = Boolean(uri) && !failed;
   const inThread = Boolean(target?.inThread);
   const conversationId = String(target?.conversationId ?? "").trim();
@@ -185,16 +182,14 @@ export function PeerAvatarLightbox({
         onError={() => setFailed(true)}
       />
     ) : (
-      <Text style={[styles.initialLetter, { fontSize: Math.round(w * 0.28) }]}>
-        {initial}
-      </Text>
+      <AnonymousPersonGlyph color={colors.avatarText} size={Math.round(w * 0.38)} />
     );
 
   return (
     <Modal
       visible={visible}
       transparent={mode === "card"}
-      animationType="fade"
+      animationType={modalPresentation}
       onRequestClose={handleRequestClose}
       statusBarTranslucent
     >

@@ -48,6 +48,7 @@ export default function TabLayout() {
   }, [accountId]);
 
   useEffect(() => {
+    if (__DEV__) return;
     floodAllTabs(token);
   }, [token]);
 
@@ -59,7 +60,8 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        lazy: false,
+        /** Dev USB : ne pas monter Historique/Profil/Pay au cold start (rafale Metro). */
+        lazy: __DEV__,
         freezeOnBlur: false,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.tabInactive,

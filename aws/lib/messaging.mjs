@@ -253,6 +253,8 @@ function messagePublic(m) {
     m.type === "image" && m.imageKey
       ? {
           key: m.imageKey,
+          thumbKey: m.imageThumbKey ? String(m.imageThumbKey) : null,
+          blurhash: m.imageBlurhash ? String(m.imageBlurhash) : null,
           width: Number(m.imageWidth) || 0,
           height: Number(m.imageHeight) || 0,
         }
@@ -471,9 +473,22 @@ export async function listConversations(userId) {
   return items;
 }
 
-export async function listMessages(userId, conversationId, limit = 80) {
+export async function listMessages(userId, conversationId, opts = {}) {
   const member = await assertMember(conversationId, userId);
   if (!member) return { error: "FORBIDDEN" };
+
+  const limit = Math.min(
+    100,
+    Math.max(1, Math.floor(Number(opts.limit) || 40)),
+  );
+  const beforeMid = String(opts.before ?? "").trim();
+  let exclusiveStartKey;
+  if (beforeMid) {
+    const beforeRow = await getConversationMessage(conversationId, beforeMid);
+    if (beforeRow?.PK && beforeRow?.SK) {
+      exclusiveStartKey = { PK: beforeRow.PK, SK: beforeRow.SK };
+    }
+  }
 
   const res = await doc.send(
     new QueryCommand({
@@ -485,6 +500,7 @@ export async function listMessages(userId, conversationId, limit = 80) {
       },
       ScanIndexForward: false,
       Limit: limit,
+      ...(exclusiveStartKey ? { ExclusiveStartKey: exclusiveStartKey } : {}),
     }),
   );
   const rows = [...(res.Items ?? [])].reverse();
@@ -510,7 +526,9 @@ export async function listMessages(userId, conversationId, limit = 80) {
     );
   }
   const receipts = await getPeerReceipts(conversationId, userId);
-  return { messages, ...receipts };
+  const hasMore = Boolean(res.LastEvaluatedKey);
+  const oldestId = messages.length > 0 ? messages[0].id : null;
+  return { messages, hasMore, oldestId, ...receipts };
 }
 
 async function loadConversationReactions(conversationId) {
@@ -1375,10 +1393,16 @@ export async function sendImageMessage(
   replyToMessageId,
   options = {},
 ) {
-  const { isOwnedImageKey, clampImageDimensions } = await import("./media.mjs");
+  const { isOwnedImageKey, isOwnedImageThumbKey, clampImageDimensions } =
+    await import("./media.mjs");
   const key = String(imageKey ?? "").trim();
   const dims = clampImageDimensions(width, height);
   if (!isOwnedImageKey(key, conversationId, userId)) {
+    return { error: "IMAGE_INVALID" };
+  }
+  const thumbKey = String(options.thumbKey ?? "").trim();
+  const blurhash = String(options.blurhash ?? "").trim();
+  if (thumbKey && !isOwnedImageThumbKey(thumbKey, conversationId, userId)) {
     return { error: "IMAGE_INVALID" };
   }
   const text = String(caption ?? "").trim();
@@ -1411,6 +1435,8 @@ export async function sendImageMessage(
         imageKey: key,
         imageWidth: dims.width,
         imageHeight: dims.height,
+        ...(thumbKey ? { imageThumbKey: thumbKey } : {}),
+        ...(blurhash ? { imageBlurhash: blurhash.slice(0, 120) } : {}),
         createdAt: now,
         clientId: clientId || null,
         ...(forwarded ? { forwarded: true } : {}),
@@ -1444,6 +1470,8 @@ export async function sendImageMessage(
       type: "image",
       body: text || null,
       imageKey: key,
+      imageThumbKey: thumbKey || null,
+      imageBlurhash: blurhash || null,
       imageWidth: dims.width,
       imageHeight: dims.height,
       createdAt: now,

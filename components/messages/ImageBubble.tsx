@@ -3,6 +3,7 @@ import { CHAT_LONG_PRESS_MS } from "@/lib/messages/chatEmojiConstants";
 import { imageBubbleSize } from "@/lib/image/thumbSize";
 import { peekImageCache } from "@/lib/image/cache";
 import { cacheImageFile } from "@/lib/image/upload";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { Image } from "expo-image";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -49,6 +50,7 @@ export const ImageBubble = React.memo(function ImageBubble({
   const [uri, setUri] = useState<string | null>(
     String(img?.localUri ?? "").trim() || null,
   );
+  const [hdUri, setHdUri] = useState<string | null>(null);
   const [fullOpen, setFullOpen] = useState(false);
   const [measured, setMeasured] = useState({
     w: img?.width ?? 0,
@@ -67,37 +69,72 @@ export const ImageBubble = React.memo(function ImageBubble({
     [measured.w, measured.h, screenW],
   );
 
+  const placeholder = useMemo(
+    () =>
+      img?.blurhash ? { blurhash: String(img.blurhash) } : undefined,
+    [img?.blurhash],
+  );
+
+  const fetchKey = useCallback(
+    async (key: string): Promise<string | null> => {
+      if (!key || !token) return null;
+      const cached = await peekImageCache(key);
+      if (cached) return cached;
+      const api = await import("@/lib/api/client");
+      const { url } = await api.presignImagePlay(token, conversationId, key);
+      return cacheImageFile(key, url);
+    },
+    [conversationId, token],
+  );
+
   const resolveRemote = useCallback(async () => {
-    const key = String(img?.key ?? "").trim();
-    if (!key || !token) return;
-    const cached = await peekImageCache(key);
-    if (cached) {
-      setUri(cached);
-      return;
+    const mainKey = String(img?.key ?? "").trim();
+    const thumbKey = String(img?.thumbKey ?? "").trim();
+    if (!mainKey || !token) return;
+
+    if (thumbKey) {
+      const thumbLocal = await fetchKey(thumbKey);
+      if (thumbLocal) setUri(thumbLocal);
     }
-    const api = await import("@/lib/api/client");
-    const { url } = await api.presignImagePlay(token, conversationId, key);
-    const local = await cacheImageFile(key, url);
-    setUri(local);
-  }, [conversationId, img?.key, token]);
+
+    const hdLocal = await fetchKey(mainKey);
+    if (hdLocal) {
+      setHdUri(hdLocal);
+      setUri(hdLocal);
+    }
+  }, [fetchKey, img?.key, img?.thumbKey, token]);
 
   useEffect(() => {
     const local = String(img?.localUri ?? "").trim();
     if (local) {
       setUri(local);
+      setHdUri(local);
       return;
     }
-    const key = String(img?.key ?? "").trim();
-    if (!key) return;
-    void peekImageCache(key).then((hit) => {
-      if (hit) setUri(hit);
-      else void resolveRemote().catch(() => {});
-    });
-  }, [img?.key, img?.localUri, resolveRemote]);
+    const mainKey = String(img?.key ?? "").trim();
+    if (!mainKey) return;
+
+    void (async () => {
+      const thumbKey = String(img?.thumbKey ?? "").trim();
+      if (thumbKey) {
+        const thumbHit = await peekImageCache(thumbKey);
+        if (thumbHit) setUri(thumbHit);
+      }
+      const mainHit = await peekImageCache(mainKey);
+      if (mainHit) {
+        setUri(mainHit);
+        setHdUri(mainHit);
+        return;
+      }
+      await resolveRemote().catch(() => {});
+    })();
+  }, [img?.key, img?.thumbKey, img?.localUri, resolveRemote]);
+
+  const displayUri = hdUri ?? uri;
 
   const openFull = () => {
     onPress?.();
-    if (!uri) {
+    if (!displayUri) {
       void resolveRemote()
         .then(() => setFullOpen(true))
         .catch(() => {});
@@ -117,11 +154,13 @@ export const ImageBubble = React.memo(function ImageBubble({
         style={styles.imageWrap}
       >
         <Image
-          source={uri ? { uri } : undefined}
+          source={displayUri ? { uri: displayUri } : undefined}
+          placeholder={placeholder}
           style={[styles.imageThumb, { width: dims.width, height: dims.height }]}
           contentFit="cover"
+          cachePolicy="memory-disk"
           recyclingKey={message.id}
-          transition={120}
+          transition={displayUri === hdUri && uri !== hdUri ? 160 : 80}
           onLoad={(e) => {
             const w = e.source.width;
             const h = e.source.height;
@@ -139,7 +178,7 @@ export const ImageBubble = React.memo(function ImageBubble({
       <Modal
         visible={fullOpen}
         transparent
-        animationType="fade"
+        animationType={modalPresentation}
         onRequestClose={() => setFullOpen(false)}
       >
         <Pressable
@@ -147,11 +186,12 @@ export const ImageBubble = React.memo(function ImageBubble({
           onPress={() => setFullOpen(false)}
           accessibilityLabel={t("common.close")}
         >
-          {uri ? (
+          {displayUri ? (
             <Image
-              source={{ uri }}
+              source={{ uri: displayUri }}
               style={localStyles.full}
               contentFit="contain"
+              cachePolicy="memory-disk"
             />
           ) : null}
         </Pressable>

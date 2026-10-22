@@ -11,10 +11,14 @@ type SendText = (
 type ListMessages = (
   token: string,
   conversationId: string,
+  opts?: import("@/lib/api/client").ListMessagesOptions,
 ) => Promise<{
   items: ChatMessage[];
+  hasMore?: boolean;
+  oldestId?: string | null;
   peerLastReadAt?: string | null;
   peerLastDeliveredAt?: string | null;
+  peerLastPresenceAt?: string | null;
 }>;
 
 let sendTextFn: SendText | null = null;
@@ -52,14 +56,20 @@ export async function sendChatTextMessage(
   );
 }
 
+export const THREAD_PULL_PAGE_SIZE = 40;
+
 export async function listChatMessages(
   token: string,
   conversationId: string,
+  opts?: import("@/lib/api/client").ListMessagesOptions,
 ): Promise<{
   items: ChatMessage[];
+  hasMore?: boolean;
+  oldestId?: string | null;
   peerLastReadAt?: string | null;
   peerLastDeliveredAt?: string | null;
+  peerLastPresenceAt?: string | null;
 }> {
   await ensureLoaded();
-  return listMessagesFn!(token, conversationId);
+  return listMessagesFn!(token, conversationId, opts);
 }

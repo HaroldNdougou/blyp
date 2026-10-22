@@ -3,33 +3,40 @@
  * client API / sync réseau seulement APRÈS le 1er frame (ne pas voler Pay).
  */
 import { floodAllTabs } from "@/lib/perf/floodAllTabs";
+import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
 import { InteractionManager } from "react-native";
 
 let warmed = false;
 
 function warmJsModules(token: string | null): void {
-  void import("@/app/deposit");
-  void import("@/app/(tabs)/history");
-  void import("@/components/history/HistoryScreen");
-  void import("@/components/history/preloadHistory").then((m) => {
-    void m.preloadHistoryScreen();
-  });
-  void import("@expo/vector-icons").then((m) => {
+  prefetchModule(() => import("@/app/deposit"));
+  prefetchModule(() => import("@/app/(tabs)/history"));
+  prefetchModule(() => import("@/components/history/HistoryScreen"));
+  prefetchModuleThen(
+    () => import("@/components/history/preloadHistory"),
+    (m) => {
+      void m.preloadHistoryScreen();
+    },
+  );
+  prefetchModuleThen(() => import("@expo/vector-icons"), (m) => {
     void m.Ionicons.loadFont().catch(() => {});
   });
-  void import("@/components/pay/PayRegisterOverlay");
-  void import("@/app/(tabs)/index");
-  void import("@/app/(tabs)/pay");
-  void import("@/components/messages/ConversationsScreen");
-  void import("@/components/messages/ChatThreadScreen");
-  void import("@/app/chat/[id]");
-  void import("@/lib/messages/prefetchChatThread");
-  void import("@/lib/messages/chatSend").then((m) => m.prefetchChatMessaging());
-  void import("@/lib/image/pickFromLibrary").then((m) =>
+  prefetchModule(() => import("@/components/pay/PayRegisterOverlay"));
+  prefetchModule(() => import("@/app/(tabs)/index"));
+  prefetchModule(() => import("@/app/(tabs)/pay"));
+  prefetchModule(() => import("@/components/messages/ConversationsScreen"));
+  prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
+  prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));
+  prefetchModule(() => import("@/app/chat/[id]"));
+  prefetchModule(() => import("@/lib/messages/prefetchChatThread"));
+  prefetchModuleThen(() => import("@/lib/messages/chatSend"), (m) =>
+    m.prefetchChatMessaging(),
+  );
+  prefetchModuleThen(() => import("@/lib/image/pickFromLibrary"), (m) =>
     m.warmImageLibraryPermission(),
   );
   if (token) {
-    void import("@/app/(tabs)/profile");
+    prefetchModule(() => import("@/app/(tabs)/profile"));
   }
 }
 
@@ -42,11 +49,14 @@ export function runAggressiveWarm(opts: {
 
   const { token, phone } = opts;
 
-  /** Modules écrans : OK en parallèle léger — pas le gros client API. */
+  if (__DEV__) {
+    /** Metro + Redmi : pas de flood chunks / SQLite / réseau ici (voir eagerRoutes). */
+    return;
+  }
+
   warmJsModules(token);
   floodAllTabs(token);
 
-  /** Cache tx + messages RAM (SQLite) — léger ; ne parse pas api/client. */
   if (token && phone) {
     void (async () => {
       try {
@@ -76,14 +86,11 @@ export function runAggressiveWarm(opts: {
     })();
   }
 
-  /** Après 1er frame Pay uniquement : API client + JWT + sync. */
   InteractionManager.runAfterInteractions(() => {
     if (token) {
-      void import("@/lib/api/client")
-        .then((m) => m.ensureSessionFresh())
-        .catch(() => {
-          /* réseau / session — silencieux */
-        });
+      prefetchModuleThen(() => import("@/lib/api/client"), (m) =>
+        m.ensureSessionFresh(),
+      );
     }
     if (!token || !phone) return;
     void (async () => {
@@ -105,8 +112,16 @@ export function runAggressiveWarm(opts: {
             items: msgs,
             peerLastReadAt,
             peerLastDeliveredAt,
-          } = await api.listMessages(token, c.id);
-          cache.applyServerMessagesSnapshot(token, c.id, msgs);
+          } = await api.listMessages(token, c.id, { limit: 40 });
+          const prev = cache.getMessagesSnapshot(token, c.id) ?? [];
+          const { mergeRecentThreadPull } = await import(
+            "@/lib/messages/mergeThreadPull"
+          );
+          cache.applyServerMessagesSnapshot(
+            token,
+            c.id,
+            mergeRecentThreadPull(prev, msgs),
+          );
           cache.setReceiptsSnapshot(c.id, {
             peerLastReadAt: peerLastReadAt ?? null,
             peerLastDeliveredAt: peerLastDeliveredAt ?? null,

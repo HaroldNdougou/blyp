@@ -1,5 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { formatFcfa } from "@/lib/format";
 import type { CommerceCategory } from "@/lib/api/types";
 import { createProfileStyles } from "@/components/profile/profileStyles";
@@ -259,7 +260,7 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
       <Modal
         visible={sheetOpen}
         transparent
-        animationType="fade"
+        animationType={modalPresentation}
         onRequestClose={() => {
           if (!creating) setSheetOpen(false);
         }}

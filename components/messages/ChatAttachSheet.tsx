@@ -1,4 +1,5 @@
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
@@ -98,7 +99,7 @@ export function ChatAttachSheet({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={modalPresentation}
       statusBarTranslucent
       onRequestClose={onClose}
     >

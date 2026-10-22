@@ -9,6 +9,7 @@ import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { PushBootstrap } from "@/components/network/PushBootstrap";
 import { ChatRealtimeBootstrap } from "@/components/network/ChatRealtimeBootstrap";
 import { RealtimeSync } from "@/components/network/RealtimeSync";
+import { stackScreenOptions } from "@/lib/perf/instantMotion";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { getSplashBackground } from "@/lib/theme/splash";
 import { Stack } from "expo-router";
@@ -99,18 +100,41 @@ function RootShell() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <StatusBar style={statusBarStyle} translucent />
       <OfflineBanner />
-      <Stack screenOptions={{ headerShown: false }}>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          ...stackScreenOptions,
+        }}
+      >
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="register"
           options={{
             presentation: "modal",
-            animation: "slide_from_bottom",
+            animation: "none",
+            animationDuration: 0,
           }}
         />
         <Stack.Screen name="new-chat" />
+        <Stack.Screen name="actus" />
+        <Stack.Screen
+          name="status/create"
+          options={{
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
+        <Stack.Screen name="status/view" />
         <Stack.Screen name="forward" />
-        <Stack.Screen name="chat/[id]" />
+        <Stack.Screen
+          name="chat/[id]"
+          options={{
+            animation: "none",
+            animationDuration: 0,
+            gestureEnabled: true,
+            fullScreenGestureEnabled: false,
+          }}
+        />
         <Stack.Screen name="pocket/[id]" />
         <Stack.Screen name="kyc" />
         <Stack.Screen name="documents" />

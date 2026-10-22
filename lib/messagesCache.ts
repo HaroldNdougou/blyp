@@ -18,11 +18,32 @@ import {
 } from "@/lib/messages/replyPreview";
 import { bindRecentEmojiOwner } from "@/lib/messages/recentChatEmojis";
 import { conversationFieldsFromLastMessage } from "@/lib/messages/conversationListPreview";
+import { runAfterPaint } from "@/lib/perf/deferAfterPaint";
+import { THREAD_LIST_PAGE_SIZE } from "@/lib/messages/threadListWindow";
 
 const MSG_CAP = 80;
+/** 1er paint fil : N derniers messages SQLite, reste après interactions. */
+const THREAD_SQLITE_TAIL = Math.max(THREAD_LIST_PAGE_SIZE, 40);
 
 const conversationsByOwner = new Map<string, Conversation[]>();
 const messagesByKey = new Map<string, ChatMessage[]>();
+
+const threadSqliteExpandedListeners = new Set<(conversationId: string) => void>();
+
+export function subscribeThreadSqliteExpanded(
+  listener: (conversationId: string) => void,
+): () => void {
+  threadSqliteExpandedListeners.add(listener);
+  return () => {
+    threadSqliteExpandedListeners.delete(listener);
+  };
+}
+
+function notifyThreadSqliteExpanded(conversationId: string): void {
+  const cid = String(conversationId ?? "").trim();
+  if (!cid) return;
+  threadSqliteExpandedListeners.forEach((l) => l(cid));
+}
 const receiptsByKey = new Map<string, ConversationReceiptsSnap>();
 const hydratePromises = new Map<string, Promise<void>>();
 const hydratedPhones = new Set<string>();
@@ -474,19 +495,47 @@ function mergeLocalImageUris(
 ): ChatMessage[] {
   if (!prev || prev.length === 0) return next;
   const uriByKey = new Map<string, string>();
+  const blurByKey = new Map<string, string>();
+  const thumbByKey = new Map<string, string>();
   for (const m of prev) {
     const k = m.image?.key;
     const u = m.image?.localUri;
     if (k && u) uriByKey.set(k, u);
+    const bh = String(m.image?.blurhash ?? "").trim();
+    if (k && bh) blurByKey.set(k, bh);
+    const tk = String(m.image?.thumbKey ?? "").trim();
+    if (k && tk) thumbByKey.set(k, tk);
   }
-  if (uriByKey.size === 0) return next;
+  if (uriByKey.size === 0 && blurByKey.size === 0 && thumbByKey.size === 0) {
+    return next;
+  }
   let changed = false;
   const out = next.map((m) => {
     const k = m.image?.key;
     const local = k ? uriByKey.get(k) : undefined;
-    if (!local || !m.image || m.image.localUri === local) return m;
+    const blur = k ? blurByKey.get(k) : undefined;
+    const thumb = k ? thumbByKey.get(k) : undefined;
+    if (!m.image) return m;
+    const nextUri = local ?? m.image.localUri;
+    const nextBlur = blur ?? m.image.blurhash;
+    const nextThumb = thumb ?? m.image.thumbKey;
+    if (
+      nextUri === m.image.localUri &&
+      nextBlur === m.image.blurhash &&
+      nextThumb === m.image.thumbKey
+    ) {
+      return m;
+    }
     changed = true;
-    return { ...m, image: { ...m.image, localUri: local } };
+    return {
+      ...m,
+      image: {
+        ...m.image,
+        localUri: nextUri,
+        blurhash: nextBlur ?? null,
+        thumbKey: nextThumb ?? null,
+      },
+    };
   });
   return changed ? out : next;
 }
@@ -636,7 +685,19 @@ export function ensureMessagesSnapshotFromDb(
       const folded = foldReactionSyncMessages(
         parsed.map(withNormalizedReplyTo),
       );
-      messagesByKey.set(msgKey(token, cid), folded);
+      const key = msgKey(token, cid);
+      if (folded.length > THREAD_SQLITE_TAIL) {
+        const tail = folded.slice(-THREAD_SQLITE_TAIL);
+        messagesByKey.set(key, tail);
+        runAfterPaint(() => {
+          const cur = messagesByKey.get(key);
+          if (cur && cur.length >= folded.length) return;
+          messagesByKey.set(key, folded);
+          notifyThreadSqliteExpanded(cid);
+        });
+      } else {
+        messagesByKey.set(key, folded);
+      }
       const rec = await db.getFirstAsync<{
         peerLastReadAt: string | null;
         peerLastDeliveredAt: string | null;
@@ -654,7 +715,7 @@ export function ensureMessagesSnapshotFromDb(
           });
         }
       }
-      return folded;
+      return messagesByKey.get(key) ?? folded;
     } catch {
       return null;
     }
@@ -753,6 +814,36 @@ export function commitOptimisticVoice(
   return getMessagesSnapshot(token, conversationId) ?? next;
 }
 
+export type OptimisticTextJob = {
+  conversationId: string;
+  clientId: string;
+  body: string;
+  replyToMessageId?: string | null;
+};
+
+/** Textes encore locaux (id = clientId) — à renvoyer au réseau. */
+export function listOptimisticTextOutbox(token: string): OptimisticTextJob[] {
+  const prefix = `${ownerKey(token)}::`;
+  const out: OptimisticTextJob[] = [];
+  for (const [key, msgs] of messagesByKey) {
+    if (!key.startsWith(prefix)) continue;
+    const conversationId = key.slice(prefix.length);
+    if (!conversationId) continue;
+    for (const m of msgs) {
+      if (m.type !== "text" || !m.clientId || m.id !== m.clientId) continue;
+      const body = String(m.body ?? "").trim();
+      if (!body) continue;
+      out.push({
+        conversationId,
+        clientId: m.clientId,
+        body,
+        replyToMessageId: m.replyTo?.messageId ?? null,
+      });
+    }
+  }
+  return out;
+}
+
 export type OptimisticImageJob = {
   conversationId: string;
   clientId: string;
@@ -798,6 +889,44 @@ export function commitOptimisticImage(
   message: ChatMessage,
 ): ChatMessage[] | null {
   return commitOptimisticVoice(token, conversationId, clientId, message);
+}
+
+/** Compression / blurhash avant upload — garde la bulle optimiste à jour. */
+export function patchOptimisticImageLocal(
+  token: string,
+  conversationId: string,
+  clientId: string,
+  patch: {
+    localUri: string;
+    width: number;
+    height: number;
+    contentType: string;
+    blurhash: string | null;
+  },
+): ChatMessage[] | null {
+  const key = msgKey(token, conversationId);
+  const prev = messagesByKey.get(key);
+  if (!prev?.length) return null;
+  let changed = false;
+  const next = prev.map((m) => {
+    if (m.clientId !== clientId || m.type !== "image" || !m.image) return m;
+    changed = true;
+    return {
+      ...m,
+      image: {
+        ...m.image,
+        localUri: patch.localUri,
+        width: patch.width,
+        height: patch.height,
+        contentType: patch.contentType,
+        blurhash: patch.blurhash,
+      },
+    };
+  });
+  if (!changed) return null;
+  messagesByKey.set(key, next);
+  if (ownerPhone) persistMessages(ownerPhone, conversationId, next);
+  return next;
 }
 
 export type OptimisticMoneyJob = {

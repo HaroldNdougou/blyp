@@ -88,18 +88,34 @@ function imageExtForContentType(contentType) {
   return { ext: "jpg", contentType: "image/jpeg" };
 }
 
+function isImageObjectKey(k) {
+  return (
+    k.endsWith(".jpg") ||
+    k.endsWith(".jpeg") ||
+    k.endsWith(".png") ||
+    k.endsWith(".thumb.jpg")
+  );
+}
+
 export function isOwnedImageKey(key, conversationId, userId) {
   const k = String(key ?? "").trim();
   if (!k || k.includes("..")) return false;
   if (!k.startsWith(imageKeyPrefix(conversationId, userId))) return false;
-  return k.endsWith(".jpg") || k.endsWith(".jpeg") || k.endsWith(".png");
+  return isImageObjectKey(k);
 }
 
 export function isConvImageKey(key, conversationId) {
   const k = String(key ?? "").trim();
   if (!k || k.includes("..")) return false;
   if (!k.startsWith(`image/${conversationId}/`)) return false;
-  return k.endsWith(".jpg") || k.endsWith(".jpeg") || k.endsWith(".png");
+  return isImageObjectKey(k);
+}
+
+export function isOwnedImageThumbKey(key, conversationId, userId) {
+  const k = String(key ?? "").trim();
+  if (!k || !k.endsWith(".thumb.jpg")) return false;
+  if (!k.startsWith(imageKeyPrefix(conversationId, userId))) return false;
+  return true;
 }
 
 export function clampImageDimensions(width, height) {
@@ -116,7 +132,9 @@ export async function presignImageUpload(userId, conversationId, contentType) {
   const b = bucket();
   if (!b) return { error: "MEDIA_UNAVAILABLE" };
   const { ext, contentType: ct } = imageExtForContentType(contentType);
-  const key = `${imageKeyPrefix(conversationId, userId)}${randomUUID()}.${ext}`;
+  const id = randomUUID();
+  const key = `${imageKeyPrefix(conversationId, userId)}${id}.${ext}`;
+  const thumbKey = `${imageKeyPrefix(conversationId, userId)}${id}.thumb.jpg`;
   const { client, PutObjectCommand, getSignedUrl } = await s3Signer();
   const uploadUrl = await getSignedUrl(
     client,
@@ -127,7 +145,23 @@ export async function presignImageUpload(userId, conversationId, contentType) {
     }),
     { expiresIn: PUT_TTL_SEC },
   );
-  return { uploadUrl, key, contentType: ct, expiresIn: PUT_TTL_SEC };
+  const thumbUploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: b,
+      Key: thumbKey,
+      ContentType: "image/jpeg",
+    }),
+    { expiresIn: PUT_TTL_SEC },
+  );
+  return {
+    uploadUrl,
+    key,
+    thumbUploadUrl,
+    thumbKey,
+    contentType: ct,
+    expiresIn: PUT_TTL_SEC,
+  };
 }
 
 export async function presignImagePlay(conversationId, key) {
@@ -388,4 +422,61 @@ export async function duplicateDocumentThumbKeyForConversation(
   const copied = await copyObjectInBucket(src, destKey);
   if (copied.error) return copied;
   return { key: destKey };
+}
+
+function statusKeyPrefix(userId) {
+  return `status/${userId}/`;
+}
+
+export function isOwnedStatusKey(key, userId) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  if (!k.startsWith(statusKeyPrefix(userId))) return false;
+  return (
+    k.endsWith(".jpg") ||
+    k.endsWith(".jpeg") ||
+    k.endsWith(".png")
+  );
+}
+
+export function isStatusObjectKey(key) {
+  const k = String(key ?? "").trim();
+  if (!k || k.includes("..")) return false;
+  if (!k.startsWith("status/")) return false;
+  return (
+    k.endsWith(".jpg") ||
+    k.endsWith(".jpeg") ||
+    k.endsWith(".png")
+  );
+}
+
+export async function presignStatusUpload(userId, contentType) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  const { ext, contentType: ct } = imageExtForContentType(contentType);
+  const key = `${statusKeyPrefix(userId)}${randomUUID()}.${ext}`;
+  const { client, PutObjectCommand, getSignedUrl } = await s3Signer();
+  const uploadUrl = await getSignedUrl(
+    client,
+    new PutObjectCommand({
+      Bucket: b,
+      Key: key,
+      ContentType: ct,
+    }),
+    { expiresIn: PUT_TTL_SEC },
+  );
+  return { uploadUrl, key, contentType: ct, expiresIn: PUT_TTL_SEC };
+}
+
+export async function presignStatusPlay(key) {
+  const b = bucket();
+  if (!b) return { error: "MEDIA_UNAVAILABLE" };
+  if (!isStatusObjectKey(key)) return { error: "KEY_INVALID" };
+  const { client, GetObjectCommand, getSignedUrl } = await s3Signer();
+  const url = await getSignedUrl(
+    client,
+    new GetObjectCommand({ Bucket: b, Key: key }),
+    { expiresIn: GET_TTL_SEC },
+  );
+  return { url, expiresIn: GET_TTL_SEC };
 }

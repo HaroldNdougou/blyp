@@ -1,4 +1,4 @@
-import { formatVoiceClock } from "@/lib/voice/record";
+import { formatVoiceClock } from "@/lib/voice/formatVoiceClock";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useMemo } from "react";

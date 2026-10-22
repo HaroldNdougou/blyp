@@ -31,7 +31,7 @@ import {
   Platform,
 } from "react-native";
 
-const BOOT_DELAY_MS = 400;
+const BOOT_DELAY_MS = __DEV__ ? 12_000 : 400;
 
 /**
  * Push Expo — bootstrap après interactions (jamais splash).

@@ -8,8 +8,11 @@ import i18n from "@/lib/i18n";
 import {
   demoApiResponse,
   isDemoPath,
+  demoStatusFeedFallback,
   withDemoConversations,
+  withDemoStatusFeed,
 } from "@/lib/dev/demoProfiles";
+import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { withNormalizedReplyTo } from "@/lib/messages/replyPreview";
 import { API_BASE_URL, USE_MOCK_API } from "../config";
 import { ApiError } from "./errors";
@@ -836,27 +839,45 @@ export async function lookupBlypPhones(
   });
 }
 
+export type ListMessagesOptions = {
+  limit?: number;
+  before?: string | null;
+};
+
 export async function listMessages(
   token: string,
   conversationId: string,
+  opts?: ListMessagesOptions,
 ): Promise<{
   items: import("./types").ChatMessage[];
+  hasMore?: boolean;
+  oldestId?: string | null;
   peerLastReadAt?: string | null;
   peerLastDeliveredAt?: string | null;
   peerLastPresenceAt?: string | null;
 }> {
   if (USE_MOCK_API) {
-    return (await loadMock()).mockListMessages(token, conversationId);
+    return (await loadMock()).mockListMessages(token, conversationId, opts);
   }
+  const q = new URLSearchParams();
+  if (opts?.limit != null) q.set("limit", String(opts.limit));
+  const before = String(opts?.before ?? "").trim();
+  if (before) q.set("before", before);
+  const qs = q.toString();
   const data = await request<{
     items?: import("./types").ChatMessage[];
     messages?: import("./types").ChatMessage[];
+    hasMore?: boolean;
+    oldestId?: string | null;
     peerLastReadAt?: string | null;
     peerLastDeliveredAt?: string | null;
     peerLastPresenceAt?: string | null;
-  }>(`/conversations/${encodeURIComponent(conversationId)}/messages`, {
-    token,
-  });
+  }>(
+    `/conversations/${encodeURIComponent(conversationId)}/messages${qs ? `?${qs}` : ""}`,
+    {
+      token,
+    },
+  );
   const raw = Array.isArray(data.items)
     ? data.items
     : Array.isArray(data.messages)
@@ -870,6 +891,8 @@ export async function listMessages(
   });
   return {
     items,
+    hasMore: Boolean(data.hasMore),
+    oldestId: data.oldestId ?? null,
     peerLastReadAt: data.peerLastReadAt ?? null,
     peerLastDeliveredAt: data.peerLastDeliveredAt ?? null,
     peerLastPresenceAt: data.peerLastPresenceAt ?? null,
@@ -1036,13 +1059,18 @@ export async function presignImageUpload(
 ): Promise<{
   uploadUrl: string;
   key: string;
+  thumbUploadUrl: string;
+  thumbKey: string;
   contentType: string;
   expiresIn: number;
 }> {
   if (USE_MOCK_API) {
+    const key = `image/${conversationId}/me/mock.jpg`;
     return {
       uploadUrl: "mock://image",
-      key: `image/${conversationId}/me/mock.jpg`,
+      key,
+      thumbUploadUrl: "mock://image-thumb",
+      thumbKey: `${key}.thumb.jpg`,
       contentType: "image/jpeg",
       expiresIn: 300,
     };
@@ -1087,6 +1115,7 @@ export async function sendImageMessage(
   clientId: string,
   caption?: string | null,
   replyToMessageId?: string | null,
+  meta?: { thumbKey?: string | null; blurhash?: string | null },
 ): Promise<{ message: import("./types").ChatMessage }> {
   if (USE_MOCK_API) {
     return (await loadMock()).mockSendImageMessage(
@@ -1111,6 +1140,10 @@ export async function sendImageMessage(
   };
   const replyId = String(replyToMessageId ?? "").trim();
   if (replyId) payload.replyToMessageId = replyId;
+  const thumbKey = String(meta?.thumbKey ?? "").trim();
+  const blurhash = String(meta?.blurhash ?? "").trim();
+  if (thumbKey) payload.thumbKey = thumbKey;
+  if (blurhash) payload.blurhash = blurhash;
   return request(
     `/conversations/${encodeURIComponent(conversationId)}/messages`,
     {
@@ -1545,4 +1578,79 @@ export async function forwardChatMessages(
   return {
     messages: (res.messages ?? []).map((m) => withNormalizedReplyTo(m)),
   };
+}
+
+export async function listStatusFeed(
+  token: string,
+): Promise<import("./types").StatusFeedResponse> {
+  if (USE_MOCK_API) return (await loadMock()).mockListStatusFeed(token);
+  const myUserId = accessTokenSubject(token) ?? "";
+  try {
+    const data = await request<import("./types").StatusFeedResponse>(
+      "/status/feed",
+      { token },
+    );
+    return withDemoStatusFeed({
+      ...data,
+      myUserId: data.myUserId || myUserId,
+    });
+  } catch {
+    return demoStatusFeedFallback(myUserId);
+  }
+}
+
+export async function presignStatusUpload(
+  token: string,
+  contentType?: string,
+): Promise<{
+  uploadUrl: string;
+  key: string;
+  contentType: string;
+  expiresIn: number;
+}> {
+  if (USE_MOCK_API) {
+    const uid = accessTokenSubject(token) ?? "demo-user";
+    return {
+      uploadUrl: "mock://status",
+      key: `status/${uid}/${Date.now()}.jpg`,
+      contentType: "image/jpeg",
+      expiresIn: 300,
+    };
+  }
+  return request("/status/upload-presign", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ contentType: contentType ?? "image/jpeg" }),
+  });
+}
+
+export async function publishStatus(
+  token: string,
+  body: import("./types").PublishStatusBody,
+): Promise<{ post: import("./types").StatusPost }> {
+  if (USE_MOCK_API) return (await loadMock()).mockPublishStatus(token, body);
+  return request("/status/posts", {
+    method: "POST",
+    token,
+    body: JSON.stringify(body),
+  });
+}
+
+export async function recordStatusView(
+  token: string,
+  postId: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockRecordStatusView(token, postId);
+  }
+  return request(`/status/posts/${encodeURIComponent(postId)}/view`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({}),
+  });
+}
+
+export async function deleteMyStatuses(token: string): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) return (await loadMock()).mockDeleteMyStatuses(token);
+  return request("/status/me", { method: "DELETE", token });
 }

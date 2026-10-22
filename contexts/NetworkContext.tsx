@@ -1,6 +1,7 @@
 import {
-  isNetworkOffline,
+  getNetInfoBannerKind,
   OFFLINE_BANNER_DELAY_MS,
+  type NetworkBannerKind,
 } from "@/lib/network/state";
 import NetInfo, { type NetInfoState } from "@react-native-community/netinfo";
 import React, {
@@ -14,12 +15,11 @@ import React, {
 } from "react";
 
 export type NetworkContextValue = {
-  /** Bannière « hors ligne » (après debounce). */
+  /** Fine bande type WhatsApp (liaison / Internet). */
+  bannerKind: NetworkBannerKind | null;
   isOffline: boolean;
-  /** Liaison réseau présente (peut être true avant test Internet). */
   isConnected: boolean | null;
   isInternetReachable: boolean | null;
-  /** Incrémenté à chaque retour online (sync silencieuse). */
   reconnectGeneration: number;
 };
 
@@ -30,18 +30,14 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const [isInternetReachable, setIsInternetReachable] = useState<
     boolean | null
   >(null);
-  const [isOffline, setIsOffline] = useState(false);
+  const [netInfoKind, setNetInfoKind] = useState<
+    ReturnType<typeof getNetInfoBannerKind>
+  >(null);
+  const [bannerKind, setBannerKind] = useState<NetworkBannerKind | null>(null);
   const [reconnectGeneration, setReconnectGeneration] = useState(0);
 
-  const offlineTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const prevIsOfflineRef = useRef(false);
-
-  useEffect(() => {
-    if (!isOffline && prevIsOfflineRef.current) {
-      setReconnectGeneration((g) => g + 1);
-    }
-    prevIsOfflineRef.current = isOffline;
-  }, [isOffline]);
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prevBannerRef = useRef<NetworkBannerKind | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -49,22 +45,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     const applyState = (state: NetInfoState) => {
       setIsConnected(state.isConnected);
       setIsInternetReachable(state.isInternetReachable);
-
-      const offlineNow = isNetworkOffline(state);
-
-      if (offlineTimerRef.current != null) {
-        clearTimeout(offlineTimerRef.current);
-        offlineTimerRef.current = null;
-      }
-
-      if (offlineNow) {
-        offlineTimerRef.current = setTimeout(() => {
-          offlineTimerRef.current = null;
-          if (alive) setIsOffline(true);
-        }, OFFLINE_BANNER_DELAY_MS);
-      } else if (alive) {
-        setIsOffline(false);
-      }
+      setNetInfoKind(getNetInfoBannerKind(state));
     };
 
     const unsub = NetInfo.addEventListener((state) => {
@@ -78,20 +59,51 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
     return () => {
       alive = false;
       unsub();
-      if (offlineTimerRef.current != null) {
-        clearTimeout(offlineTimerRef.current);
-      }
     };
   }, []);
 
+  useEffect(() => {
+    if (bannerTimerRef.current != null) {
+      clearTimeout(bannerTimerRef.current);
+      bannerTimerRef.current = null;
+    }
+
+    if (netInfoKind == null) {
+      setBannerKind(null);
+      return;
+    }
+
+    bannerTimerRef.current = setTimeout(() => {
+      bannerTimerRef.current = null;
+      setBannerKind(netInfoKind);
+    }, OFFLINE_BANNER_DELAY_MS);
+
+    return () => {
+      if (bannerTimerRef.current != null) {
+        clearTimeout(bannerTimerRef.current);
+      }
+    };
+  }, [netInfoKind]);
+
+  useEffect(() => {
+    const prev = prevBannerRef.current;
+    if (prev != null && bannerKind == null) {
+      setReconnectGeneration((g) => g + 1);
+    }
+    prevBannerRef.current = bannerKind;
+  }, [bannerKind]);
+
+  const isOffline = bannerKind != null;
+
   const value = useMemo<NetworkContextValue>(
     () => ({
+      bannerKind,
       isOffline,
       isConnected,
       isInternetReachable,
       reconnectGeneration,
     }),
-    [isOffline, isConnected, isInternetReachable, reconnectGeneration],
+    [bannerKind, isOffline, isConnected, isInternetReachable, reconnectGeneration],
   );
 
   return (

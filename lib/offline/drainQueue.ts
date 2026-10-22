@@ -61,6 +61,8 @@ export async function drainOfflineQueue(opts: {
     kickImageOutbox(opts.token);
     const { kickMoneyOutbox } = await import("@/lib/messages/moneyOutbox");
     kickMoneyOutbox(opts.token);
+    const { kickTextOutbox } = await import("@/lib/messages/textOutbox");
+    kickTextOutbox(opts.token);
   } catch {
     /* vocaux : prochain reconnect */
   }

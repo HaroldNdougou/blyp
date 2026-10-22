@@ -1,7 +1,6 @@
 /** Disque d’abord — réseau seulement si le vocal n’est pas déjà là. */
 
-import FS from "@/lib/voice/fileSystem";
-import { cacheVoiceFile } from "@/lib/voice/upload";
+import { getVoiceFileSystem } from "@/lib/voice/fileSystem";
 
 const inflight = new Map<string, Promise<string>>();
 
@@ -10,6 +9,7 @@ function safeKey(key: string): string {
 }
 
 async function destFor(key: string): Promise<string | null> {
+  const FS = await getVoiceFileSystem();
   const k = safeKey(key);
   if (!k) return null;
   const dir = `${FS.cacheDirectory}blyp-voice/`;
@@ -17,6 +17,7 @@ async function destFor(key: string): Promise<string | null> {
 }
 
 export async function peekVoiceCache(key: string): Promise<string | null> {
+  const FS = await getVoiceFileSystem();
   const dest = await destFor(key);
   if (!dest) return null;
   const info = await FS.getInfoAsync(dest);
@@ -24,6 +25,7 @@ export async function peekVoiceCache(key: string): Promise<string | null> {
 }
 
 export async function voiceUriExists(uri: string): Promise<boolean> {
+  const FS = await getVoiceFileSystem();
   const src = String(uri ?? "").trim();
   if (!src) return false;
   try {
@@ -38,6 +40,7 @@ export async function copyVoiceIntoCache(
   key: string,
   localUri: string,
 ): Promise<string> {
+  const FS = await getVoiceFileSystem();
   const hit = await peekVoiceCache(key);
   if (hit) return hit;
   const dest = await destFor(key);
@@ -68,6 +71,7 @@ export async function ensureVoiceCached(
     const api = await import("@/lib/api/client");
     const { url } = await api.presignVoicePlay(token, conversationId, k);
     if (!url) return "";
+    const { cacheVoiceFile } = await import("@/lib/voice/upload");
     return cacheVoiceFile(k, url);
   })()
     .catch(() => "")

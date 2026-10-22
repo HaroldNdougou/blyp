@@ -632,6 +632,36 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /money-transfers/{id}/receipt-required
             Method: PATCH
+        StatusFeed:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/feed
+            Method: GET
+        StatusUploadPresign:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/upload-presign
+            Method: POST
+        StatusPublish:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/posts
+            Method: POST
+        StatusView:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/posts/{id}/view
+            Method: POST
+        StatusDeleteMine:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/me
+            Method: DELETE
 
   RealtimeApi:
     Type: AWS::ApiGatewayV2::Api

@@ -5,7 +5,6 @@ import { formatConversationWhen } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import {
   conversationsEqual,
-  ensureMessagesSnapshotFromDb,
   getConversationsSnapshot,
   getMessagesSnapshot,
   hydrateMessagesCache,
@@ -44,23 +43,57 @@ import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { DocumentListGlyph } from "@/components/messages/DocumentListGlyph";
 import { documentNameFromListPreview } from "@/lib/document/kind";
 import { previewTickForConversation } from "@/lib/messages/previewTicks";
-import { prefetchChatThreadOnPressIn } from "@/lib/messages/prefetchChatThread";
+import {
+  markConversationsListPulled,
+  shouldPullConversationsList,
+} from "@/lib/messages/conversationsListGate";
+import {
+  markChatOpenOnNavigate,
+  prefetchChatThreadOnPressIn,
+} from "@/lib/messages/prefetchChatThread";
+import { ActusPanel } from "@/components/status/ActusPanel";
+import { CountBadge } from "@/components/ui/CountBadge";
+import { StatusRing } from "@/components/status/StatusRing";
+import {
+  applyStatusFeedSnapshot,
+  peerStatusRingVariantForConversation,
+  peerStatusUserIdForConversation,
+  countUnseenPeerStatuses,
+  statusFeedHasPeerPosts,
+  subscribeStatusFeed,
+} from "@/lib/status/statusCache";
+import {
+  applyDemoStatusFeedNow,
+  syncStatusFeedFromNetwork,
+} from "@/lib/status/statusSync";
+import { listStatusFeed } from "@/lib/api/client";
 import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
-  FlatList,
   InteractionManager,
   Pressable,
+  ScrollView,
   Text,
   View,
+  useWindowDimensions,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import Animated, {
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
+
+const AnimatedScrollView = Animated.createAnimatedComponent(ScrollView);
 
 type ConversationRowProps = {
   item: Conversation;
@@ -75,8 +108,9 @@ type ConversationRowProps = {
   previewDocumentIcon: boolean;
   onOpen: (id: string) => void;
   onPressIn: (id: string) => void;
-  onAvatarPress: (item: Conversation) => void;
+  onAvatarPress: (item: Conversation, ring: "unseen" | "seen" | "none") => void;
   unreadLabel: string;
+  peerStatusRing: "unseen" | "seen" | "none";
 };
 
 const ConversationRow = React.memo(function ConversationRow({
@@ -93,6 +127,7 @@ const ConversationRow = React.memo(function ConversationRow({
   onPressIn,
   onAvatarPress,
   unreadLabel,
+  peerStatusRing,
 }: ConversationRowProps) {
   const { t } = useTranslation();
   const previewStyle = typing
@@ -109,23 +144,30 @@ const ConversationRow = React.memo(function ConversationRow({
       onPress={() => onOpen(item.id)}
     >
       <Pressable
-        onPress={() => onAvatarPress(item)}
-        accessibilityLabel={t("messages.peerPhotoOpenA11y", {
-          name: item.peerName,
-        })}
+        onPress={() => onAvatarPress(item, peerStatusRing)}
+        accessibilityLabel={
+          peerStatusRing === "none"
+            ? t("messages.peerPhotoOpenA11y", { name: item.peerName })
+            : t("status.openPeerA11y", { name: item.peerName })
+        }
         accessibilityRole="button"
       >
-        <PeerAvatar
-          name={item.peerName}
-          phone={item.peerPhone}
-          remoteUrl={
-            item.peerAvatarUrl ?? demoAvatarUrlForPhone(item.peerPhone)
-          }
-          localUri={contactPhotoUriForPhone(item.peerPhone)}
-          size={48}
+        <StatusRing
+          colors={colors}
+          variant={peerStatusRing}
           style={styles.avatarSlot}
-          recyclingKey={item.id}
-        />
+        >
+          <PeerAvatar
+            name={item.peerName}
+            phone={item.peerPhone}
+            remoteUrl={
+              item.peerAvatarUrl ?? demoAvatarUrlForPhone(item.peerPhone)
+            }
+            localUri={contactPhotoUriForPhone(item.peerPhone)}
+            size={48}
+            recyclingKey={item.id}
+          />
+        </StatusRing>
       </Pressable>
       <View style={styles.rowBody}>
         <Text style={styles.rowTitle} numberOfLines={1}>
@@ -216,6 +258,43 @@ export default function ConversationsScreen() {
   const [unreadTick, setUnreadTick] = useState(0);
   const [typingTick, setTypingTick] = useState(0);
   const [receiptTick, setReceiptTick] = useState(0);
+  const [statusTick, setStatusTick] = useState(0);
+  const [inboxPage, setInboxPage] = useState(0);
+  const inboxPagerRef = useRef<ScrollView>(null);
+  const { width: pageWidth } = useWindowDimensions();
+  const inboxScrollX = useSharedValue(0);
+  const inboxTabRowWidth = useSharedValue(0);
+  const inboxPageWidth = useSharedValue(pageWidth);
+
+  useEffect(() => {
+    inboxPageWidth.value = pageWidth;
+  }, [pageWidth, inboxPageWidth]);
+
+  const onInboxTabRowLayout = useCallback(
+    (w: number) => {
+      if (w > 0) inboxTabRowWidth.value = w;
+    },
+    [inboxTabRowWidth],
+  );
+
+  const inboxIndicatorStyle = useAnimatedStyle(() => {
+    const segment = inboxTabRowWidth.value * 0.5;
+    const raw =
+      inboxPageWidth.value > 0
+        ? inboxScrollX.value / inboxPageWidth.value
+        : 0;
+    const progress = Math.min(1, Math.max(0, raw));
+    return {
+      width: segment,
+      transform: [{ translateX: progress * segment }],
+    };
+  });
+
+  const onInboxPagerScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      inboxScrollX.value = e.contentOffset.x;
+    },
+  });
   const [threadTick, setThreadTick] = useState(0);
   const [avatarLightbox, setAvatarLightbox] =
     useState<PeerAvatarLightboxTarget | null>(null);
@@ -231,12 +310,32 @@ export default function ConversationsScreen() {
     });
   }, []);
 
+  const onConversationAvatarPress = useCallback(
+    (c: Conversation, ring: "unseen" | "seen" | "none") => {
+      if (ring !== "none") {
+        const statusUserId =
+          peerStatusUserIdForConversation(c.peerUserId, c.peerPhone) ??
+          String(c.peerUserId ?? "").trim();
+        if (statusUserId) {
+          router.push({
+            pathname: "/status/view",
+            params: { userId: statusUserId, index: "0" },
+          });
+          return;
+        }
+      }
+      openAvatarLightbox(c);
+    },
+    [openAvatarLightbox],
+  );
+
   useEffect(() => {
     if (authLoading) return;
     runAggressiveWarm({ token, phone: user?.phone });
   }, [authLoading, token, user?.phone]);
 
   useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
+  useEffect(() => subscribeStatusFeed(() => setStatusTick((n) => n + 1)), []);
   useEffect(
     () => subscribeConversationReceipt(() => setReceiptTick((n) => n + 1)),
     [],
@@ -357,8 +456,6 @@ export default function ConversationsScreen() {
       const syncNet = () => {
         void (async () => {
           try {
-            const { shouldPullConversationsList, markConversationsListPulled } =
-              await import("@/lib/messages/conversationsListGate");
             if (!shouldPullConversationsList()) {
               if (!cancelled) endMark();
               return;
@@ -456,23 +553,33 @@ export default function ConversationsScreen() {
     [t, token, myId],
   );
 
+  const goInboxPage = useCallback(
+    (index: number) => {
+      const next = index === 1 ? 1 : 0;
+      setInboxPage(next);
+      inboxPagerRef.current?.scrollTo({
+        x: next * pageWidth,
+        animated: true,
+      });
+    },
+    [pageWidth],
+  );
+
+  const onInboxPagerEnd = useCallback(
+    (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const x = e.nativeEvent.contentOffset.x;
+      const next = Math.round(x / Math.max(pageWidth, 1));
+      setInboxPage(next === 1 ? 1 : 0);
+    },
+    [pageWidth],
+  );
+
   const openChat = useCallback(
     (id: string) => {
       const cid = String(id ?? "").trim();
       if (!cid) return;
-      const ram =
-        token ? getMessagesSnapshot(token, cid) : null;
-      if (ram && ram.length > 0) {
-        router.push(`/chat/${encodeURIComponent(cid)}` as const);
-        return;
-      }
-      if (!token || !ownerPhone) {
-        router.push(`/chat/${encodeURIComponent(cid)}` as const);
-        return;
-      }
-      void ensureMessagesSnapshotFromDb(ownerPhone, token, cid).finally(() => {
-        router.push(`/chat/${encodeURIComponent(cid)}` as const);
-      });
+      markChatOpenOnNavigate();
+      router.push(`/chat/${encodeURIComponent(cid)}` as const);
     },
     [token, ownerPhone],
   );
@@ -497,6 +604,39 @@ export default function ConversationsScreen() {
     }, []),
   );
 
+  useEffect(() => {
+    if (!token || !myId) return;
+    const name =
+      [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
+      t("status.myStatus");
+    applyDemoStatusFeedNow(myId, {
+      displayName: name,
+      peerPhone: user?.phone ?? null,
+      avatarUrl: user?.avatarUrl ?? null,
+    });
+    if (statusFeedHasPeerPosts()) return;
+    void listStatusFeed(token)
+      .then((res) => applyStatusFeedSnapshot(res.items, res.myUserId))
+      .catch(() => {});
+  }, [token, myId, user, t]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!token || !myId) return;
+      const name =
+        [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim() ||
+        t("status.myStatus");
+      applyDemoStatusFeedNow(myId, {
+        displayName: name,
+        peerPhone: user?.phone ?? null,
+        avatarUrl: user?.avatarUrl ?? null,
+      });
+      syncStatusFeedFromNetwork(token, {
+        force: !statusFeedHasPeerPosts(),
+      });
+    }, [token, myId, user, t]),
+  );
+
   if (!token) {
     return (
       <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
@@ -512,69 +652,157 @@ export default function ConversationsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
-      <View style={styles.header}>
-        <Text style={styles.title}>{t("messages.title")}</Text>
+      <View style={styles.inboxChrome}>
+        <View
+          style={styles.inboxTabRow}
+          onLayout={(e) => onInboxTabRowLayout(e.nativeEvent.layout.width)}
+        >
+          <Pressable
+            style={styles.inboxTab}
+            onPress={() => goInboxPage(0)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: inboxPage === 0 }}
+            accessibilityLabel={t("messages.title")}
+          >
+            <Ionicons
+              name="chatbubbles-outline"
+              size={18}
+              color={inboxPage === 0 ? colors.text : colors.textMuted}
+              style={styles.inboxTabIcon}
+            />
+            <Text
+              style={
+                inboxPage === 0
+                  ? styles.inboxTabLabelActive
+                  : styles.inboxTabLabel
+              }
+            >
+              {t("messages.title")}
+            </Text>
+            <View style={styles.inboxTabIndicatorSlot} />
+          </Pressable>
+          <Pressable
+            style={styles.inboxTab}
+            onPress={() => goInboxPage(1)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: inboxPage === 1 }}
+            accessibilityLabel={t("actus.title")}
+          >
+            <Ionicons
+              name="albums-outline"
+              size={18}
+              color={inboxPage === 1 ? colors.text : colors.textMuted}
+              style={styles.inboxTabIcon}
+            />
+            <View style={styles.inboxTabBadgeWrap}>
+              <Text
+                style={
+                  inboxPage === 1
+                    ? styles.inboxTabLabelActive
+                    : styles.inboxTabLabel
+                }
+              >
+                {t("actus.title")}
+              </Text>
+              <CountBadge
+                count={countUnseenPeerStatuses()}
+                style={{ position: "absolute", top: -6, right: -14 }}
+              />
+            </View>
+            <View style={styles.inboxTabIndicatorSlot} />
+          </Pressable>
+        </View>
+        <View style={styles.inboxTabIndicatorTrack} pointerEvents="none">
+          <Animated.View
+            style={[styles.inboxTabIndicatorSliding, inboxIndicatorStyle]}
+          />
+        </View>
+      </View>
+
+      <AnimatedScrollView
+        ref={inboxPagerRef}
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        onScroll={onInboxPagerScroll}
+        onMomentumScrollEnd={onInboxPagerEnd}
+        scrollEventThrottle={16}
+        style={{ flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+      >
+        <View style={{ width: pageWidth, flex: 1 }}>
+          {loading && items.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <ActivityIndicator color={colors.accent} />
+            </View>
+          ) : items.length === 0 ? (
+            <View style={styles.emptyWrap}>
+              <Text style={styles.emptyTitle}>{t("messages.empty")}</Text>
+              <Text style={styles.emptyHint}>{t("messages.emptyHint")}</Text>
+            </View>
+          ) : (
+            <FlashList
+              extraData={`${unreadTick}|${typingTick}|${receiptTick}|${threadTick}|${statusTick}`}
+              data={items}
+              keyExtractor={(c) => c.id}
+              drawDistance={280}
+              showsVerticalScrollIndicator={false}
+              style={{ flex: 1 }}
+              renderItem={({ item }) => {
+                const unread = getUnread(item.id);
+                const typing = Boolean(getTypingSnapshot(item.id));
+                const previewDeleted =
+                  Boolean(token && lastDeletedMessageInThread(token, item.id));
+                const previewTick =
+                  !typing && !previewDeleted && token
+                    ? previewTickForConversation(item, token, myId)
+                    : null;
+                return (
+                  <ConversationRow
+                    item={item}
+                    styles={styles}
+                    colors={colors}
+                    myId={myId}
+                    unread={unread}
+                    typing={typing}
+                    previewTick={previewTick}
+                    previewDeleted={previewDeleted}
+                    previewText={previewFor(item)}
+                    previewDocumentIcon={
+                      !typing &&
+                      item.lastMessageType === "document" &&
+                      !(
+                        token && lastDeletedMessageInThread(token, item.id)
+                      )
+                    }
+                    onOpen={openChat}
+                    onPressIn={warmChatOnPressIn}
+                    onAvatarPress={onConversationAvatarPress}
+                    unreadLabel={t("messages.unreadCount", { count: unread })}
+                    peerStatusRing={peerStatusRingVariantForConversation(
+                      item.peerUserId,
+                      item.peerPhone,
+                    )}
+                  />
+                );
+              }}
+            />
+          )}
+        </View>
+        <View style={{ width: pageWidth, flex: 1 }}>
+          <ActusPanel isActive={inboxPage === 1} />
+        </View>
+      </AnimatedScrollView>
+      {inboxPage === 0 ? (
         <Pressable
-          style={styles.headerBtn}
+          style={styles.inboxNewChatBtn}
           onPress={() => router.push("/new-chat")}
           accessibilityLabel={t("messages.newChat")}
         >
-          <Ionicons name="create-outline" size={24} color={colors.accent} />
+          <Ionicons name="create" size={22} color={colors.accentOn} />
         </Pressable>
-      </View>
-
-      {loading && items.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <ActivityIndicator color={colors.accent} />
-        </View>
-      ) : items.length === 0 ? (
-        <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>{t("messages.empty")}</Text>
-          <Text style={styles.emptyHint}>{t("messages.emptyHint")}</Text>
-        </View>
-      ) : (
-        <FlatList
-          extraData={`${unreadTick}|${typingTick}|${receiptTick}|${threadTick}`}
-          data={items}
-          keyExtractor={(c) => c.id}
-          initialNumToRender={12}
-          windowSize={7}
-          renderItem={({ item }) => {
-            const unread = getUnread(item.id);
-            const typing = Boolean(getTypingSnapshot(item.id));
-            const previewDeleted =
-              Boolean(token && lastDeletedMessageInThread(token, item.id));
-            const previewTick =
-              !typing && !previewDeleted && token
-                ? previewTickForConversation(item, token, myId)
-                : null;
-            return (
-              <ConversationRow
-                item={item}
-                styles={styles}
-                colors={colors}
-                myId={myId}
-                unread={unread}
-                typing={typing}
-                previewTick={previewTick}
-                previewDeleted={previewDeleted}
-                previewText={previewFor(item)}
-                previewDocumentIcon={
-                  !typing &&
-                  item.lastMessageType === "document" &&
-                  !(
-                    token && lastDeletedMessageInThread(token, item.id)
-                  )
-                }
-                onOpen={openChat}
-                onPressIn={warmChatOnPressIn}
-                onAvatarPress={openAvatarLightbox}
-                unreadLabel={t("messages.unreadCount", { count: unread })}
-              />
-            );
-          }}
-        />
-      )}
+      ) : null}
       <PeerAvatarLightbox
         target={avatarLightbox}
         onClose={() => setAvatarLightbox(null)}

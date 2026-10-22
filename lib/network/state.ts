@@ -1,11 +1,19 @@
 import type { NetInfoState } from "@react-native-community/netinfo";
 
-/** Hors ligne : pas de liaison ou Internet confirmé inaccessible. */
-export function isNetworkOffline(state: NetInfoState): boolean {
-  if (state.isConnected === false) return true;
-  if (state.isInternetReachable === false) return true;
-  return false;
+export type NetworkBannerKind = "offline" | "no_internet";
+
+export function getNetInfoBannerKind(
+  state: NetInfoState,
+): NetworkBannerKind | null {
+  if (state.isConnected === false) return "offline";
+  if (state.isInternetReachable === false) return "no_internet";
+  return null;
 }
 
-/** Délai avant d’afficher la bannière (évite le clignotement sur 4G instable). */
-export const OFFLINE_BANNER_DELAY_MS = 650;
+/** Hors ligne : pas de liaison ou Internet confirmé inaccessible. */
+export function isNetworkOffline(state: NetInfoState): boolean {
+  return getNetInfoBannerKind(state) != null;
+}
+
+/** Délai court — bande fine, pas de clignotement agressif. */
+export const OFFLINE_BANNER_DELAY_MS = 400;

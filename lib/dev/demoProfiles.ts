@@ -9,6 +9,9 @@ import type {
   Conversation,
   MoneyTransfer,
   MoneyTransferStatus,
+  StatusFeedItem,
+  StatusFeedResponse,
+  StatusPost,
 } from "@/lib/api/types";
 import i18n from "@/lib/i18n";
 import { sortConversationsByActivity } from "@/lib/messagesCache";
@@ -511,3 +514,137 @@ export function demoApiResponse<T>(
   }
   throw new ApiError(i18n.t("demo.readOnly"), 400);
 }
+
+const DEMO_STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+const demoStatusByUser = new Map<string, StatusPost[]>();
+
+function ensureDemoStatusPosts(): void {
+  if (demoStatusByUser.size > 0) return;
+  const now = Date.now();
+  for (const p of PROFILES) {
+    const uid = peerUserId(p);
+    const n = Number(p.key);
+    const createdAt = new Date(now - (n * 37 + 8) * 60_000).toISOString();
+    const textOnly = n % 4 === 0;
+    const post: StatusPost = {
+      id: `demo-status-${p.key}-1`,
+      userId: uid,
+      kind: textOnly ? "text" : "image",
+      mediaUrl: textOnly
+        ? null
+        : `https://picsum.photos/seed/blyp-status-${p.key}/720/1280`,
+      text: textOnly
+        ? `Coucou — ${firstName(p.name)}`
+        : n % 2 === 0
+          ? "✨"
+          : null,
+      createdAt,
+      expiresAt: new Date(now + DEMO_STATUS_TTL_MS).toISOString(),
+    };
+    demoStatusByUser.set(uid, [post]);
+  }
+}
+
+/** Statuts actifs des 8 proches fictifs (dev). */
+export function demoStatusPostsForUser(userId: string): StatusPost[] {
+  if (!DEMO_PROFILES_ENABLED) return [];
+  ensureDemoStatusPosts();
+  return [...(demoStatusByUser.get(String(userId).trim()) ?? [])];
+}
+
+export function isDemoPeerUserId(userId: string | null | undefined): boolean {
+  if (!DEMO_PROFILES_ENABLED) return false;
+  return String(userId ?? "").trim().startsWith("demo-user-");
+}
+
+/** Clés 1–4 = non vus, 5–8 = déjà vus (anneau gris). */
+export function demoStatusHasUnseenForPeer(peerKey: string): boolean {
+  const n = Number(peerKey);
+  return Number.isFinite(n) && n >= 1 && n <= 4;
+}
+
+/** Feed local si `/status/feed` échoue ou n’est pas déployé (dev). */
+export function demoStatusFeedFallback(
+  myUserId: string,
+  mine?: {
+    displayName: string;
+    peerPhone: string | null;
+    avatarUrl: string | null;
+  },
+): StatusFeedResponse {
+  const uid = String(myUserId ?? "").trim();
+  const items: StatusFeedItem[] = [];
+  if (uid && mine) {
+    items.push({
+      userId: uid,
+      displayName: mine.displayName,
+      peerPhone: mine.peerPhone,
+      avatarUrl: mine.avatarUrl,
+      posts: [],
+      hasUnseen: false,
+    });
+  }
+  return withDemoStatusFeed({ items, myUserId: uid });
+}
+
+/** Feed API + statuts des contacts fictifs présents dans les discussions. */
+export function withDemoStatusFeed(res: StatusFeedResponse): StatusFeedResponse {
+  if (!DEMO_PROFILES_ENABLED) return res;
+  ensureDemoStatusPosts();
+  const myId = res.myUserId;
+  const items: StatusFeedItem[] = [...res.items];
+
+  for (const p of PROFILES) {
+    const uid = peerUserId(p);
+    const posts = demoStatusByUser.get(uid) ?? [];
+    if (posts.length === 0) continue;
+    const hasUnseen = demoStatusHasUnseenForPeer(p.key);
+    const row: StatusFeedItem = {
+      userId: uid,
+      displayName: p.name,
+      peerPhone: `+237${p.phone}`,
+      avatarUrl: demoPeerAvatarUrl(p),
+      posts,
+      hasUnseen,
+    };
+    const idx = items.findIndex((r) => r.userId === uid);
+    if (idx >= 0) {
+      const prev = items[idx]!;
+      const mergedPosts = [...prev.posts];
+      for (const post of posts) {
+        if (!mergedPosts.some((x) => x.id === post.id)) mergedPosts.push(post);
+      }
+      items[idx] = {
+        ...prev,
+        posts: mergedPosts.sort(
+          (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+        ),
+        hasUnseen: prev.hasUnseen || hasUnseen,
+        avatarUrl: prev.avatarUrl ?? row.avatarUrl,
+      };
+    } else {
+      items.push(row);
+    }
+  }
+
+  items.sort((a, b) => {
+    if (a.userId === myId) return -1;
+    if (b.userId === myId) return 1;
+    if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
+    const ta = a.posts[a.posts.length - 1]?.createdAt ?? "";
+    const tb = b.posts[b.posts.length - 1]?.createdAt ?? "";
+    return Date.parse(tb) - Date.parse(ta);
+  });
+
+  return { items, myUserId: myId };
+}
+
+/** IDs des posts déjà « vus » pour le mock (pairs 5–8). */
+export function demoStatusPostIdsViewedByDefault(): string[] {
+  if (!DEMO_PROFILES_ENABLED) return [];
+  ensureDemoStatusPosts();
+  return PROFILES.filter((p) => !demoStatusHasUnseenForPeer(p.key)).map(
+    (p) => `demo-status-${p.key}-1`,
+  );
+}
+

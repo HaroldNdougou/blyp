@@ -1,6 +1,7 @@
 import { createDocumentsStyles } from "@/components/vault/documentsStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import {
   deleteVaultDocument,
   getVaultDocumentDownload,
@@ -39,7 +40,7 @@ import {
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 import { useFocusEffect } from "@react-navigation/native";
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 
 type PendingFile = {
   uri: string;
@@ -363,7 +364,7 @@ export function VaultDocumentsScreen() {
       <Modal
         visible={addOpen}
         transparent
-        animationType="slide"
+        animationType={modalPresentation}
         onRequestClose={() => setAddOpen(false)}
       >
         <Pressable
@@ -392,7 +393,7 @@ export function VaultDocumentsScreen() {
       <Modal
         visible={Boolean(pending)}
         transparent
-        animationType="fade"
+        animationType={modalPresentation}
         onRequestClose={() => !saving && setPending(null)}
       >
         <View style={styles.nameModal}>

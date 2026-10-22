@@ -1,4 +1,4 @@
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 
 const THUMB_DIR = `${FS.cacheDirectory}blyp-doc-thumb/`;
 

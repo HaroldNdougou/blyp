@@ -1,15 +1,18 @@
-const path = require("path");
 const { getDefaultConfig } = require("expo/metro-config");
-const { FileStore } = require("metro-cache");
 
 const config = getDefaultConfig(__dirname);
 
-/** Windows : EMFILE + OOM si Metro ouvre trop de fichiers en parallèle (cache %TEMP%). */
+/**
+ * Windows : EMFILE + OOM — le cache disque Metro ouvre des milliers de fichiers
+ * (surtout pendant HMR). Cache transform en RAM uniquement sur win32.
+ */
 if (process.platform === "win32") {
   config.maxWorkers = 1;
-  config.cacheStores = [
-    new FileStore({ root: path.join(__dirname, ".metro-cache") }),
-  ];
+  config.cacheStores = [];
+  config.watcher = {
+    ...config.watcher,
+    healthCheck: { enabled: false },
+  };
 }
 
 config.transformer.unstable_allowRequireContext = true;

@@ -181,10 +181,14 @@ export type VoiceClip = {
 
 export type ImageAttachment = {
   key: string;
+  /** Miniature S3 (quelques Ko) — affichée avant la HD. */
+  thumbKey?: string | null;
   width?: number;
   height?: number;
   localUri?: string | null;
   contentType?: string;
+  /** Placeholder expo-image (généré à l’envoi côté client). */
+  blurhash?: string | null;
 };
 
 export type DocumentAttachment = {
@@ -269,4 +273,42 @@ export type ConversationReceiptKind = "read" | "delivered";
 export type ConversationReceipts = {
   peerLastReadAt: string | null;
   peerLastDeliveredAt: string | null;
+};
+
+/** Statut WhatsApp-like (24 h). */
+export type StatusPostKind = "image" | "text";
+
+export type StatusPost = {
+  id: string;
+  userId: string;
+  kind: StatusPostKind;
+  /** Image CDN / locale ; null si texte seul. */
+  mediaUrl: string | null;
+  text: string | null;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type StatusFeedItem = {
+  userId: string;
+  displayName: string;
+  peerPhone: string | null;
+  avatarUrl: string | null;
+  posts: StatusPost[];
+  /** Au moins un post non vu par moi. */
+  hasUnseen: boolean;
+};
+
+export type StatusFeedResponse = {
+  items: StatusFeedItem[];
+  myUserId: string;
+};
+
+export type PublishStatusBody = {
+  kind: StatusPostKind;
+  /** Mock / dev local. */
+  mediaUrl?: string | null;
+  /** Prod : clé S3 après presign + PUT. */
+  mediaKey?: string | null;
+  text?: string | null;
 };

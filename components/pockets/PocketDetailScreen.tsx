@@ -7,6 +7,7 @@ import {
 import { createPocketStyles, type PocketStyles } from "@/components/pockets/pocketStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import type { PocketTransaction } from "@/lib/api/types";
 import { formatTransactionDate } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
@@ -268,7 +269,7 @@ export default function PocketDetailScreen() {
           <Modal
             visible={sheet === "menu"}
             transparent
-            animationType="fade"
+            animationType={modalPresentation}
             statusBarTranslucent
             onRequestClose={() => setSheet(null)}
           >

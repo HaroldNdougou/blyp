@@ -2,6 +2,7 @@ import "@/lib/perf/eagerRoutes";
 import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { useNearbyTaxi } from "@/hooks/useNearbyTaxi";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
 import { fallbackAccountId } from "@/lib/accountId";
@@ -19,7 +20,6 @@ import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { maxTxAmountFcfaForUser } from "@/lib/kyc/limits";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
-import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import { fallbackTxReference } from "@/lib/txReference";
@@ -217,6 +217,13 @@ export default function PayHomeScreen() {
   recipientRef.current = recipient;
   /** Figé à l’ouverture du PIN — le render ne doit pas l’effacer pendant le handoff BLE. */
   const payRecipientAtPinRef = useRef<PayRecipient | null>(null);
+  const payOfflinePendingRef = useRef<{
+    amountFcfa: number;
+    recipientName: string;
+    recipientPhone: string | null;
+    recipientAccountId: string | null;
+    pin: string;
+  } | null>(null);
   const userRef = useRef(user);
   userRef.current = user;
   const [payHandoff, setPayHandoff] = useState(false);
@@ -663,16 +670,9 @@ export default function PayHomeScreen() {
     }
   }, [user]);
 
-  /**
-   * Splash sacré → prefetch hors chemin critique Pay.
-   * Pas de warm API client ici : ça volerait le CPU du 1er frame.
-   * Le client se précharge au clic « payer » / montant rapide (Pay déjà affiché).
-   */
   useEffect(() => {
-    if (authLoading) return;
-    runAggressiveWarm({ token, phone: user?.phone });
     if (!token) void importPayRegisterOverlay();
-  }, [authLoading, token, user?.phone]);
+  }, [token]);
 
   /**
    * Ne pas lier le cleanup du timer à payPinModalVisible : au passage false→true,
@@ -1282,19 +1282,29 @@ export default function PayHomeScreen() {
         payPinFailedRef.current = 0;
         setPayPinErrorLine(null);
         setPayPinSelection(undefined);
-        // Réseau down → file offline (rejeu au reconnect)
-        if (e instanceof ApiError && e.status === 0) {
-          const to = payRecipientAtPinRef.current ?? recipientRef.current;
-          if (to && !to.viaMoneyMessage) {
-            void import("@/lib/offline/queue").then((m) => {
-              void m.enqueueOfflineOp("pay", {
-                amountFcfa: payPendingAmount,
-                recipientName: to.name,
-                recipientPhone: to.phoneDigits || null,
-                transactionPin: pin,
-              });
-            });
-          }
+        setPaymentStatus("IDLE");
+        setPayPinUi("idle");
+        const to = payRecipientAtPinRef.current ?? recipientRef.current;
+        const networkDown =
+          e instanceof ApiError &&
+          (e.status === 0 ||
+            e.status === 502 ||
+            e.status === 503 ||
+            e.status === 504);
+        if (networkDown && to && !to.viaMoneyMessage) {
+          payOfflinePendingRef.current = {
+            amountFcfa: payPendingAmount,
+            recipientName: to.name,
+            recipientPhone: to.phoneDigits || null,
+            recipientAccountId: to.accountId ?? null,
+            pin,
+          };
+          setPayOutcomeSheet({
+            kind: "offline_offer",
+            amountFcfa: payPendingAmount,
+            recipientName: to.name,
+          });
+          return;
         }
         setPayOutcomeSheet({
           kind: "error",
@@ -1305,8 +1315,7 @@ export default function PayHomeScreen() {
               : t("pay.paymentTitle"),
           message:
             e instanceof ApiError ? e.message : t("common.genericError"),
-          recipientName: (payRecipientAtPinRef.current ?? recipientRef.current)
-            ?.name,
+          recipientName: to?.name,
         });
       }
     }
@@ -1331,10 +1340,45 @@ export default function PayHomeScreen() {
   }, [confirmPayWithPin]);
 
   const dismissPayOutcomeSheet = useCallback(() => {
+    payOfflinePendingRef.current = null;
     setPayOutcomeSheet(null);
     setPayAmountFcfa(null);
     setAmountPadResetSeq((n) => n + 1);
   }, []);
+
+  const confirmOfflinePay = useCallback(async () => {
+    const pending = payOfflinePendingRef.current;
+    if (!pending) {
+      dismissPayOutcomeSheet();
+      return;
+    }
+    payOfflinePendingRef.current = null;
+    try {
+      const queue = await import("@/lib/offline/queue");
+      await queue.enqueueOfflineOp("pay", {
+        amountFcfa: pending.amountFcfa,
+        recipientName: pending.recipientName,
+        recipientPhone: pending.recipientPhone,
+        recipientAccountId: pending.recipientAccountId,
+        transactionPin: pending.pin,
+      });
+      void import("@/lib/security/transactionPinVault").then((m) => {
+        void m.saveTransactionPinVault(pending.pin);
+      });
+      setPayOutcomeSheet({
+        kind: "offline_queued",
+        amountFcfa: pending.amountFcfa,
+        recipientName: pending.recipientName,
+      });
+    } catch {
+      setPayOutcomeSheet({
+        kind: "error",
+        title: t("pay.paymentTitle"),
+        message: t("common.genericError"),
+        recipientName: pending.recipientName,
+      });
+    }
+  }, [dismissPayOutcomeSheet, t]);
 
   useEffect(() => {
     if (!payOutcomeSheet) return;
@@ -1525,7 +1569,7 @@ export default function PayHomeScreen() {
             <Modal
               visible
               transparent
-              animationType="fade"
+              animationType={modalPresentation}
               onRequestClose={() => setConnexionPromptKind(null)}
             >
               <View style={styles.connexionModalRoot} pointerEvents="box-none">
@@ -1584,7 +1628,7 @@ export default function PayHomeScreen() {
             <Modal
               visible
               transparent
-              animationType="fade"
+              animationType={modalPresentation}
               onRequestClose={() => setInsufficientBalanceVisible(false)}
             >
               <View style={styles.connexionModalRoot} pointerEvents="box-none">
@@ -1732,6 +1776,7 @@ export default function PayHomeScreen() {
             <PayOutcomeSheet
               outcome={payOutcomeSheet}
               onDismiss={dismissPayOutcomeSheet}
+              onConfirmOfflinePay={confirmOfflinePay}
             />
           ) : null}
 

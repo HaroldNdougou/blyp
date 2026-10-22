@@ -99,6 +99,39 @@ export function SwapTabIcon({ color }: { color: string }) {
   );
 }
 
+/** Anneau type « Actus / statuts ». */
+export function ActusTabIcon({ color }: { color: string }) {
+  return (
+    <View
+      style={{
+        width: 24,
+        height: 24,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <View
+        style={{
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          borderWidth: 2,
+          borderColor: color,
+        }}
+      />
+      <View
+        style={{
+          position: "absolute",
+          width: 8,
+          height: 8,
+          borderRadius: 4,
+          backgroundColor: color,
+        }}
+      />
+    </View>
+  );
+}
+
 /** Silhouette profil. */
 export function PersonTabIcon({ color }: { color: string }) {
   return (

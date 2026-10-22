@@ -30,7 +30,7 @@ import { fireChatLongPressHaptic } from "@/lib/messages/chatLongPressHaptic";
 import { unpackReceiptGeneration } from "@/lib/messages/receiptGeneration";
 import { getMessageReplyTo } from "@/lib/messages/replyPreview";
 import type { ThemeColors } from "@/lib/theme/colors";
-import { formatVoiceClock } from "@/lib/voice/record";
+import { formatVoiceClock } from "@/lib/voice/formatVoiceClock";
 import React, { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";

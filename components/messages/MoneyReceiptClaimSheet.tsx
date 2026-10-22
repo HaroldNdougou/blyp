@@ -1,6 +1,7 @@
 import { MoneyReceiptStampPreview } from "@/components/messages/MoneyReceiptStampPreview";
 import { SignatureScratchPad } from "@/components/messages/SignatureScratchPad";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { formatFcfa } from "@/lib/formatFcfa";
 import {
   loadCommerceStamp,
@@ -167,7 +168,7 @@ export function MoneyReceiptClaimSheet({
     <Modal
       visible={visible}
       transparent
-      animationType="slide"
+      animationType={modalPresentation}
       onRequestClose={onClose}
     >
       <Pressable

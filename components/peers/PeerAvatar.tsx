@@ -1,9 +1,9 @@
+import { AnonymousPersonGlyph } from "@/components/peers/AnonymousPersonGlyph";
 import { useTheme } from "@/contexts/ThemeContext";
 import { resolvePeerAvatarUri } from "@/lib/peers/resolvePeerAvatarUri";
 import { Image } from "expo-image";
 import React, { memo, useEffect, useMemo, useState } from "react";
 import {
-  Text,
   View,
   type StyleProp,
   type TextStyle,
@@ -25,7 +25,7 @@ type Props = {
   recyclingKey?: string;
 };
 
-/** Photo de profil ronde (CDN) + initiale en repli — style WhatsApp. */
+/** Photo de profil ronde (CDN) + silhouette anonyme en repli — style WhatsApp. */
 export const PeerAvatar = memo(function PeerAvatar({
   name,
   phone,
@@ -47,8 +47,8 @@ export const PeerAvatar = memo(function PeerAvatar({
     setFailed(false);
   }, [uri]);
   const showPhoto = Boolean(uri) && !failed;
-  const initial = (String(name ?? "").trim().charAt(0) || "?").toUpperCase();
   const radius = size / 2;
+  const placeholderColor = selected ? colors.accentOn : colors.avatarText;
 
   return (
     <View
@@ -76,18 +76,10 @@ export const PeerAvatar = memo(function PeerAvatar({
           onError={() => setFailed(true)}
         />
       ) : (
-        <Text
-          style={[
-            {
-              fontSize: Math.max(12, Math.round(size * 0.38)),
-              fontWeight: "700",
-              color: selected ? colors.accentOn : colors.avatarText,
-            },
-            textStyle,
-          ]}
-        >
-          {initial}
-        </Text>
+        <AnonymousPersonGlyph
+          color={placeholderColor}
+          size={Math.round(size * 0.52)}
+        />
       )}
     </View>
   );

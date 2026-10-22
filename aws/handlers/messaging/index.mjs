@@ -48,7 +48,14 @@ import {
   presignDocumentUpload,
   presignVoicePlay,
   presignVoiceUpload,
+  presignStatusUpload,
 } from "../../lib/media.mjs";
+import {
+  deleteMyStatuses,
+  listStatusFeed,
+  publishStatus,
+  recordStatusView,
+} from "../../lib/status.mjs";
 import { translateTextBatch } from "../../lib/translate.mjs";
 
 async function requireUserId(event) {
@@ -132,10 +139,16 @@ export async function handler(event) {
     if (messagesMatch) {
       const conversationId = decodeURIComponent(messagesMatch[1]);
       if (method === "GET") {
-        const result = await listMessages(userId, conversationId);
+        const qs = event.queryStringParameters ?? {};
+        const result = await listMessages(userId, conversationId, {
+          limit: qs.limit,
+          before: qs.before,
+        });
         if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
         return ok({
           items: result.messages,
+          hasMore: Boolean(result.hasMore),
+          oldestId: result.oldestId ?? null,
           peerLastReadAt: result.peerLastReadAt ?? null,
           peerLastDeliveredAt: result.peerLastDeliveredAt ?? null,
           peerLastPresenceAt: result.peerLastPresenceAt ?? null,
@@ -229,6 +242,10 @@ export async function handler(event) {
             body.clientId,
             body.caption ?? body.body,
             body.replyToMessageId,
+            {
+              thumbKey: body.thumbKey,
+              blurhash: body.blurhash,
+            },
           );
           if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
           if (result.error === "IMAGE_INVALID") {
@@ -550,6 +567,46 @@ export async function handler(event) {
         });
       }
       return ok(result);
+    }
+
+    if (method === "GET" && path === "/status/feed") {
+      return ok(await listStatusFeed(userId));
+    }
+
+    if (method === "POST" && path === "/status/upload-presign") {
+      const body = parseJsonBody(event) ?? {};
+      const result = await presignStatusUpload(userId, body.contentType);
+      if (result.error === "MEDIA_UNAVAILABLE") {
+        return serverError("Media indisponible");
+      }
+      return ok(result);
+    }
+
+    if (method === "POST" && path === "/status/posts") {
+      const body = parseJsonBody(event) ?? {};
+      const result = await publishStatus(userId, body);
+      if (result.error === "MEDIA_INVALID") {
+        return badRequest("Image requise");
+      }
+      if (result.error === "TEXT_REQUIRED") {
+        return badRequest("Texte requis");
+      }
+      return ok(result);
+    }
+
+    const statusViewMatch = path.match(
+      /^\/status\/posts\/([^/]+)\/view$/,
+    );
+    if (method === "POST" && statusViewMatch) {
+      const postId = decodeURIComponent(statusViewMatch[1]);
+      const result = await recordStatusView(userId, postId);
+      if (result.error === "NOT_FOUND") return notFound("Statut introuvable");
+      if (result.error === "ID_REQUIRED") return badRequest("id requis");
+      return ok(result);
+    }
+
+    if (method === "DELETE" && path === "/status/me") {
+      return ok(await deleteMyStatuses(userId));
     }
 
     return notFound(`Route messaging inconnue: ${method} ${path}`);

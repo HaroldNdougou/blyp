@@ -1,4 +1,4 @@
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 
 function base64ToBytes(b64: string): Uint8Array {
   const atobFn = globalThis.atob;

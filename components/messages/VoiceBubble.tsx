@@ -1,5 +1,5 @@
 import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
-import { formatVoiceClock } from "@/lib/voice/record";
+import { formatVoiceClock } from "@/lib/voice/formatVoiceClock";
 import type { ChatMessage } from "@/lib/api/types";
 import {
   cycleVoiceRate,

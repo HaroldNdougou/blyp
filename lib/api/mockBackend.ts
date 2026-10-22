@@ -1,4 +1,8 @@
 import { makeAccountId, makeCommerceAccountId } from "@/lib/accountId";
+import {
+  demoStatusPostIdsViewedByDefault,
+  withDemoConversations,
+} from "@/lib/dev/demoProfiles";
 import { makeTxReference } from "@/lib/txReference";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
@@ -18,6 +22,10 @@ import type {
   VaultDocument,
   VaultListResponse,
   WalletDepositStatusResponse,
+  StatusFeedItem,
+  StatusFeedResponse,
+  StatusPost,
+  PublishStatusBody,
 } from "./types";
 
 function normalizeCameroonPhone(raw: string): string | null {
@@ -970,15 +978,33 @@ function mockReplyToFromList(
   };
 }
 
-export function mockListMessages(_token: string, conversationId: string) {
+export function mockListMessages(
+  _token: string,
+  conversationId: string,
+  opts?: { limit?: number; before?: string | null },
+) {
   const hidden = mockHiddenMessageIds.get(conversationId);
-  const items = (mockMessages.get(conversationId) ?? []).filter(
+  let items = (mockMessages.get(conversationId) ?? []).filter(
     (m) => !hidden?.has(m.id),
   );
+  items = items.slice().sort((a, b) =>
+    String(a.createdAt).localeCompare(String(b.createdAt)),
+  );
+  const before = String(opts?.before ?? "").trim();
+  if (before) {
+    const idx = items.findIndex((m) => m.id === before);
+    if (idx > 0) items = items.slice(0, idx);
+    else if (idx === 0) items = [];
+  }
+  const limit = Math.max(1, Math.floor(Number(opts?.limit) || 40));
+  const page = items.slice(-limit);
   return {
-    items,
+    items: page,
+    hasMore: page.length > 0 && items.length > page.length,
+    oldestId: page[0]?.id ?? null,
     peerLastReadAt: null,
     peerLastDeliveredAt: null,
+    peerLastPresenceAt: null,
   };
 }
 
@@ -1453,4 +1479,162 @@ export function mockSayHello(): {
 } {
   mockHelloSeq += 1;
   return { ok: true, message: "hello", seq: mockHelloSeq };
+}
+
+const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+const mockStatusPosts: StatusPost[] = [];
+const mockStatusViews = new Map<string, Set<string>>();
+let mockDemoStatusViewsSeeded = false;
+
+function ensureMockDemoStatusViews(myId: string): void {
+  if (mockDemoStatusViewsSeeded) return;
+  mockDemoStatusViewsSeeded = true;
+  for (const postId of demoStatusPostIdsViewedByDefault()) {
+    let set = mockStatusViews.get(postId);
+    if (!set) {
+      set = new Set();
+      mockStatusViews.set(postId, set);
+    }
+    set.add(myId);
+  }
+}
+
+function pruneExpiredStatusPosts(): void {
+  const now = Date.now();
+  for (let i = mockStatusPosts.length - 1; i >= 0; i--) {
+    const exp = Date.parse(mockStatusPosts[i]!.expiresAt);
+    if (Number.isFinite(exp) && exp <= now) mockStatusPosts.splice(i, 1);
+  }
+}
+
+function mockMyUserId(): string {
+  return mockSessionUserId ?? makeAccountId(sessionPhone ?? "+237600000000");
+}
+
+export function mockListStatusFeed(token: string): StatusFeedResponse {
+  assertSession(token);
+  pruneExpiredStatusPosts();
+  const myId = mockMyUserId();
+  ensureMockDemoStatusViews(myId);
+  const byUser = new Map<string, StatusPost[]>();
+  for (const p of mockStatusPosts) {
+    const list = byUser.get(p.userId) ?? [];
+    list.push(p);
+    byUser.set(p.userId, list);
+  }
+  const convs = withDemoConversations(mockListConversations(token).items);
+  const items: StatusFeedItem[] = [];
+  const seenUsers = new Set<string>();
+
+  const pushRow = (
+    userId: string,
+    displayName: string,
+    peerPhone: string | null,
+    avatarUrl: string | null,
+  ) => {
+    if (seenUsers.has(userId)) return;
+    seenUsers.add(userId);
+    const posts = (byUser.get(userId) ?? []).sort(
+      (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+    );
+    if (posts.length === 0 && userId !== myId) return;
+    const views = posts.map((p) => mockStatusViews.get(p.id)?.has(myId) ?? false);
+    const hasUnseen = posts.some((p, i) => !views[i]);
+    items.push({
+      userId,
+      displayName,
+      peerPhone,
+      avatarUrl,
+      posts,
+      hasUnseen,
+    });
+  };
+
+  pushRow(
+    myId,
+    [mockFirstName, mockLastName].filter(Boolean).join(" ") || "Moi",
+    sessionPhone,
+    mockAvatarUri,
+  );
+
+  for (const c of convs) {
+    if (!c.peerUserId) continue;
+    pushRow(
+      c.peerUserId,
+      c.peerName,
+      c.peerPhone,
+      c.peerAvatarUrl ?? null,
+    );
+  }
+
+  items.sort((a, b) => {
+    if (a.userId === myId) return -1;
+    if (b.userId === myId) return 1;
+    if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
+    const ta = a.posts[a.posts.length - 1]?.createdAt ?? "";
+    const tb = b.posts[b.posts.length - 1]?.createdAt ?? "";
+    return Date.parse(tb) - Date.parse(ta);
+  });
+
+  return withDemoStatusFeed({ items, myUserId: myId });
+}
+
+export function mockPublishStatus(
+  token: string,
+  body: PublishStatusBody,
+): { post: StatusPost } {
+  assertSession(token);
+  pruneExpiredStatusPosts();
+  const myId = mockMyUserId();
+  const kind = body.kind === "text" ? "text" : "image";
+  const text = String(body.text ?? "").trim() || null;
+  const mediaUrl =
+    kind === "image"
+      ? String(body.mediaUrl ?? "").trim() ||
+        (body.mediaKey ? `mock://status/${body.mediaKey}` : null)
+      : null;
+  if (kind === "image" && !mediaUrl) {
+    throw new ApiError("Image requise", 400);
+  }
+  if (kind === "text" && !text) {
+    throw new ApiError("Texte requis", 400);
+  }
+  const createdAt = new Date().toISOString();
+  const post: StatusPost = {
+    id: `st-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    userId: myId,
+    kind,
+    mediaUrl,
+    text,
+    createdAt,
+    expiresAt: new Date(Date.now() + STATUS_TTL_MS).toISOString(),
+  };
+  mockStatusPosts.push(post);
+  return { post };
+}
+
+export function mockRecordStatusView(
+  token: string,
+  postId: string,
+): { ok: boolean } {
+  assertSession(token);
+  const myId = mockMyUserId();
+  const id = String(postId ?? "").trim();
+  if (!id) throw new ApiError("id requis", 400);
+  let set = mockStatusViews.get(id);
+  if (!set) {
+    set = new Set();
+    mockStatusViews.set(id, set);
+  }
+  set.add(myId);
+  return { ok: true };
+}
+
+export function mockDeleteMyStatuses(token: string): { ok: boolean } {
+  assertSession(token);
+  const myId = mockMyUserId();
+  for (let i = mockStatusPosts.length - 1; i >= 0; i--) {
+    if (mockStatusPosts[i]!.userId === myId) mockStatusPosts.splice(i, 1);
+  }
+  return { ok: true };
 }

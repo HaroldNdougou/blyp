@@ -1,8 +1,13 @@
 /**
- * expo-file-system — import sync unique.
- * ChatThread importe ce module pour l’avoir dans le bundle principal ;
- * cache/upload lazy ne cassent pas Metro (IDs de modules async).
+ * expo-file-system — chargement async (micro / cache vocal, pas au parse du fil).
  */
-import * as FileSystem from "expo-file-system/legacy";
+type FS = typeof import("expo-file-system/legacy");
 
-export default FileSystem;
+let cached: FS | null = null;
+
+export async function getVoiceFileSystem(): Promise<FS> {
+  if (!cached) {
+    cached = await import("expo-file-system/legacy");
+  }
+  return cached;
+}

@@ -1,4 +1,5 @@
 import type { createMessagesStyles } from "@/components/messages/messagesStyles";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import type { ChatMessage } from "@/lib/api/types";
 import { cacheDocumentFile, peekDocumentCache } from "@/lib/document/cache";
 import { formatDocumentMetaLine } from "@/lib/document/formatDocumentMeta";
@@ -291,7 +292,7 @@ export function DocumentBubble({
     <Modal
       visible={imageViewerOpen}
       transparent
-      animationType="fade"
+      animationType={modalPresentation}
       onRequestClose={() => setImageViewerOpen(false)}
     >
       <Pressable

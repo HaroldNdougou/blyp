@@ -1,11 +1,9 @@
 /** Enregistrement vocal — import à la demande, hors Pay. */
 
-export const VOICE_MAX_MS = 60_000;
+import { formatVoiceClock } from "@/lib/voice/formatVoiceClock";
 
-export function formatVoiceClock(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
+export { formatVoiceClock };
+export const VOICE_MAX_MS = 60_000;
 
 export type VoiceRecorder = {
   start: () => Promise<void>;

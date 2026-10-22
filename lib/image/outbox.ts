@@ -62,16 +62,51 @@ async function sendOne(
   },
 ): Promise<void> {
   if (!(await imageUriExists(job.uri))) return;
+  const { prepareChatImage } = await import("@/lib/image/prepareChatImage");
+  const prepared = await prepareChatImage(job.uri);
+  const uploadUri = prepared.uri;
+  const width = prepared.width;
+  const height = prepared.height;
+  const contentType = prepared.contentType;
+  const blurhash = prepared.blurhash;
+
+  const cache = await import("@/lib/messagesCache");
+  const patched = cache.patchOptimisticImageLocal(
+    token,
+    job.conversationId,
+    job.clientId,
+    {
+      localUri: uploadUri,
+      width,
+      height,
+      contentType,
+      blurhash,
+    },
+  );
+  if (patched) {
+    listeners.forEach((l) => l(job.conversationId, patched));
+  }
+
   const api = await import("@/lib/api/client");
   const signed = await api.presignImageUpload(
     token,
     job.conversationId,
-    job.contentType,
+    contentType,
   );
-  await uploadImageFile(signed.uploadUrl, job.uri, signed.contentType);
-  let localUri = job.uri;
+  await uploadImageFile(signed.uploadUrl, uploadUri, signed.contentType);
+  if (signed.thumbUploadUrl && signed.thumbKey) {
+    await uploadImageFile(
+      signed.thumbUploadUrl,
+      prepared.thumbUri,
+      "image/jpeg",
+    );
+  }
+  let localUri = uploadUri;
   try {
-    localUri = await copyImageIntoCache(signed.key, job.uri);
+    localUri = await copyImageIntoCache(signed.key, uploadUri);
+    if (signed.thumbKey) {
+      await copyImageIntoCache(signed.thumbKey, prepared.thumbUri);
+    }
   } catch {
     /* uri source encore ok */
   }
@@ -79,11 +114,15 @@ async function sendOne(
     token,
     job.conversationId,
     signed.key,
-    job.width,
-    job.height,
+    width,
+    height,
     job.clientId,
     job.caption,
     job.replyToMessageId,
+    {
+      thumbKey: signed.thumbKey,
+      blurhash,
+    },
   );
   const serverId = String(message.id ?? "").trim();
   const merged: ChatMessage = {
@@ -96,13 +135,15 @@ async function sendOne(
     image: {
       ...(message.image ?? {
         key: signed.key,
-        width: job.width,
-        height: job.height,
+        width,
+        height,
       }),
       localUri,
+      contentType,
+      thumbKey: signed.thumbKey ?? message.image?.thumbKey ?? null,
+      blurhash: blurhash ?? message.image?.blurhash ?? null,
     },
   };
-  const cache = await import("@/lib/messagesCache");
   const next = cache.commitOptimisticImage(
     token,
     job.conversationId,

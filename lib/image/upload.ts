@@ -1,6 +1,6 @@
 /** PUT signé S3 — FileSystem, hors chemin Pay. */
 
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 
 export async function uploadImageFile(
   uploadUrl: string,

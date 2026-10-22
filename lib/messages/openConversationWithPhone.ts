@@ -3,6 +3,7 @@ import { ensureSessionFresh, openConversation } from "@/lib/api/client";
 import { getAccessToken } from "@/lib/auth/authSession";
 import {
   getConversationsSnapshot,
+  getMessagesCacheOwnerPhone,
   setConversationsSnapshot,
 } from "@/lib/messagesCache";
 import {
@@ -40,6 +41,13 @@ export async function openConversationWithPhone(
     const prev = getConversationsSnapshot(access) ?? [];
     const next = [conversation, ...prev.filter((c) => c.id !== conversation.id)];
     setConversationsSnapshot(access, next);
+    const prefetch = await import("@/lib/messages/prefetchChatThread");
+    prefetch.prefetchChatThreadOnPressIn({
+      conversationId: conversation.id,
+      phone: getMessagesCacheOwnerPhone() ?? "",
+      token: access,
+    });
+    prefetch.markChatOpenOnNavigate();
     router.replace(`/chat/${encodeURIComponent(conversation.id)}`);
     return { ok: true, conversationId: conversation.id };
   } catch (e) {

@@ -83,6 +83,17 @@ export type ThemeColors = {
   /** Cachet reçu Blyp (tampon rouge / bleu). */
   moneyReceiptStampRed: string;
   moneyReceiptStampBlue: string;
+  /** Bannière réseau globale (hors ligne / instable). */
+  networkBannerBg: string;
+  networkBannerUnstableBg: string;
+  networkBannerText: string;
+  /** Lecteur statuts (fond plein écran type stories). */
+  statusViewerBackground: string;
+  statusProgressTrack: string;
+  /** Glyphe + sur la carte « Ajouter un statut » (toujours noir). */
+  statusAddBadgePlus: string;
+  /** Barre basse composition statut texte (semi-transparente). */
+  statusTextFooterBar: string;
 };
 
 const accent = "#5dc705";
@@ -163,6 +174,13 @@ export const lightColors: ThemeColors = {
   switchThumbOn: "#FFFFFF",
   moneyReceiptStampRed: "#C62828",
   moneyReceiptStampBlue: "#1565C0",
+  networkBannerBg: "#B71C1C",
+  networkBannerUnstableBg: "#E65100",
+  networkBannerText: "#FFFFFF",
+  statusViewerBackground: "#000000",
+  statusProgressTrack: "rgba(255,255,255,0.35)",
+  statusAddBadgePlus: "#000000",
+  statusTextFooterBar: "rgba(0,0,0,0.24)",
 };
 
 export const darkColors: ThemeColors = {
@@ -240,6 +258,13 @@ export const darkColors: ThemeColors = {
   switchThumbOn: "#FFFFFF",
   moneyReceiptStampRed: "#EF5350",
   moneyReceiptStampBlue: "#42A5F5",
+  networkBannerBg: "#D32F2F",
+  networkBannerUnstableBg: "#F57C00",
+  networkBannerText: "#FFFFFF",
+  statusViewerBackground: "#000000",
+  statusProgressTrack: "rgba(255,255,255,0.35)",
+  statusAddBadgePlus: "#000000",
+  statusTextFooterBar: "rgba(0,0,0,0.32)",
 };
 
 export function getThemeColors(scheme: ColorScheme | null | undefined): ThemeColors {

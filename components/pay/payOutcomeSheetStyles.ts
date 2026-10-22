@@ -111,5 +111,21 @@ export function createPayOutcomeSheetStyles(c: ThemeColors) {
       fontSize: 13,
       fontWeight: "700",
     },
+    cancelBtn: {
+      alignSelf: "center",
+      marginTop: 10,
+      minHeight: 40,
+      paddingHorizontal: 20,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    cancelBtnPressed: {
+      opacity: 0.7,
+    },
+    cancelBtnText: {
+      color: c.textSecondary,
+      fontSize: 14,
+      fontWeight: "600",
+    },
   });
 }

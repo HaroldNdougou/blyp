@@ -1,7 +1,7 @@
 import type { MerchantReceipt, MerchantReceiptCategory } from "@/lib/receipts/types";
 import { getDb, runDbWrite } from "@/lib/db/sqlite";
 import { bumpReceiptsUnread } from "@/lib/receipts/receiptsUnread";
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 
 function newReceiptId(): string {
   const c = globalThis.crypto;

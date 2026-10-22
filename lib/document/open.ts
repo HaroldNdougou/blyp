@@ -1,5 +1,5 @@
 import { isRasterDocumentPreview } from "@/lib/document/kind";
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 import { Linking, Platform } from "react-native";
 
 export function mimeTypeForDocument(

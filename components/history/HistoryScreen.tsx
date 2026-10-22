@@ -227,13 +227,6 @@ export default function HistoryScreen() {
   );
   const phoneRef = useRef(phone);
 
-  useEffect(() => {
-    perfMarkStart("history_open");
-    return () => {
-      perfMarkEnd("history_open");
-    };
-  }, []);
-
   const applySnapshot = useCallback((items: TransactionItem[] | null) => {
     if (!items) return;
     if (items === snapshotRef.current) return;
@@ -268,7 +261,9 @@ export default function HistoryScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      perfMarkStart("history_open");
       if (!token || !phone) {
+        perfMarkEnd("history_open");
         snapshotRef.current = null;
         setRows([]);
         setVisibleCount(HISTORY_PAGE_SIZE);

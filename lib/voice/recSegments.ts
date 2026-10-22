@@ -1,6 +1,6 @@
 import { base64ToBytes, bytesToBase64 } from "@/lib/ble/base64";
-import FS from "@/lib/voice/fileSystem";
-import { normalizeVoiceFileUri } from "@/lib/voice/recDraftPreview";
+import { getVoiceFileSystem } from "@/lib/voice/fileSystem";
+import { normalizeVoiceFileUri } from "@/lib/voice/voiceFileUri";
 
 export type VoiceClipSegment = { uri: string; durationMs: number };
 
@@ -12,6 +12,7 @@ export async function mergeVoiceSegmentsForSend(
   if (parts.length === 0) return null;
   if (parts.length === 1) return parts[0];
 
+  const FS = await getVoiceFileSystem();
   const dir = `${FS.cacheDirectory}blyp-voice/`;
   const dirInfo = await FS.getInfoAsync(dir);
   if (!dirInfo.exists) {

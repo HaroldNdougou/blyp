@@ -3,11 +3,6 @@
  * Pas d’alerte, pas de disparition (modèle WhatsApp).
  */
 import type { ChatMessage } from "@/lib/api/types";
-import {
-  copyVoiceIntoCache,
-  voiceUriExists,
-} from "@/lib/voice/cache";
-import { uploadVoiceFile } from "@/lib/voice/upload";
 
 const inflight = new Set<string>();
 let flushChain: Promise<void> = Promise.resolve();
@@ -62,6 +57,10 @@ async function sendOne(
     replyToMessageId?: string | null;
   },
 ): Promise<void> {
+  const { voiceUriExists, copyVoiceIntoCache } = await import(
+    "@/lib/voice/cache"
+  );
+  const { uploadVoiceFile } = await import("@/lib/voice/upload");
   if (!(await voiceUriExists(job.uri))) {
     return;
   }

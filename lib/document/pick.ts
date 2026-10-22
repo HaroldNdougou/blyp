@@ -1,4 +1,4 @@
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 import * as DocumentPicker from "expo-document-picker";
 
 export const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;

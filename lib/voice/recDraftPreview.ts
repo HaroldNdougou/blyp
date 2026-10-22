@@ -1,6 +1,15 @@
 /** Lecture aperçu vocal avant envoi — hors player global du fil. */
 
-import { setVoiceRecordingAudioMode } from "@/lib/voice/record";
+import { normalizeVoiceFileUri } from "@/lib/voice/voiceFileUri";
+
+export { normalizeVoiceFileUri };
+
+async function setVoiceRecordingAudioMode(recording: boolean): Promise<void> {
+  const { setVoiceRecordingAudioMode: setMode } = await import(
+    "@/lib/voice/record"
+  );
+  await setMode(recording);
+}
 
 export type RecDraftPreviewStatus = {
   playing: boolean;
@@ -53,17 +62,12 @@ export function getRecDraftPreviewStatus(): RecDraftPreviewStatus {
   return { playing, positionMs, durationMs };
 }
 
-export function normalizeVoiceFileUri(uri: string): string {
-  const u = String(uri ?? "").trim();
-  if (!u) return u;
-  if (u.startsWith("file://") || u.startsWith("content://")) return u;
-  return `file://${u}`;
-}
-
 export async function copyDraftRecordingPreview(
   sourceUri: string,
 ): Promise<string> {
-  const FS = (await import("@/lib/voice/fileSystem")).default;
+  const FS = await import("@/lib/voice/fileSystem").then((m) =>
+    m.getVoiceFileSystem(),
+  );
   const from = normalizeVoiceFileUri(sourceUri);
   const dir = `${FS.cacheDirectory}blyp-voice/`;
   const dirInfo = await FS.getInfoAsync(dir);

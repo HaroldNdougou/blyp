@@ -40,9 +40,10 @@ export function SwipeToReplyWrap({ children, enabled, onReply }: Props) {
   const gesture = useMemo(() => {
     const pan = Gesture.Pan()
       .enabled(enabled)
-      .activeOffsetX(5)
-      .failOffsetX(-6)
-      .failOffsetY([-18, 18])
+      .activeOffsetX(8)
+      .failOffsetX(-10)
+      .failOffsetY([-22, 22])
+      .minDistance(6)
       .onUpdate((e) => {
         const x = Math.max(0, Math.min(e.translationX, MAX_DRAG));
         tx.value = x;

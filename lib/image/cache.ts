@@ -1,4 +1,4 @@
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 import { voiceUriExists } from "@/lib/voice/cache";
 
 function safeKey(key: string): string {

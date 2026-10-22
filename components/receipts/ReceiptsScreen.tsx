@@ -1,6 +1,7 @@
 import { createReceiptsStyles } from "@/components/receipts/receiptsStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { pickDocumentFromDevice } from "@/lib/document/pick";
 import { openDocumentWithViewer } from "@/lib/document/open";
 import { formatFileSize, formatTransactionDate } from "@/lib/format";
@@ -17,7 +18,7 @@ import {
   setReceiptsSnapshot,
 } from "@/lib/receipts/receiptsStore";
 import { takeUnreadReceiptIds } from "@/lib/receipts/receiptsUnread";
-import FS from "@/lib/voice/fileSystem";
+import FS from "@/lib/voice/fileSystemLegacy";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
@@ -360,7 +361,7 @@ export function ReceiptsScreen() {
       <Modal
         visible={addOpen}
         transparent
-        animationType="slide"
+        animationType={modalPresentation}
         onRequestClose={() => setAddOpen(false)}
       >
         <Pressable
@@ -393,7 +394,7 @@ export function ReceiptsScreen() {
       <Modal
         visible={Boolean(pending)}
         transparent
-        animationType="fade"
+        animationType={modalPresentation}
         onRequestClose={() => !saving && setPending(null)}
       >
         <View style={styles.nameModal}>

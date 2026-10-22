@@ -56,7 +56,8 @@
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
         "android.permission.RECORD_AUDIO",
-        "android.permission.READ_CONTACTS"
+        "android.permission.READ_CONTACTS",
+        "android.permission.READ_MEDIA_IMAGES"
       ],
       "splash": {
         "image": "./assets/images/splash-mark-light.png",
@@ -91,6 +92,13 @@
         {
           "photosPermission": "Blyp accède à vos photos pour les envoyer dans le chat.",
           "cameraPermission": "Blyp utilise l’appareil photo pour vérifier votre identité et envoyer des images."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Blyp accède à vos photos récentes pour publier un statut.",
+          "isAccessMediaLocationEnabled": false
         }
       ],
       [
@@ -139,7 +147,8 @@
       ],
       "./plugins/withBleBroadcastForeground.js",
       "./plugins/withPaymentAnnounceBackground.js",
-      "./plugins/withReadContacts.js"
+      "./plugins/withReadContacts.js",
+      "./plugins/withGalleryMediaPermissions.js"
     ],
     "experiments": {
       "typedRoutes": true

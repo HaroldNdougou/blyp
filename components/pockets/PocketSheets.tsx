@@ -1,6 +1,7 @@
 import { createPocketStyles, type PocketStyles } from "@/components/pockets/pocketStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { modalPresentation } from "@/lib/perf/instantMotion";
 import { ApiError } from "@/lib/api/errors";
 import type { Pocket } from "@/lib/api/types";
 import { formatFcfa } from "@/lib/formatFcfa";
@@ -80,7 +81,7 @@ function SheetFrame({
     <Modal
       visible={visible}
       transparent
-      animationType="fade"
+      animationType={modalPresentation}
       statusBarTranslucent
       onRequestClose={onClose}
     >

@@ -1,5 +1,6 @@
 import { kickImageOutbox } from "@/lib/image/outbox";
 import { kickMoneyOutbox } from "@/lib/messages/moneyOutbox";
+import { kickTextOutbox } from "@/lib/messages/textOutbox";
 import { kickVoiceOutbox } from "@/lib/voice/outbox";
 import { useAuth } from "@/contexts/authContextBase";
 import { useNetwork } from "@/contexts/NetworkContext";
@@ -57,6 +58,7 @@ export function RealtimeSync() {
           if (cancelled) return;
           await drainOfflineQueue({ token, phone });
           if (cancelled) return;
+          kickTextOutbox(token);
           kickVoiceOutbox(token);
           kickImageOutbox(token);
           kickMoneyOutbox(token);
