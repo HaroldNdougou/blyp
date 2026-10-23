@@ -329,12 +329,36 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /commerces
             Method: GET
+        CommercePatch:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}
+            Method: PATCH
         AccountPublic:
           Type: HttpApi
           Properties:
             ApiId: !Ref BlypApi
             Path: /accounts/{accountId}/public
             Method: GET
+        AccountSoaTrip:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /accounts/{accountId}/soa-trip
+            Method: GET
+        CommerceSoaTripGet:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}/soa-trip
+            Method: GET
+        CommerceSoaTripReset:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}/soa-trip
+            Method: POST
 
   WalletFunction:
     Type: AWS::Serverless::Function

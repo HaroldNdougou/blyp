@@ -20,7 +20,12 @@ import {
 } from "@/lib/ble/radioMode";
 import type { BleScanStatus, BleTaxiPeer } from "@/lib/ble/types";
 import { getPeerDisplayNameCached } from "@/lib/peers/displayNameCache";
-import { resolvePeerDisplayName } from "@/lib/peers/resolveDisplayName";
+import { getPeerCategoryCached } from "@/lib/peers/peerCategoryCache";
+import {
+  resolvePeerCategory,
+  resolvePeerDisplayName,
+} from "@/lib/peers/resolveDisplayName";
+import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
 import { setPayScanFocused } from "@/lib/ble/payScanGate";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -147,6 +152,23 @@ export function useNearbyTaxi(enabled: boolean) {
     return () => task.cancel();
   }, [rawPeer?.accountId]);
 
+  const [categoryEpoch, setCategoryEpoch] = useState(0);
+
+  /** Catégorie API (ex. soa_car) — le BLE ne l’avait pas ou ancienne pub taxi. */
+  useEffect(() => {
+    const id = rawPeer?.accountId;
+    if (!id || !id.startsWith("BLYP-C-")) return;
+    if (getPeerCategoryCached(id)) return;
+    const gen = resolveGenRef.current;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void resolvePeerCategory(id, getAccessToken()).then((cat) => {
+        if (!cat || resolveGenRef.current !== gen) return;
+        setCategoryEpoch((n) => n + 1);
+      });
+    });
+    return () => task.cancel();
+  }, [rawPeer?.accountId]);
+
   /** Étiquette taxi/boutique hors 1er frame — sert les puces montants. */
   useEffect(() => {
     const peer = rawPeer;
@@ -168,10 +190,21 @@ export function useNearbyTaxi(enabled: boolean) {
 
   const peer = useMemo(() => {
     if (!rawPeer) return null;
+    void categoryEpoch;
+    const fromCache = normalizeSpendCategory(
+      getPeerCategoryCached(rawPeer.accountId),
+    );
+    const category = fromCache ?? rawPeer.category ?? null;
     const resolved = nameById[rawPeer.accountId];
-    if (!resolved || resolved === rawPeer.displayName) return rawPeer;
-    return { ...rawPeer, displayName: resolved };
-  }, [rawPeer, nameById]);
+    const displayName =
+      resolved && resolved !== rawPeer.displayName
+        ? resolved
+        : rawPeer.displayName;
+    if (category === rawPeer.category && displayName === rawPeer.displayName) {
+      return rawPeer;
+    }
+    return { ...rawPeer, displayName, category };
+  }, [rawPeer, nameById, categoryEpoch]);
 
   const refresh = useCallback(() => {
     if (!scanOn || broadcasting) return false;

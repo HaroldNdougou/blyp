@@ -15,6 +15,8 @@ Objectif : valider la fluidité « WhatsApp-like » après changements messageri
 
 **Note** : le dev (Metro, HMR) est plus lent que la **release**. Un lag uniquement en dev ≠ régression prod ; refaire les points critiques en build release si doute.
 
+**Metro Windows (dev)** : `devMetroLite` coupe prefetch + repousse ~45 s : contacts, push/notifications, BLE, WS, `api/client` (auth/sync), outboxes. Liste Messages : pas de sync réseau si cache RAM. Fil chat : bundle seulement au clic. Cache : `node_modules/.cache/metro`. Redémarrer Metro après `metro.config.js`. `EMFILE` → `BLYP_METRO_WORKERS=1`.
+
 **Release Redmi** (comparer `chunk` / `chat_open`) : `npx expo run:android --variant release` (USB), puis même scénario B — les marks `[perf]` sont absents hors `__DEV__` ; juger à l’œil + éventuellement `adb logcat` si tu ajoutes un profil staging.
 
 ---

@@ -11,8 +11,29 @@ import {
 } from "@/lib/transactionsCache";
 
 export const DEFAULT_QUICK_AMOUNTS = [100, 350, 500, 600] as const;
+/** Car UY2 Soa — 1re puce toujours 350 FCFA. */
+export const SOA_CAR_FIRST_QUICK_AMOUNT = 350;
+const SOA_CAR_FILL_AMOUNTS = [500, 600, 100] as const;
 const LOOKBACK_SENT = 100;
 const CHIP_COUNT = 4;
+
+function withFirstQuickAmount(amounts: number[], first: number): number[] {
+  const out: number[] = [first];
+  for (const a of amounts) {
+    if (a === first) continue;
+    if (out.length >= CHIP_COUNT) break;
+    out.push(a);
+  }
+  const fill =
+    first === SOA_CAR_FIRST_QUICK_AMOUNT
+      ? SOA_CAR_FILL_AMOUNTS
+      : DEFAULT_QUICK_AMOUNTS;
+  for (const d of fill) {
+    if (out.length >= CHIP_COUNT) break;
+    if (!out.includes(d)) out.push(d);
+  }
+  return out;
+}
 
 type Counts = Map<number, number>;
 
@@ -115,6 +136,9 @@ export function getQuickAmounts(
     next = rank(globalCounts);
   } else {
     next = [...DEFAULT_QUICK_AMOUNTS];
+  }
+  if (category === "soa_car") {
+    next = withFirstQuickAmount(next, SOA_CAR_FIRST_QUICK_AMOUNT);
   }
   memoized.set(key, next);
   return next;

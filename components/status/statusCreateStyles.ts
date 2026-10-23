@@ -7,6 +7,11 @@ export function createStatusCreateStyles(c: ThemeColors) {
       flex: 1,
       backgroundColor: c.background,
     },
+    composeSlide: {
+      zIndex: 12,
+      elevation: 12,
+      backgroundColor: "transparent",
+    },
     header: {
       flexDirection: "row",
       alignItems: "center",

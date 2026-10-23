@@ -10,6 +10,10 @@ import {
   subscribeAuthSession,
 } from "@/lib/auth/authSession";
 import { AuthContext } from "@/contexts/authContextBase";
+import {
+  DEV_BACKGROUND_BOOT_MS,
+  runAfterDevBackgroundBoot,
+} from "@/lib/perf/devMetroLite";
 import React, {
   useCallback,
   useEffect,
@@ -138,14 +142,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (refresh) {
+        const deferSessionRefresh =
+          DEV_BACKGROUND_BOOT_MS > 0 && Boolean(tok || snap);
+
+        if (refresh && !deferSessionRefresh) {
           const api = await import("@/lib/api/client");
           await api.ensureSessionFresh();
           if (!alive) return;
           tok = getAccessToken();
         }
 
-        if (!tok && !getRefreshToken()) {
+        if (!tok && !getRefreshToken() && !deferSessionRefresh) {
           await clearAuthSession();
           await clearTxCaches();
           if (alive) {
@@ -162,13 +169,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
 
-        if (snap?.phone) hydrateLocalCaches(snap.phone, tok);
+        if (snap?.phone && tok) hydrateLocalCaches(snap.phone, tok);
 
-        const { InteractionManager } = await import("react-native");
-        InteractionManager.runAfterInteractions(() => {
+        const refreshProfile = () => {
           if (!alive) return;
           void (async () => {
             try {
+              if (refresh) {
+                const api = await import("@/lib/api/client");
+                await api.ensureSessionFresh();
+                if (!alive) return;
+              }
               const current = getAccessToken();
               if (!current) return;
               const api = await import("@/lib/api/client");
@@ -194,6 +205,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
           })();
+        };
+
+        const { InteractionManager } = await import("react-native");
+        InteractionManager.runAfterInteractions(() => {
+          if (deferSessionRefresh) {
+            runAfterDevBackgroundBoot(refreshProfile);
+          } else {
+            refreshProfile();
+          }
         });
       } catch {
         if (alive) setIsLoading(false);
@@ -376,6 +396,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user, applyUser],
   );
 
+  const updateCommerceCategory = useCallback(
+    async (commerceId: string, category: string) => {
+      const t = getAccessToken();
+      if (!t) throw new Error("Not signed in");
+      const wasBroadcasting = await import(
+        "@/lib/ble/taxiBroadcastController"
+      ).then(
+        (m) => m.isTaxiBroadcastWanted() || m.getTaxiBroadcastSnapshot().on,
+      );
+      const api = await import("@/lib/api/client");
+      const res = await api.updateCommerceCategory(t, commerceId, category);
+      await applyUser(res.user);
+      if (wasBroadcasting) {
+        void import("@/lib/ble/broadcastAccount").then(
+          ({ resolveBleBroadcastAccount }) => {
+            void import("@/lib/ble/taxiBroadcastController").then((m) => {
+              void m.retargetTaxiBroadcast(
+                resolveBleBroadcastAccount(res.user),
+              );
+            });
+          },
+        );
+      }
+      return res;
+    },
+    [applyUser],
+  );
+
   const createCommerce = useCallback(
     async (input: { name: string; category?: string }) => {
       const t = getAccessToken();
@@ -421,6 +469,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       applyIncomingPayment,
       setActiveContext,
       createCommerce,
+      updateCommerceCategory,
     }),
     [
       user,
@@ -434,6 +483,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       applyIncomingPayment,
       setActiveContext,
       createCommerce,
+      updateCommerceCategory,
     ],
   );
 

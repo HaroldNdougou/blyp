@@ -460,6 +460,7 @@ export async function executePayment(
   recipientPhone,
   idempotencyKey,
   recipientAccountId,
+  paymentMeta = {},
 ) {
   if (!isValidTxAmount(amount)) {
     return { error: "AMOUNT_INVALID" };
@@ -512,6 +513,25 @@ export async function executePayment(
   }
   if (target.type === "commerce" && target.ownerUserId === userId) {
     return { error: "SELF_PAY" };
+  }
+
+  let commerceRec = null;
+  let soaSeatNumber = null;
+  if (target.type === "commerce") {
+    commerceRec = await getCommerceRecord(target.ownerUserId, target.commerceId);
+    const cat = String(commerceRec?.category ?? "").toLowerCase();
+    if (cat === "soa_car") {
+      soaSeatNumber = Math.floor(Number(paymentMeta?.soaSeatNumber));
+      if (!Number.isFinite(soaSeatNumber) || soaSeatNumber < 1 || soaSeatNumber > 18) {
+        return { error: "SEAT_REQUIRED" };
+      }
+      const { assertSoaSeatAvailable } = await import("./soaCarTrip.mjs");
+      const seatCheck = await assertSoaSeatAvailable(
+        target.commerceId,
+        soaSeatNumber,
+      );
+      if (seatCheck.error) return { error: seatCheck.error };
+    }
   }
 
   let counterpartyName = String(recipientName ?? "").trim() || null;
@@ -694,6 +714,25 @@ export async function executePayment(
         },
       }),
     );
+  }
+
+  if (
+    target.type === "commerce" &&
+    commerceRec &&
+    String(commerceRec.category ?? "").toLowerCase() === "soa_car" &&
+    soaSeatNumber != null
+  ) {
+    try {
+      const { recordSoaSeatPayment } = await import("./soaCarTrip.mjs");
+      await recordSoaSeatPayment(
+        target.commerceId,
+        soaSeatNumber,
+        amount,
+        receiveTxId,
+      );
+    } catch (err) {
+      console.warn("[wallet] soa seat record failed", err?.message ?? err);
+    }
   }
 
   /** Push destinataire — async SQS, jamais bloquant pour le payeur. */

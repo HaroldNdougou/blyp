@@ -124,7 +124,14 @@ function RootShell() {
             animation: "slide_from_bottom",
           }}
         />
-        <Stack.Screen name="status/view" />
+        <Stack.Screen
+          name="status/view"
+          options={{
+            animation: "none",
+            animationDuration: 0,
+            contentStyle: { backgroundColor: "#000000" },
+          }}
+        />
         <Stack.Screen name="forward" />
         <Stack.Screen
           name="chat/[id]"

@@ -228,6 +228,11 @@ async function handlePay(userId, body, event) {
   const recipientName = body?.recipientName || "Bénéficiaire";
   const recipientPhone = body?.recipientPhone ?? null;
   const recipientAccountId = body?.recipientAccountId ?? null;
+  const soaSeatRaw = body?.soaSeatNumber;
+  const soaSeatNumber =
+    soaSeatRaw != null && soaSeatRaw !== ""
+      ? Math.floor(Number(soaSeatRaw))
+      : null;
   const transactionPin = String(body?.transactionPin ?? "").replace(/\D/g, "");
   const idempotencyKey = getIdempotencyKey(event);
 
@@ -274,6 +279,12 @@ async function handlePay(userId, body, event) {
     recipientPhone,
     idempotencyKey,
     recipientAccountId,
+    {
+      soaSeatNumber:
+        soaSeatNumber != null && Number.isFinite(soaSeatNumber)
+          ? soaSeatNumber
+          : null,
+    },
   );
 
   if (result.error === "INSUFFICIENT_BALANCE") {
@@ -290,6 +301,15 @@ async function handlePay(userId, body, event) {
   }
   if (result.error === "PAY_FROM_COMMERCE_FORBIDDEN") {
     return badRequest("Passez en mode perso pour payer");
+  }
+  if (result.error === "SEAT_REQUIRED") {
+    return badRequest("Numéro de siège requis (1–18)");
+  }
+  if (result.error === "SEAT_INVALID") {
+    return badRequest("Numéro de siège invalide");
+  }
+  if (result.error === "SEAT_TAKEN") {
+    return badRequest("Ce siège est déjà payé");
   }
 
   return ok({

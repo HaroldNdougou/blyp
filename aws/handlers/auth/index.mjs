@@ -64,7 +64,13 @@ import {
   getPublicAccountLabel,
   listCommercesForUser,
   setActiveContext,
+  updateCommerceCategory,
 } from "../../lib/commerce.mjs";
+import {
+  getSoaCarTripByAccountId,
+  getSoaCarTripForOwner,
+  resetSoaCarTrip,
+} from "../../lib/soaCarTrip.mjs";
 import {
   deleteDeviceToken,
   upsertDeviceToken,
@@ -351,6 +357,22 @@ async function handleListCommerces(userId) {
   return ok({ items: commerces });
 }
 
+async function handlePatchCommerce(userId, commerceIdRaw, body) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  if (body?.category == null) {
+    return badRequest("category requis");
+  }
+  const result = await updateCommerceCategory(
+    userId,
+    commerceId,
+    body.category,
+  );
+  if (result.error === "NOT_FOUND") return notFound("Commerce introuvable");
+  const user = await getUserApiPayload(userId);
+  return ok({ commerce: result.commerce, user });
+}
+
 async function handleVaultList(userId) {
   const result = await listVaultDocuments(userId);
   if (result.error === "ACCOUNT_INVALID") return badRequest("Compte invalide");
@@ -458,6 +480,43 @@ async function handlePublicAccount(accountIdRaw) {
   });
 }
 
+async function handleSoaTripByAccount(accountIdRaw) {
+  const accountId = String(accountIdRaw ?? "")
+    .trim()
+    .toUpperCase();
+  if (!accountId.startsWith("BLYP-") || accountId.length < 12) {
+    return badRequest("accountId invalide");
+  }
+  const result = await getSoaCarTripByAccountId(accountId);
+  if (result.error === "NOT_FOUND") return notFound("Compte introuvable");
+  if (result.error === "NOT_SOA_CAR") {
+    return badRequest("Ce commerce n’est pas un car Soa");
+  }
+  return ok({ trip: result.trip });
+}
+
+async function handleSoaTripForOwner(userId, commerceIdRaw) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  const result = await getSoaCarTripForOwner(userId, commerceId);
+  if (result.error === "NOT_FOUND") return notFound("Commerce introuvable");
+  if (result.error === "NOT_SOA_CAR") {
+    return badRequest("Ce commerce n’est pas un car Soa");
+  }
+  return ok({ trip: result.trip });
+}
+
+async function handleSoaTripReset(userId, commerceIdRaw) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  const result = await resetSoaCarTrip(userId, commerceId);
+  if (result.error === "NOT_FOUND") return notFound("Commerce introuvable");
+  if (result.error === "NOT_SOA_CAR") {
+    return badRequest("Ce commerce n’est pas un car Soa");
+  }
+  return ok({ trip: result.trip });
+}
+
 export async function handler(event, context) {
   /** Ne pas attendre les promesses SMS en arrière-plan après la réponse. */
   if (context && typeof context.callbackWaitsForEmptyEventLoop === "boolean") {
@@ -560,6 +619,19 @@ export async function handler(event, context) {
       return await handleListCommerces(auth.userId);
     }
 
+    const commercePatch = path.match(/^\/commerces\/([^/]+)$/);
+    if (commercePatch && method === "PATCH") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handlePatchCommerce(
+        auth.userId,
+        decodeURIComponent(commercePatch[1]),
+        body,
+      );
+    }
+
     if (method === "GET" && path === "/vault/documents") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
@@ -604,6 +676,26 @@ export async function handler(event, context) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handlePublicAccount(decodeURIComponent(accountPublic[1]));
+    }
+
+    const accountSoaTrip = path.match(/^\/accounts\/([^/]+)\/soa-trip$/);
+    if (method === "GET" && accountSoaTrip) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return await handleSoaTripByAccount(decodeURIComponent(accountSoaTrip[1]));
+    }
+
+    const commerceSoaTrip = path.match(/^\/commerces\/([^/]+)\/soa-trip$/);
+    if (commerceSoaTrip) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const commerceId = decodeURIComponent(commerceSoaTrip[1]);
+      if (method === "GET") {
+        return await handleSoaTripForOwner(auth.userId, commerceId);
+      }
+      if (method === "POST") {
+        return await handleSoaTripReset(auth.userId, commerceId);
+      }
     }
 
     if (method === "PUT" && path === "/me/device-token") {

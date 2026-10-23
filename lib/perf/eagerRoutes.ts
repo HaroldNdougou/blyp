@@ -1,21 +1,12 @@
 /**
  * Side-effects : prefetch onglets + écrans fréquents (Messages = accueil).
- * En __DEV__ : graphe minimal — pas de rafale Metro au lancement USB.
+ * En __DEV__ : rien ici — voir `devMetroLite` + `prefetchModule`.
  */
+import { DEV_METRO_LITE } from "@/lib/perf/devMetroLite";
 import { floodAllTabs } from "@/lib/perf/floodAllTabs";
 import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
-import { InteractionManager } from "react-native";
 
-if (__DEV__) {
-  /** Accueil = ConversationsScreen (import sync dans index). Fil chat après stabilisation. */
-  InteractionManager.runAfterInteractions(() => {
-    setTimeout(() => {
-      prefetchModule(() => import("@/app/chat/[id]"));
-      prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
-      prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));
-    }, 3000);
-  });
-} else {
+if (!DEV_METRO_LITE) {
   prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/components/messages/ConversationsScreen"));
   prefetchModule(() => import("@/app/(tabs)/pay"));

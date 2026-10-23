@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
+  Alert,
   Keyboard,
   Modal,
   Platform,
@@ -18,7 +19,12 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const CATEGORIES: CommerceCategory[] = ["taxi", "shop", "other"];
+const CATEGORIES: CommerceCategory[] = [
+  "soa_car",
+  "taxi",
+  "shop",
+  "other",
+];
 
 /** Chaque mot commence par une majuscule (saisie fluide). */
 function capitalizeCommerceName(raw: string): string {
@@ -41,11 +47,12 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
   const { colors } = useTheme();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { user, setActiveContext, createCommerce } = useAuth();
+  const { user, setActiveContext, createCommerce, updateCommerceCategory } =
+    useAuth();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [name, setName] = useState("");
-  const [category, setCategory] = useState<CommerceCategory>("taxi");
+  const [category, setCategory] = useState<CommerceCategory>("soa_car");
   const [creating, setCreating] = useState(false);
   const [errorLine, setErrorLine] = useState<string | null>(null);
   const [keyboardLift, setKeyboardLift] = useState(0);
@@ -83,6 +90,7 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
     (c: string) => {
       if (c === "taxi") return t("commerce.categoryTaxi");
       if (c === "shop") return t("commerce.categoryShop");
+      if (c === "soa_car") return t("commerce.categorySoaCar");
       return t("commerce.categoryOther");
     },
     [t],
@@ -121,6 +129,30 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
     [active, busyId, onContextChanged, setActiveContext, t],
   );
 
+  const onPickCommerceCategory = useCallback(
+    (commerce: { id: string; name: string; category: string }) => {
+      if (busyId) return;
+      const buttons = CATEGORIES.map((c) => ({
+        text: categoryLabel(c),
+        onPress: () => {
+          if (String(commerce.category) === c) return;
+          setBusyId(commerce.id);
+          void updateCommerceCategory(commerce.id, c)
+            .catch(() => {
+              setErrorLine(t("commerce.categoryUpdateFailed"));
+            })
+            .finally(() => setBusyId(null));
+        },
+      }));
+      Alert.alert(
+        t("commerce.categoryPickerTitle", { name: commerce.name }),
+        t("commerce.categoryPickerLead"),
+        [...buttons, { text: t("common.cancel"), style: "cancel" }],
+      );
+    },
+    [busyId, categoryLabel, updateCommerceCategory, t],
+  );
+
   const onCreate = useCallback(async () => {
     const n = name.trim();
     if (n.length < 2) {
@@ -133,7 +165,7 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
       await createCommerce({ name: n, category });
       setSheetOpen(false);
       setName("");
-      setCategory("taxi");
+      setCategory("soa_car");
       onContextChanged?.("commerce");
     } catch (e) {
       const { ApiError } = await import("@/lib/api/errors");
@@ -223,10 +255,19 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
                 <Text style={styles.commerceTitle} numberOfLines={1}>
                   {c.name}
                 </Text>
-                <Text style={styles.commerceMeta} numberOfLines={1}>
-                  {categoryLabel(String(c.category))} ·{" "}
-                  {formatFcfa(c.balanceFcfa)}
-                </Text>
+                <Pressable
+                  onPress={() => onPickCommerceCategory(c)}
+                  hitSlop={{ top: 6, bottom: 6, left: 0, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("commerce.categoryPickerA11y", {
+                    name: c.name,
+                  })}
+                >
+                  <Text style={styles.commerceMeta} numberOfLines={1}>
+                    {categoryLabel(String(c.category))} ·{" "}
+                    {formatFcfa(c.balanceFcfa)}
+                  </Text>
+                </Pressable>
               </View>
               {busyId === c.id ? (
                 <ActivityIndicator color={colors.accent} size="small" />
@@ -286,6 +327,9 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
             </Text>
             <Text style={styles.commerceModalLead}>
               {t("commerce.createLead")}
+            </Text>
+            <Text style={styles.commerceModalLead}>
+              {t("commerce.createSoaHint")}
             </Text>
             <Text style={styles.commerceModalLabel}>
               {t("commerce.nameLabel")}

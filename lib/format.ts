@@ -167,6 +167,27 @@ export function formatConversationWhen(iso: string | null | undefined): string {
   });
 }
 
+/** Lecteur statut — sous le nom, à côté de la photo. */
+export function formatStatusPublishedWhen(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const now = new Date();
+  const diffDays = Math.round(
+    (startOfLocalDay(now) - startOfLocalDay(d)) / 86_400_000,
+  );
+  const time = formatMessageTime(iso);
+  if (diffDays === 0) return i18n.t("dates.todayAt", { time });
+  if (diffDays === 1) return i18n.t("dates.yesterdayAt", { time });
+  const locale = currentNumberLocale();
+  const datePart = d.toLocaleDateString(locale, {
+    day: "numeric",
+    month: "short",
+    year: d.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
+  });
+  return `${datePart}, ${time}`;
+}
+
 export function formatTransactionDate(iso: string): string {
   const d = new Date(iso);
   const now = new Date();

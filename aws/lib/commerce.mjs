@@ -12,7 +12,7 @@ import { getUserBalance, getUserProfile, userPk } from "./user.mjs";
 
 const doc = getDocClient();
 
-const CATEGORIES = new Set(["taxi", "shop", "other"]);
+const CATEGORIES = new Set(["taxi", "shop", "other", "soa_car"]);
 
 function commerceMetaSk(commerceId) {
   return `COMMERCE#${commerceId}`;
@@ -169,6 +169,52 @@ export async function listCommercesForUser(userId) {
     String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")),
   );
   return withBalances;
+}
+
+export async function updateCommerceCategory(userId, commerceId, rawCategory) {
+  const cid = String(commerceId ?? "").trim();
+  if (!cid) return { error: "COMMERCE_REQUIRED" };
+  const rec = await getCommerceRecord(userId, cid);
+  if (!rec) return { error: "NOT_FOUND" };
+  const category = normalizeCategory(rawCategory);
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: commerceMetaSk(cid) },
+      UpdateExpression: "SET category = :c, updatedAt = :now",
+      ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeValues: {
+        ":c": category,
+        ":now": now,
+      },
+    }),
+  );
+  const accountId = String(rec.accountId ?? "")
+    .trim()
+    .toUpperCase();
+  if (accountId.startsWith("BLYP-")) {
+    await doc.send(
+      new UpdateCommand({
+        TableName: getTableName(),
+        Key: { PK: accountPk(accountId), SK: "META" },
+        UpdateExpression: "SET category = :c",
+        ExpressionAttributeValues: { ":c": category },
+      }),
+    );
+  }
+  const balanceFcfa = await getCommerceBalance(cid);
+  return {
+    commerce: commerceToApi(
+      {
+        ...rec,
+        commerceId: cid,
+        category,
+        updatedAt: now,
+      },
+      balanceFcfa,
+    ),
+  };
 }
 
 export async function createCommerce(userId, input) {

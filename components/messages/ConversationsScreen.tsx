@@ -60,13 +60,18 @@ import {
   peerStatusUserIdForConversation,
   countUnseenPeerStatuses,
   statusFeedHasPeerPosts,
+  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
 import {
   applyDemoStatusFeedNow,
   syncStatusFeedFromNetwork,
 } from "@/lib/status/statusSync";
-import { listStatusFeed } from "@/lib/api/client";
+import {
+  DEV_BACKGROUND_BOOT_MS,
+  DEV_METRO_LITE,
+  runAfterDevBackgroundBoot,
+} from "@/lib/perf/devMetroLite";
 import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
@@ -279,14 +284,17 @@ export default function ConversationsScreen() {
 
   const inboxIndicatorStyle = useAnimatedStyle(() => {
     const segment = inboxTabRowWidth.value * 0.5;
+    const indicatorW = segment * 0.36;
     const raw =
       inboxPageWidth.value > 0
         ? inboxScrollX.value / inboxPageWidth.value
         : 0;
     const progress = Math.min(1, Math.max(0, raw));
     return {
-      width: segment,
-      transform: [{ translateX: progress * segment }],
+      width: indicatorW,
+      transform: [
+        { translateX: progress * segment + (segment - indicatorW) * 0.5 },
+      ],
     };
   });
 
@@ -319,7 +327,10 @@ export default function ConversationsScreen() {
         if (statusUserId) {
           router.push({
             pathname: "/status/view",
-            params: { userId: statusUserId, index: "0" },
+            params: {
+              userId: statusUserId,
+              index: String(statusViewStartIndex(statusUserId)),
+            },
           });
           return;
         }
@@ -361,27 +372,36 @@ export default function ConversationsScreen() {
       if (alive) setThreadTick((n) => n + 1);
     };
     const unsubs: (() => void)[] = [];
-    void (async () => {
-      const [v, i, m] = await Promise.all([
-        import("@/lib/voice/outbox"),
-        import("@/lib/image/outbox"),
-        import("@/lib/messages/moneyOutbox"),
-      ]);
-      if (!alive) return;
-      unsubs.push(v.subscribeVoiceOutbox(() => bump()));
-      unsubs.push(i.subscribeImageOutbox(() => bump()));
-      unsubs.push(
-        m.subscribeMoneyOutbox(() => {
-          bump();
-          const snap = getConversationsSnapshot(token);
-          if (snap) {
-            setItems((prev) => (conversationsEqual(prev, snap) ? prev : snap));
-          }
-        }),
-      );
-    })();
+    const wireOutboxes = () => {
+      void (async () => {
+        const [v, i, m] = await Promise.all([
+          import("@/lib/voice/outbox"),
+          import("@/lib/image/outbox"),
+          import("@/lib/messages/moneyOutbox"),
+        ]);
+        if (!alive) return;
+        unsubs.push(v.subscribeVoiceOutbox(() => bump()));
+        unsubs.push(i.subscribeImageOutbox(() => bump()));
+        unsubs.push(
+          m.subscribeMoneyOutbox(() => {
+            bump();
+            const snap = getConversationsSnapshot(token);
+            if (snap) {
+              setItems((prev) => (conversationsEqual(prev, snap) ? prev : snap));
+            }
+          }),
+        );
+      })();
+    };
+    let delayTimer: ReturnType<typeof setTimeout> | undefined;
+    if (DEV_BACKGROUND_BOOT_MS > 0) {
+      delayTimer = setTimeout(wireOutboxes, DEV_BACKGROUND_BOOT_MS);
+    } else {
+      wireOutboxes();
+    }
     return () => {
       alive = false;
+      if (delayTimer) clearTimeout(delayTimer);
       unsubs.forEach((u) => u());
     };
   }, [token]);
@@ -424,11 +444,13 @@ export default function ConversationsScreen() {
           requestAnimationFrame(() => perfMarkEnd("tab_messages"));
         });
       };
-      InteractionManager.runAfterInteractions(() => {
-        void import("@/lib/messages/chatEmojiCatalog").then((m) => {
-          m.loadChatEmojiCategories?.();
+      if (!DEV_METRO_LITE) {
+        InteractionManager.runAfterInteractions(() => {
+          void import("@/lib/messages/chatEmojiCatalog").then((m) => {
+            m.loadChatEmojiCategories?.();
+          });
         });
-      });
+      }
       if (!token) {
         setItems([]);
         setLoading(false);
@@ -457,6 +479,10 @@ export default function ConversationsScreen() {
         void (async () => {
           try {
             if (!shouldPullConversationsList()) {
+              if (!cancelled) endMark();
+              return;
+            }
+            if (DEV_METRO_LITE && getConversationsSnapshot(token)) {
               if (!cancelled) endMark();
               return;
             }
@@ -598,6 +624,7 @@ export default function ConversationsScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      if (DEV_METRO_LITE) return;
       void import("@/lib/image/pickFromLibrary").then((m) =>
         m.warmImageLibraryPermission(),
       );
@@ -615,9 +642,17 @@ export default function ConversationsScreen() {
       avatarUrl: user?.avatarUrl ?? null,
     });
     if (statusFeedHasPeerPosts()) return;
-    void listStatusFeed(token)
-      .then((res) => applyStatusFeedSnapshot(res.items, res.myUserId))
-      .catch(() => {});
+    const loadStatus = () => {
+      void import("@/lib/api/client")
+        .then((api) => api.listStatusFeed(token))
+        .then((res) => applyStatusFeedSnapshot(res.items, res.myUserId))
+        .catch(() => {});
+    };
+    if (DEV_BACKGROUND_BOOT_MS > 0) {
+      runAfterDevBackgroundBoot(loadStatus);
+    } else {
+      loadStatus();
+    }
   }, [token, myId, user, t]);
 
   useFocusEffect(

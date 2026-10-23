@@ -7,7 +7,7 @@ export type KycDocType = "national_id" | "passport";
 
 export type KycDocumentSide = "front" | "back" | "selfie";
 
-export type CommerceCategory = "taxi" | "shop" | "other";
+export type CommerceCategory = "taxi" | "shop" | "other" | "soa_car";
 
 export type ApiCommerce = {
   id: string;

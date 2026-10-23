@@ -31,11 +31,13 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { pushStatusGridLocalPicks } from "@/lib/status/statusGridLocalCache";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
+  Keyboard,
   Image as RnImage,
   Linking,
   NativeScrollEvent,
@@ -43,17 +45,28 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
   useWindowDimensions,
 } from "react-native";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
 
 type Step = "hub" | "photo" | "text";
+
+const COMPOSE_SLIDE_MS = 320;
+/** Clavier commence à descendre avant le slide de sortie. */
+const KEYBOARD_LEAD_BEFORE_COMPOSE_SLIDE_MS = 120;
 
 type GridRow =
   | { kind: "camera"; id: "camera" }
@@ -65,6 +78,7 @@ export function StatusCreateScreen() {
   const styles = useMemo(() => createStatusCreateStyles(colors), [colors]);
   const { token } = useAuth();
   const { width: screenW } = useWindowDimensions();
+  const composeSlideX = useSharedValue(screenW);
   const insets = useSafeAreaInsets();
   const galleryFabBottom = insets.bottom + 8;
   const galleryScrollBottomPad = galleryFabBottom + 56;
@@ -74,6 +88,10 @@ export function StatusCreateScreen() {
   const tileImageSize = tileSize - tilePad * 2;
 
   const [step, setStep] = useState<Step>("hub");
+  const [composeLayerOpen, setComposeLayerOpen] = useState(false);
+  const [composeLayerStep, setComposeLayerStep] = useState<"text" | "photo">(
+    "text",
+  );
   const [photos, setPhotos] = useState<RecentGalleryPhoto[]>([]);
   const [galleryLoading, setGalleryLoading] = useState(true);
   const [rollCursor, setRollCursor] = useState<string | undefined>();
@@ -183,7 +201,9 @@ export function StatusCreateScreen() {
   const openPhotoCompose = useCallback((localUri: string) => {
     setUri(localUri);
     setCaption("");
+    setComposeLayerStep("photo");
     setStep("photo");
+    setComposeLayerOpen(true);
   }, []);
 
   const onGridPhotoPress = useCallback(
@@ -215,37 +235,104 @@ export function StatusCreateScreen() {
     Alert.alert(t("status.comingSoonTitle"), t("status.comingSoonMessage"));
   }, [t]);
 
-  const goHub = useCallback(() => {
-    setStep("hub");
+  const resetComposeDraft = useCallback(() => {
     setUri(null);
     setCaption("");
     setTextBody("");
     setTextBgIndex(0);
     setTextFontIndex(0);
+    setComposeLayerOpen(false);
   }, []);
+
+  const animateLeaveCompose = useCallback(
+    (onDone: () => void) => {
+      composeSlideX.value = withTiming(
+        screenW,
+        { duration: COMPOSE_SLIDE_MS },
+        (finished) => {
+          if (finished) runOnJS(onDone)();
+        },
+      );
+    },
+    [composeSlideX, screenW],
+  );
+
+  const returnToHub = useCallback(() => {
+    Keyboard.dismiss();
+    setStep("hub");
+    setTimeout(() => {
+      animateLeaveCompose(resetComposeDraft);
+    }, KEYBOARD_LEAD_BEFORE_COMPOSE_SLIDE_MS);
+  }, [animateLeaveCompose, resetComposeDraft]);
+
+  useEffect(() => {
+    composeSlideX.value = screenW;
+  }, [screenW, composeSlideX]);
+
+  useEffect(() => {
+    if (!composeLayerOpen) return;
+    if (step !== "text" && step !== "photo") return;
+    composeSlideX.value = screenW;
+    composeSlideX.value = withTiming(0, { duration: COMPOSE_SLIDE_MS });
+  }, [composeLayerOpen, step, screenW, composeSlideX]);
+
+  const composeSlideStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: composeSlideX.value }],
+  }));
+
+  const hasComposeDraft = useMemo(() => {
+    if (composeLayerStep === "text") return textBody.trim().length > 0;
+    if (composeLayerStep === "photo") {
+      return Boolean(uri) || caption.trim().length > 0;
+    }
+    return false;
+  }, [composeLayerStep, textBody, uri, caption]);
+
+  const requestLeaveCompose = useCallback(
+    (onLeave: () => void) => {
+      if (!hasComposeDraft) {
+        onLeave();
+        return;
+      }
+      Alert.alert(t("status.discardDraftTitle"), undefined, [
+        { text: t("status.discardDraftStay"), style: "cancel" },
+        {
+          text: t("status.discardDraftConfirm"),
+          style: "destructive",
+          onPress: onLeave,
+        },
+      ]);
+    },
+    [hasComposeDraft, t],
+  );
 
   const openTextCompose = useCallback(() => {
     setTextBody("");
     setTextBgIndex(0);
     setTextFontIndex(0);
+    setComposeLayerStep("text");
     setStep("text");
-  }, []);
-
-  const cycleTextBackground = useCallback(() => {
-    setTextBgIndex((i) => (i + 1) % STATUS_TEXT_BACKGROUNDS.length);
-  }, []);
-
-  const cycleTextFont = useCallback(() => {
-    setTextFontIndex((i) => (i + 1) % STATUS_TEXT_FONT_VARIANTS.length);
+    setComposeLayerOpen(true);
   }, []);
 
   const close = useCallback(() => {
-    if (step !== "hub") {
-      goHub();
+    if (composeLayerOpen) {
+      requestLeaveCompose(returnToHub);
       return;
     }
     router.back();
-  }, [goHub, step]);
+  }, [returnToHub, composeLayerOpen, requestLeaveCompose]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!composeLayerOpen) return;
+      const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+        requestLeaveCompose(returnToHub);
+        return true;
+      });
+      return () => sub.remove();
+    }, [composeLayerOpen, requestLeaveCompose, returnToHub]),
+  );
 
   const finishAfterPublish = useCallback(
     (post: import("@/lib/api/types").StatusPost) => {
@@ -323,13 +410,6 @@ export function StatusCreateScreen() {
     publishFailureMessage,
     t,
   ]);
-
-  const headerTitle =
-    step === "hub"
-      ? t("status.createTitle")
-      : step === "photo"
-        ? t("status.modePhoto")
-        : t("status.modeText");
 
   const listHeader = useMemo(
     () => (
@@ -527,70 +607,27 @@ export function StatusCreateScreen() {
     ],
   );
 
-  if (step === "text") {
-    return (
-      <StatusTextCompose
-        backgroundColor={textBackground}
-        value={textBody}
-        onChangeText={setTextBody}
-        fontVariant={textFontVariant}
-        onClose={goHub}
-        onCycleFont={cycleTextFont}
-        onCycleBackground={cycleTextBackground}
-        onMention={onComingSoon}
-        onSend={() => void publishTextStatus()}
-        sendDisabled={!canPublish}
-        busy={busy}
-      />
-    );
-  }
-
   return (
+    <View style={styles.root}>
     <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Pressable
           style={styles.headerSide}
           onPress={close}
-          accessibilityLabel={
-            step === "hub" ? t("common.close") : t("common.back")
-          }
+          accessibilityLabel={t("common.close")}
         >
-          <Ionicons
-            name={step === "hub" ? "close" : "arrow-back"}
-            size={26}
-            color={colors.text}
-          />
+          <Ionicons name="close" size={26} color={colors.text} />
         </Pressable>
         <Text style={styles.headerTitle} numberOfLines={1}>
-          {headerTitle}
+          {t("status.createTitle")}
         </Text>
-        {step === "hub" ? (
-          <View style={styles.headerSide} />
-        ) : (
-          <Pressable
-            style={styles.headerSide}
-            onPress={() => void publishPhotoStatus()}
-            disabled={!canPublish || busy}
-            accessibilityLabel={t("status.publish")}
-          >
-            {busy ? (
-              <ActivityIndicator color={colors.accent} />
-            ) : (
-              <Text
-                style={[
-                  styles.publishLabel,
-                  !canPublish && styles.publishLabelDisabled,
-                ]}
-              >
-                {t("status.publish")}
-              </Text>
-            )}
-          </Pressable>
-        )}
+        <View style={styles.headerSide} />
       </View>
 
-      {step === "hub" ? (
-        <View style={styles.listWrap}>
+      <View
+        style={styles.listWrap}
+        pointerEvents={composeLayerOpen ? "none" : "auto"}
+      >
           <ScrollView
             style={{ flex: 1 }}
             showsVerticalScrollIndicator={false}
@@ -626,25 +663,79 @@ export function StatusCreateScreen() {
             <Ionicons name="images-outline" size={24} color={colors.text} />
           </Pressable>
         </View>
-      ) : null}
-
-      {step === "photo" && uri ? (
-        <>
-          <View style={styles.composePreview}>
-            <Image source={{ uri }} style={{ flex: 1 }} contentFit="cover" />
-          </View>
-          <TextInput
-            style={styles.composeField}
-            placeholder={t("status.captionPlaceholder")}
-            placeholderTextColor={colors.placeholder}
-            value={caption}
-            onChangeText={setCaption}
-            multiline
-            maxLength={280}
-          />
-        </>
-      ) : null}
 
     </SafeAreaView>
+
+    {composeLayerOpen ? (
+      <Animated.View
+        style={[StyleSheet.absoluteFill, composeSlideStyle, styles.composeSlide]}
+      >
+        {composeLayerStep === "text" ? (
+          <StatusTextCompose
+            backgroundColor={textBackground}
+            bgIndex={textBgIndex}
+            onSelectBgIndex={setTextBgIndex}
+            value={textBody}
+            onChangeText={setTextBody}
+            fontVariant={textFontVariant}
+            fontIndex={textFontIndex}
+            onSelectFontIndex={setTextFontIndex}
+            onClose={() => requestLeaveCompose(returnToHub)}
+            onMention={onComingSoon}
+            onSend={() => void publishTextStatus()}
+            sendDisabled={!canPublish}
+            busy={busy}
+          />
+        ) : null}
+        {composeLayerStep === "photo" && uri ? (
+          <SafeAreaView style={styles.root} edges={["top", "left", "right"]}>
+            <View style={styles.header}>
+              <Pressable
+                style={styles.headerSide}
+                onPress={close}
+                accessibilityLabel={t("common.back")}
+              >
+                <Ionicons name="arrow-back" size={26} color={colors.text} />
+              </Pressable>
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {t("status.modePhoto")}
+              </Text>
+              <Pressable
+                style={styles.headerSide}
+                onPress={() => void publishPhotoStatus()}
+                disabled={!canPublish || busy}
+                accessibilityLabel={t("status.publish")}
+              >
+                {busy ? (
+                  <ActivityIndicator color={colors.accent} />
+                ) : (
+                  <Text
+                    style={[
+                      styles.publishLabel,
+                      !canPublish && styles.publishLabelDisabled,
+                    ]}
+                  >
+                    {t("status.publish")}
+                  </Text>
+                )}
+              </Pressable>
+            </View>
+            <View style={styles.composePreview}>
+              <Image source={{ uri }} style={{ flex: 1 }} contentFit="cover" />
+            </View>
+            <TextInput
+              style={styles.composeField}
+              placeholder={t("status.captionPlaceholder")}
+              placeholderTextColor={colors.placeholder}
+              value={caption}
+              onChangeText={setCaption}
+              multiline
+              maxLength={280}
+            />
+          </SafeAreaView>
+        ) : null}
+      </Animated.View>
+    ) : null}
+    </View>
   );
 }

@@ -117,6 +117,17 @@ export function activePosts(posts: StatusPost[]): StatusPost[] {
   });
 }
 
+/** Index du 1er statut non vu pour ce contact (0 si tout vu ou inconnu). */
+export function statusViewStartIndex(userId: string): number {
+  const row = findStatusFeedItem(userId);
+  if (!row) return 0;
+  const posts = activePosts(row.posts);
+  for (let i = 0; i < posts.length; i++) {
+    if (!viewedPostIds.has(posts[i]!.id)) return i;
+  }
+  return 0;
+}
+
 /** Pastille onglet Actus (statuts contacts non vus). */
 export function countUnseenPeerStatuses(): number {
   const myId = getStatusMyUserId();

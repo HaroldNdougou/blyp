@@ -23,6 +23,10 @@ export type AuthContextValue = {
     name: string;
     category?: string;
   }) => Promise<{ commerce: ApiCommerce; user: ApiUser }>;
+  updateCommerceCategory: (
+    commerceId: string,
+    category: string,
+  ) => Promise<{ commerce: ApiCommerce; user: ApiUser }>;
 };
 
 /**
@@ -48,6 +52,9 @@ const DEV_FALLBACK: AuthContextValue = {
     throw new Error("useAuth doit être utilisé dans AuthProvider");
   },
   createCommerce: async () => {
+    throw new Error("useAuth doit être utilisé dans AuthProvider");
+  },
+  updateCommerceCategory: async () => {
     throw new Error("useAuth doit être utilisé dans AuthProvider");
   },
 };

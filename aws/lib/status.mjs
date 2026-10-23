@@ -14,7 +14,7 @@ import { getUserProfile, userPk } from "./user.mjs";
 const doc = getDocClient();
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 const TEXT_BG_COUNT = 8;
-const TEXT_FONT_COUNT = 3;
+const TEXT_FONT_COUNT = 6;
 
 function clampTextStyleIndex(index, max) {
   const n = Number(index);

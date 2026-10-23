@@ -110,7 +110,9 @@ export function createStatusStyles(c: ThemeColors) {
       flex: 1,
       alignItems: "center",
       justifyContent: "center",
-      padding: 24,
+      paddingHorizontal: 28,
+      paddingTop: 16,
+      paddingBottom: 112,
     },
     viewerTextOnlyLabel: {
       fontSize: 28,
@@ -129,11 +131,22 @@ export function createStatusStyles(c: ThemeColors) {
       paddingVertical: 8,
       gap: 10,
     },
-    viewerName: {
+    viewerHeaderMeta: {
       flex: 1,
+      justifyContent: "center",
+      minWidth: 0,
+    },
+    viewerName: {
       fontSize: 16,
       fontWeight: "700",
-      color: c.text,
+      color: c.textInverse,
+    },
+    viewerPublishedAt: {
+      marginTop: 2,
+      fontSize: 12,
+      lineHeight: 15,
+      color: c.textInverse,
+      opacity: 0.72,
     },
     createField: {
       marginHorizontal: 16,
@@ -260,11 +273,15 @@ export function createStatusStyles(c: ThemeColors) {
       right: 8,
       bottom: 10,
       fontSize: 13,
-      fontWeight: "600",
+      fontWeight: "500",
       color: c.textInverse,
+      textAlign: "left",
     },
     actusCardLabelPeer: {
       textAlign: "center",
+    },
+    actusCardLabelMine: {
+      left: 14,
     },
     actusCardTextPreview: {
       fontSize: 14,

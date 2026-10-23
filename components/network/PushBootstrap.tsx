@@ -31,7 +31,9 @@ import {
   Platform,
 } from "react-native";
 
-const BOOT_DELAY_MS = __DEV__ ? 12_000 : 400;
+import { DEV_BACKGROUND_BOOT_MS } from "@/lib/perf/devMetroLite";
+
+const BOOT_DELAY_MS = DEV_BACKGROUND_BOOT_MS > 0 ? DEV_BACKGROUND_BOOT_MS : 400;
 
 /**
  * Push Expo — bootstrap après interactions (jamais splash).
@@ -62,21 +64,23 @@ export function PushBootstrap() {
       );
     }
     /** Pref annonce — hydrate RAM après frame, jamais splash. */
-    InteractionManager.runAfterInteractions(() => {
-      void import("@/lib/push/announcePref").then((m) => {
-        void m.hydrateAnnouncePaymentsPref().then((on) => {
-          if (!on) return;
-          /** Pré-charge TTS + cash — 1er paiement sans cold import au push. */
-          void Promise.all([
-            import("@/lib/push/announceNative"),
-            import("@/lib/push/announcePayment"),
-            import("expo-speech"),
-            import("expo-av"),
-          ]);
+    const announceTimer = setTimeout(() => {
+      InteractionManager.runAfterInteractions(() => {
+        void import("@/lib/push/announcePref").then((m) => {
+          void m.hydrateAnnouncePaymentsPref().then((on) => {
+            if (!on) return;
+            void Promise.all([
+              import("@/lib/push/announceNative"),
+              import("@/lib/push/announcePayment"),
+              import("expo-speech"),
+              import("expo-av"),
+            ]);
+          });
         });
       });
-    });
+    }, BOOT_DELAY_MS);
     return () => {
+      clearTimeout(announceTimer);
       paySub?.remove();
     };
   }, [token, phone, refreshUser, applyIncomingPayment]);
@@ -85,7 +89,8 @@ export function PushBootstrap() {
     if (Platform.OS === "web") return;
 
     let cancelled = false;
-    void import("expo-notifications").then((Notifications) => {
+    const bootTimer = setTimeout(() => {
+      void import("expo-notifications").then((Notifications) => {
       if (cancelled) return;
       Notifications.setNotificationHandler({
         handleNotification: async (notification) => {
@@ -185,10 +190,12 @@ export function PushBootstrap() {
           };
         },
       });
-    });
+      });
+    }, BOOT_DELAY_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(bootTimer);
     };
   }, []);
 
@@ -229,7 +236,8 @@ export function PushBootstrap() {
     let subReceived: { remove: () => void } | undefined;
     let subResponse: { remove: () => void } | undefined;
 
-    void import("expo-notifications").then((Notifications) => {
+    const bootTimer = setTimeout(() => {
+      void import("expo-notifications").then((Notifications) => {
       if (cancelled) return;
 
       subReceived = Notifications.addNotificationReceivedListener((n) => {
@@ -456,10 +464,12 @@ export function PushBootstrap() {
         openHomeFromPush(router);
         softHydrateAfterPaymentPush({ token, phone, refreshUser });
       });
-    });
+      });
+    }, BOOT_DELAY_MS);
 
     return () => {
       cancelled = true;
+      clearTimeout(bootTimer);
       subReceived?.remove();
       subResponse?.remove();
     };

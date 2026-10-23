@@ -13,6 +13,8 @@ export function createStatusTextComposeStyles(c: ThemeColors) {
       paddingHorizontal: 12,
       paddingTop: 4,
       paddingBottom: 8,
+      zIndex: 20,
+      elevation: 20,
     },
     topBarRight: {
       flexDirection: "row",
@@ -26,6 +28,40 @@ export function createStatusTextComposeStyles(c: ThemeColors) {
       backgroundColor: c.overlay,
       alignItems: "center",
       justifyContent: "center",
+    },
+    chromeCircleActive: {
+      backgroundColor: c.textInverse,
+    },
+    fontRibbon: {
+      marginBottom: 10,
+      paddingHorizontal: 8,
+    },
+    fontRibbonScroll: {
+      gap: 10,
+      paddingHorizontal: 4,
+      alignItems: "center",
+    },
+    fontChip: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      backgroundColor: c.overlay,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    fontChipSelected: {
+      backgroundColor: c.textInverse,
+    },
+    colorChip: {
+      width: 44,
+      height: 44,
+      borderRadius: 22,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    colorChipSelected: {
+      borderWidth: 2.5,
+      borderColor: c.textInverse,
     },
     textArea: {
       flex: 1,
@@ -52,6 +88,10 @@ export function createStatusTextComposeStyles(c: ThemeColors) {
       justifyContent: "center",
       marginBottom: 10,
       marginRight: 12,
+    },
+    footerBarSlot: {
+      minHeight: 72,
+      justifyContent: "center",
     },
     footerBar: {
       flexDirection: "row",

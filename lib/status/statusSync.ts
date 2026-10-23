@@ -1,4 +1,3 @@
-import { listStatusFeed, recordStatusView } from "@/lib/api/client";
 import {
   DEMO_PROFILES_ENABLED,
   demoStatusFeedFallback,
@@ -23,7 +22,8 @@ export function syncStatusFeedFromNetwork(
   const now = Date.now();
   if (!opts?.force && now - lastSyncAt < MIN_SYNC_MS) return;
   InteractionManager.runAfterInteractions(() => {
-    void listStatusFeed(t)
+    void import("@/lib/api/client")
+      .then((api) => api.listStatusFeed(t))
       .then((res) => {
         lastSyncAt = Date.now();
         applyStatusFeedSnapshot(res.items, res.myUserId);
@@ -57,5 +57,7 @@ export function confirmStatusView(token: string, postId: string): void {
   const id = String(postId ?? "").trim();
   if (!id) return;
   markStatusPostViewedLocal(id);
-  void recordStatusView(token, id).catch(() => {});
+  void import("@/lib/api/client")
+    .then((api) => api.recordStatusView(token, id))
+    .catch(() => {});
 }

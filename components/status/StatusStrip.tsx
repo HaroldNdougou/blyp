@@ -11,6 +11,7 @@ import {
   ensureStatusFeedPlaceholder,
   getStatusFeedSnapshot,
   getStatusMyUserId,
+  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -73,7 +74,10 @@ export function StatusStrip() {
     if (myPosts.length > 0) {
       router.push({
         pathname: "/status/view",
-        params: { userId: myId, index: "0" },
+        params: {
+          userId: myId,
+          index: String(statusViewStartIndex(myId)),
+        },
       });
     } else {
       router.push("/status/create");
@@ -100,7 +104,10 @@ export function StatusStrip() {
   const openPeer = (row: StatusFeedItem) => {
     router.push({
       pathname: "/status/view",
-      params: { userId: row.userId, index: "0" },
+      params: {
+        userId: row.userId,
+        index: String(statusViewStartIndex(row.userId)),
+      },
     });
   };
 

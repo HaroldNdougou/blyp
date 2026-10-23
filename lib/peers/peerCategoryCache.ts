@@ -107,7 +107,9 @@ export function rememberPeerCategory(
   const cat = normalizeSpendCategory(category);
   if (!cat) return;
   const id = normAccount(accountId);
-  if (id && byAccount.get(id) !== cat) {
+  const prev = id ? byAccount.get(id) : undefined;
+  if (prev === "soa_car" && cat !== "soa_car") return;
+  if (id && prev !== cat) {
     byAccount.set(id, cat);
     persist(`a:${id}`, cat);
   }

@@ -1,4 +1,4 @@
-export type SpendCategory = "taxi" | "shop" | "other";
+export type SpendCategory = "taxi" | "shop" | "other" | "soa_car";
 
 export function normalizeSpendCategory(
   raw: string | null | undefined,
@@ -6,6 +6,8 @@ export function normalizeSpendCategory(
   const c = String(raw ?? "")
     .trim()
     .toLowerCase();
-  if (c === "taxi" || c === "shop" || c === "other") return c;
+  if (c === "taxi" || c === "shop" || c === "other" || c === "soa_car") {
+    return c;
+  }
   return null;
 }

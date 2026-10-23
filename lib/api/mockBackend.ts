@@ -3,6 +3,11 @@ import {
   demoStatusPostIdsViewedByDefault,
   withDemoConversations,
 } from "@/lib/dev/demoProfiles";
+import {
+  mockGetSoaTrip,
+  mockRecordSoaSeat,
+  mockResetSoaTrip,
+} from "@/lib/soa/mockSoaTripStore";
 import { makeTxReference } from "@/lib/txReference";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
@@ -468,7 +473,10 @@ export function mockCreateCommerce(
   }
   const catRaw = String(input?.category ?? "other").toLowerCase();
   const category = (
-    catRaw === "taxi" || catRaw === "shop" || catRaw === "other"
+    catRaw === "taxi" ||
+    catRaw === "shop" ||
+    catRaw === "other" ||
+    catRaw === "soa_car"
       ? catRaw
       : "other"
   ) as CommerceCategory;
@@ -500,6 +508,39 @@ export function mockCreateCommerce(
 export function mockListCommerces(token: string): { items: ApiCommerce[] } {
   assertSession(token);
   return { items: mockCommerces.map((c) => ({ ...c })) };
+}
+
+export function mockUpdateCommerceCategory(
+  token: string,
+  commerceId: string,
+  category: string,
+): { commerce: ApiCommerce; user: ApiUser } {
+  assertSession(token);
+  const id = String(commerceId ?? "").trim();
+  const catRaw = String(category ?? "other").toLowerCase();
+  const cat = (
+    catRaw === "taxi" ||
+    catRaw === "shop" ||
+    catRaw === "other" ||
+    catRaw === "soa_car"
+      ? catRaw
+      : "other"
+  ) as CommerceCategory;
+  const idx = mockCommerces.findIndex((c) => c.id === id);
+  if (idx < 0) throw new ApiError("Commerce introuvable", 404);
+  const next = { ...mockCommerces[idx]!, category: cat };
+  mockCommerces = [
+    ...mockCommerces.slice(0, idx),
+    next,
+    ...mockCommerces.slice(idx + 1),
+  ];
+  if (
+    mockActiveContext.type === "commerce" &&
+    mockActiveContext.commerceId === id
+  ) {
+    mockActiveContext = { ...mockActiveContext, category: cat };
+  }
+  return { commerce: { ...next }, user: mockUserFromState() };
 }
 
 export function mockLookupAccountPublic(
@@ -646,6 +687,7 @@ export function mockPay(
   recipientPhone: string | null,
   transactionPin: string,
   recipientAccountId?: string | null,
+  soaSeatNumber?: number | null,
 ): {
   balanceFcfa: number;
   transactionId: string | null;
@@ -682,6 +724,23 @@ export function mockPay(
     mockCommerces.some((c) => c.accountId === accountId)
   ) {
     throw new ApiError("Impossible de vous payer vous-même", 400);
+  }
+
+  const recipientCommerce = mockCommerces.find((c) => c.accountId === accountId);
+  if (recipientCommerce?.category === "soa_car") {
+    const seat = Math.floor(Number(soaSeatNumber));
+    if (!Number.isFinite(seat) || seat < 1 || seat > 18) {
+      throw new ApiError("Numéro de siège requis (1–18)", 400);
+    }
+    const trip = mockRecordSoaSeat(
+      recipientCommerce.id,
+      seat,
+      amount,
+      "pending",
+    );
+    if (trip.error === "SEAT_INVALID") {
+      throw new ApiError("Numéro de siège invalide", 400);
+    }
   }
 
   balanceFcfa -= amount;
@@ -1606,7 +1665,7 @@ export function mockPublishStatus(
           bgIndex: Math.max(0, Math.min(7, Math.floor(Number(body.textStyle?.bgIndex) || 0))),
           fontIndex: Math.max(
             0,
-            Math.min(2, Math.floor(Number(body.textStyle?.fontIndex) || 0)),
+            Math.min(5, Math.floor(Number(body.textStyle?.fontIndex) || 0)),
           ),
         }
       : null;
@@ -1648,4 +1707,45 @@ export function mockDeleteMyStatuses(token: string): { ok: boolean } {
     if (mockStatusPosts[i]!.userId === myId) mockStatusPosts.splice(i, 1);
   }
   return { ok: true };
+}
+
+export function mockGetSoaTripByAccount(
+  token: string,
+  accountId: string,
+): import("@/lib/soa/soaCar").SoaCarTrip {
+  assertSession(token);
+  const id = String(accountId ?? "").trim().toUpperCase();
+  const commerce = mockCommerces.find((c) => c.accountId === id);
+  if (!commerce || commerce.category !== "soa_car") {
+    return mockGetSoaTrip(id);
+  }
+  return mockGetSoaTrip(commerce.id);
+}
+
+export function mockGetSoaTripForCommerce(
+  token: string,
+  commerceId: string,
+): import("@/lib/soa/soaCar").SoaCarTrip {
+  assertSession(token);
+  const id = String(commerceId ?? "").trim();
+  const commerce = mockCommerces.find((c) => c.id === id);
+  if (!commerce) throw new ApiError("Commerce introuvable", 404);
+  if (commerce.category !== "soa_car") {
+    throw new ApiError("Ce commerce n’est pas un car Soa", 400);
+  }
+  return mockGetSoaTrip(commerce.id);
+}
+
+export function mockResetSoaTripForCommerce(
+  token: string,
+  commerceId: string,
+): import("@/lib/soa/soaCar").SoaCarTrip {
+  assertSession(token);
+  const id = String(commerceId ?? "").trim();
+  const commerce = mockCommerces.find((c) => c.id === id);
+  if (!commerce) throw new ApiError("Commerce introuvable", 404);
+  if (commerce.category !== "soa_car") {
+    throw new ApiError("Ce commerce n’est pas un car Soa", 400);
+  }
+  return mockResetSoaTrip(commerce.id);
 }

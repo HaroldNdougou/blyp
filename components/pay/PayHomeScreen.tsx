@@ -1,5 +1,5 @@
-import "@/lib/perf/eagerRoutes";
 import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
+import { SoaSeatPaySheet } from "@/components/soa/SoaSeatPaySheet";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { modalPresentation } from "@/lib/perf/instantMotion";
@@ -223,6 +223,13 @@ export default function PayHomeScreen() {
     recipientPhone: string | null;
     recipientAccountId: string | null;
     pin: string;
+    soaSeatNumber?: number | null;
+  } | null>(null);
+  const pendingSoaSeatRef = useRef<number | null>(null);
+  const [soaSeatSheetVisible, setSoaSeatSheetVisible] = useState(false);
+  const [soaSeatPending, setSoaSeatPending] = useState<{
+    amount: number;
+    to: PayRecipient;
   } | null>(null);
   const userRef = useRef(user);
   userRef.current = user;
@@ -833,6 +840,40 @@ export default function PayHomeScreen() {
     t,
   ]);
 
+  const continueToPayPin = useCallback(
+    (n: number, to: PayRecipient) => {
+      payRecipientAtPinRef.current = to;
+      if (to.viaMoneyMessage) {
+        moneyIdemRef.current = newMoneyClientId();
+        void resolveRegularConversation(to.phoneDigits).catch(() => {});
+      } else {
+        recipientRef.current = to;
+      }
+      payPinFailedRef.current = 0;
+      setPayPinErrorLine(null);
+      setPayPinSelection(undefined);
+      setPayPinUi("idle");
+      setPayPendingAmount(n);
+      setPayPinDraft("");
+      payPinOpenFocusGenRef.current += 1;
+      setPayPinInputKey((k) => k + 1);
+      void (async () => {
+        const { tryUnlockTransactionPinVault } = await import(
+          "@/lib/security/transactionPinVault"
+        );
+        const vaulted = await tryUnlockTransactionPinVault(
+          t("pay.deviceAuthPrompt"),
+        );
+        if (vaulted) {
+          void confirmPayWithPinRef.current(vaulted, { deviceAuthDone: true });
+          return;
+        }
+        setPayPinModalVisible(true);
+      })();
+    },
+    [t, resolveRegularConversation],
+  );
+
   const openPayPinForAmount = useCallback(
     (n: number, to: PayRecipient) => {
       if (!to.accountId && !to.viaMoneyMessage) {
@@ -871,37 +912,36 @@ export default function PayHomeScreen() {
         );
         return;
       }
-      payRecipientAtPinRef.current = to;
-      if (to.viaMoneyMessage) {
-        moneyIdemRef.current = newMoneyClientId();
-        void resolveRegularConversation(to.phoneDigits).catch(() => {});
-      } else {
-        recipientRef.current = to;
+      if (
+        !to.viaMoneyMessage &&
+        spendCategoryRef.current === "soa_car" &&
+        to.accountId
+      ) {
+        setSoaSeatPending({ amount: n, to });
+        setSoaSeatSheetVisible(true);
+        return;
       }
-      payPinFailedRef.current = 0;
-      setPayPinErrorLine(null);
-      setPayPinSelection(undefined);
-      setPayPinUi("idle");
-      setPayPendingAmount(n);
-      setPayPinDraft("");
-      payPinOpenFocusGenRef.current += 1;
-      setPayPinInputKey((k) => k + 1);
-      void (async () => {
-        const { tryUnlockTransactionPinVault } = await import(
-          "@/lib/security/transactionPinVault"
-        );
-        const vaulted = await tryUnlockTransactionPinVault(
-          t("pay.deviceAuthPrompt"),
-        );
-        if (vaulted) {
-          void confirmPayWithPinRef.current(vaulted, { deviceAuthDone: true });
-          return;
-        }
-        setPayPinModalVisible(true);
-      })();
+      continueToPayPin(n, to);
     },
-    [balance, payPinLockoutUntil, t, resolveRegularConversation],
+    [balance, payPinLockoutUntil, t, continueToPayPin],
   );
+
+  const onSoaSeatConfirmed = useCallback(
+    (seatNumber: number) => {
+      pendingSoaSeatRef.current = seatNumber;
+      setSoaSeatSheetVisible(false);
+      const pending = soaSeatPending;
+      setSoaSeatPending(null);
+      if (pending) continueToPayPin(pending.amount, pending.to);
+    },
+    [soaSeatPending, continueToPayPin],
+  );
+
+  const onSoaSeatCancel = useCallback(() => {
+    setSoaSeatSheetVisible(false);
+    setSoaSeatPending(null);
+    pendingSoaSeatRef.current = null;
+  }, []);
 
   const handlePay = useCallback(
     (n: number) => {
@@ -1162,6 +1202,7 @@ export default function PayHomeScreen() {
         selectedRegularRef.current = null;
         setSelectedRegularPhone(null);
       } else {
+        const seatForPay = pendingSoaSeatRef.current;
         payRes = await api.pay(
           token,
           payPendingAmount,
@@ -1169,7 +1210,9 @@ export default function PayHomeScreen() {
           to.phoneDigits || null,
           pin,
           to.accountId,
+          seatForPay,
         );
+        pendingSoaSeatRef.current = null;
       }
       if (payPinFocusTimerRef.current) {
         clearTimeout(payPinFocusTimerRef.current);
@@ -1298,6 +1341,7 @@ export default function PayHomeScreen() {
             recipientPhone: to.phoneDigits || null,
             recipientAccountId: to.accountId ?? null,
             pin,
+            soaSeatNumber: pendingSoaSeatRef.current,
           };
           setPayOutcomeSheet({
             kind: "offline_offer",
@@ -1681,6 +1725,17 @@ export default function PayHomeScreen() {
                 </View>
               </View>
             </Modal>
+          ) : null}
+
+          {soaSeatPending && soaSeatSheetVisible ? (
+            <SoaSeatPaySheet
+              visible={soaSeatSheetVisible}
+              amountFcfa={soaSeatPending.amount}
+              recipientAccountId={soaSeatPending.to.accountId ?? ""}
+              recipientName={soaSeatPending.to.name}
+              onCancel={onSoaSeatCancel}
+              onConfirm={onSoaSeatConfirmed}
+            />
           ) : null}
 
           {payPinModalVisible ? (

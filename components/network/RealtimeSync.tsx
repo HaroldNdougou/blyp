@@ -1,3 +1,7 @@
+import {
+  DEV_BACKGROUND_BOOT_MS,
+  DEV_METRO_LITE,
+} from "@/lib/perf/devMetroLite";
 import { kickImageOutbox } from "@/lib/image/outbox";
 import { kickMoneyOutbox } from "@/lib/messages/moneyOutbox";
 import { kickTextOutbox } from "@/lib/messages/textOutbox";
@@ -9,7 +13,7 @@ import { AppState, InteractionManager, type AppStateStatus } from "react-native"
 
 const POLL_MS = 45_000;
 /** Juste après 1er frame Pay — sync fond sans délai « prudent ». */
-const BOOT_DELAY_MS = 120;
+const BOOT_DELAY_MS = DEV_BACKGROUND_BOOT_MS > 0 ? DEV_BACKGROUND_BOOT_MS : 120;
 
 /**
  * Sync fond (filet) — le push Expo couvre l’instantané « paiement reçu » :
@@ -28,6 +32,7 @@ export function RealtimeSync() {
 
   /** Purge pub BLE orpheline (reload natif) — une fois, pas à chaque Profil. */
   useEffect(() => {
+    if (DEV_METRO_LITE) return;
     const task = InteractionManager.runAfterInteractions(() => {
       void import("@/lib/ble/advertise").then((m) => {
         m.purgeOrphanTaxiBroadcastOnce();

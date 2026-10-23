@@ -3,8 +3,10 @@ import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { deleteMyStatuses } from "@/lib/api/client";
+import type { StatusFeedItem, StatusPost } from "@/lib/api/types";
 import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
+import { formatStatusPublishedWhen } from "@/lib/format";
 import { STATUS_SLIDE_MS } from "@/lib/status/constants";
 import { resolveStatusTextAppearance } from "@/lib/status/textStatusPalette";
 import {
@@ -12,17 +14,18 @@ import {
   findStatusFeedItem,
   getStatusMyUserId,
   removeMyStatusPosts,
+  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
+import { nextStatusViewerUserId } from "@/lib/status/statusViewerQueue";
 import { confirmStatusView, syncStatusFeedFromNetwork } from "@/lib/status/statusSync";
-import { modalPresentation } from "@/lib/perf/instantMotion";
 import { router, useLocalSearchParams } from "expo-router";
 import { Image } from "expo-image";
+import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   Alert,
-  Modal,
   Pressable,
   StyleSheet,
   Text,
@@ -36,28 +39,65 @@ export default function StatusViewScreen() {
   const { colors } = useTheme();
   const styles = useMemo(() => createStatusStyles(colors), [colors]);
   const { token } = useAuth();
-  const params = useLocalSearchParams<{ userId?: string; index?: string }>();
-  const userId = decodeURIComponent(String(params.userId ?? ""));
+  const params = useLocalSearchParams<{
+    userId?: string;
+    index?: string;
+    advanceFeed?: string;
+  }>();
+  const entryUserId = decodeURIComponent(String(params.userId ?? ""));
+  const advanceFeed = params.advanceFeed === "1";
   const startIndex = Math.max(0, parseInt(String(params.index ?? "0"), 10) || 0);
   const [feedTick, setFeedTick] = useState(0);
+  const [activeUserId, setActiveUserId] = useState(entryUserId);
   const [index, setIndex] = useState(startIndex);
   const [slideProgress, setSlideProgress] = useState(0);
   const { width } = useWindowDimensions();
 
+  const closingRef = useRef(false);
+  const viewerSnapshotRef = useRef<{
+    row: StatusFeedItem;
+    posts: StatusPost[];
+    index: number;
+  } | null>(null);
+  const goNextRef = useRef<() => void>(() => {});
+
+  const closeViewer = useCallback(() => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    router.back();
+  }, []);
+
   void feedTick;
-  const row = findStatusFeedItem(userId);
+  const row = findStatusFeedItem(activeUserId);
   const posts = row ? activePosts(row.posts) : [];
   const safeIndex = Math.min(index, Math.max(0, posts.length - 1));
-  const post = posts[safeIndex];
+  const livePost = posts[safeIndex];
+  if (row && livePost && posts.length > 0) {
+    viewerSnapshotRef.current = { row, posts, index: safeIndex };
+  }
+  const snap = viewerSnapshotRef.current;
+  const viewRow = row && livePost ? row : snap?.row;
+  const viewPosts = row && livePost ? posts : snap?.posts ?? [];
+  const viewIndex = row && livePost ? safeIndex : snap?.index ?? 0;
+  const post =
+    viewPosts[Math.min(viewIndex, Math.max(0, viewPosts.length - 1))];
   const textAppearance =
     post?.kind === "text"
       ? resolveStatusTextAppearance(post.textStyle)
       : null;
+  const viewerBg =
+    textAppearance?.backgroundColor ?? colors.statusViewerBackground;
   const myId = getStatusMyUserId();
-  const isMine = userId === myId;
-  const goNextRef = useRef<() => void>(() => {});
+  const isMine = activeUserId === myId;
 
-  useEffect(() => subscribeStatusFeed(() => setFeedTick((n) => n + 1)), []);
+  useEffect(
+    () =>
+      subscribeStatusFeed(() => {
+        if (closingRef.current) return;
+        setFeedTick((n) => n + 1);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!token) return;
@@ -65,8 +105,13 @@ export default function StatusViewScreen() {
   }, [token]);
 
   useEffect(() => {
-    setIndex(Math.min(startIndex, Math.max(0, posts.length - 1)));
-  }, [userId, startIndex, posts.length]);
+    setActiveUserId(entryUserId);
+    setIndex(startIndex);
+  }, [entryUserId, startIndex]);
+
+  useEffect(() => {
+    setIndex((i) => Math.min(i, Math.max(0, posts.length - 1)));
+  }, [activeUserId, posts.length]);
 
   useEffect(() => {
     if (!token || !post?.id) return;
@@ -74,9 +119,28 @@ export default function StatusViewScreen() {
   }, [token, post?.id]);
 
   const goNext = useCallback(() => {
-    if (safeIndex < posts.length - 1) setIndex((i) => i + 1);
-    else router.back();
-  }, [safeIndex, posts.length]);
+    if (safeIndex < posts.length - 1) {
+      setIndex((i) => i + 1);
+      return;
+    }
+    if (advanceFeed && entryUserId !== myId) {
+      const nextUserId = nextStatusViewerUserId(entryUserId, activeUserId);
+      if (nextUserId) {
+        setActiveUserId(nextUserId);
+        setIndex(statusViewStartIndex(nextUserId));
+        return;
+      }
+    }
+    closeViewer();
+  }, [
+    safeIndex,
+    posts.length,
+    advanceFeed,
+    entryUserId,
+    activeUserId,
+    myId,
+    closeViewer,
+  ]);
 
   const goPrev = useCallback(() => {
     if (safeIndex > 0) setIndex((i) => i - 1);
@@ -107,42 +171,39 @@ export default function StatusViewScreen() {
           void deleteMyStatuses(token).then(() => {
             if (myId) removeMyStatusPosts(myId);
             syncStatusFeedFromNetwork(token, { force: true });
-            router.back();
+            closeViewer();
           });
         },
       },
     ]);
-  }, [token, isMine, myId, t]);
+  }, [token, isMine, myId, t, closeViewer]);
 
-  if (!row || !post) {
+  if (!viewRow || !post) {
     return (
-      <SafeAreaView style={styles.viewerRoot}>
-        <Pressable onPress={() => router.back()} style={{ padding: 16 }}>
-          <Text style={{ color: colors.text }}>{t("common.back")}</Text>
+      <SafeAreaView
+        style={[
+          styles.viewerRoot,
+          { backgroundColor: colors.statusViewerBackground },
+        ]}
+      >
+        <StatusBar style="light" />
+        <Pressable onPress={closeViewer} style={{ padding: 16 }}>
+          <Text style={{ color: colors.textInverse }}>{t("common.back")}</Text>
         </Pressable>
       </SafeAreaView>
     );
   }
 
+  const progressIndex = row && livePost ? safeIndex : viewIndex;
+  const publishedWhen = formatStatusPublishedWhen(post.createdAt);
+
   return (
-    <Modal
-      visible
-      animationType={modalPresentation}
-      onRequestClose={() => router.back()}
-    >
-      <SafeAreaView
-        style={[
-          styles.viewerRoot,
-          {
-            backgroundColor:
-              textAppearance?.backgroundColor ?? colors.statusViewerBackground,
-          },
-        ]}
-      >
+    <SafeAreaView style={[styles.viewerRoot, { backgroundColor: viewerBg }]}>
+      <StatusBar style="light" />
         <View style={styles.progressRow}>
-          {posts.map((p, i) => {
+          {viewPosts.map((p, i) => {
             const fill =
-              i < safeIndex ? 1 : i === safeIndex ? slideProgress : 0;
+              i < progressIndex ? 1 : i === progressIndex ? slideProgress : 0;
             return (
               <View key={p.id} style={styles.progressSeg}>
                 <View
@@ -157,15 +218,24 @@ export default function StatusViewScreen() {
         </View>
         <View style={styles.viewerHeader}>
           <PeerAvatar
-            name={row.displayName}
-            phone={row.peerPhone}
-            remoteUrl={row.avatarUrl ?? demoAvatarUrlForPhone(row.peerPhone)}
-            localUri={contactPhotoUriForPhone(row.peerPhone)}
-            size={36}
+            name={viewRow.displayName}
+            phone={viewRow.peerPhone}
+            remoteUrl={
+              viewRow.avatarUrl ?? demoAvatarUrlForPhone(viewRow.peerPhone)
+            }
+            localUri={contactPhotoUriForPhone(viewRow.peerPhone)}
+            size={40}
           />
-          <Text style={[styles.viewerName, { color: colors.textInverse }]}>
-            {row.displayName}
-          </Text>
+          <View style={styles.viewerHeaderMeta}>
+            <Text style={styles.viewerName} numberOfLines={1}>
+              {viewRow.displayName}
+            </Text>
+            {publishedWhen ? (
+              <Text style={styles.viewerPublishedAt} numberOfLines={1}>
+                {publishedWhen}
+              </Text>
+            ) : null}
+          </View>
           {isMine ? (
             <Pressable
               onPress={() => router.push("/status/create")}
@@ -187,7 +257,7 @@ export default function StatusViewScreen() {
             </Pressable>
           ) : null}
           <Pressable
-            onPress={() => router.back()}
+            onPress={closeViewer}
             accessibilityLabel={t("common.close")}
           >
             <Text style={{ color: colors.textInverse, fontSize: 22 }}>×</Text>
@@ -227,6 +297,7 @@ export default function StatusViewScreen() {
                       fontSize: textAppearance.font.fontSize,
                       fontWeight: textAppearance.font.fontWeight,
                       fontStyle: textAppearance.font.fontStyle ?? "normal",
+                      fontFamily: textAppearance.font.fontFamily,
                     },
                   ]}
                 >
@@ -243,7 +314,6 @@ export default function StatusViewScreen() {
         {post.text && post.kind === "image" ? (
           <Text style={styles.viewerCaption}>{post.text}</Text>
         ) : null}
-      </SafeAreaView>
-    </Modal>
+    </SafeAreaView>
   );
 }

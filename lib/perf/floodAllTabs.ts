@@ -2,9 +2,11 @@
  * Monte le JS de tous les onglets dès que possible — clic tab = pas d’attente chunk Metro.
  * Mémoire OK (règle produit) ; réseau / SQLite reste dans aggressiveWarm.
  */
+import { DEV_METRO_LITE } from "@/lib/perf/devMetroLite";
 import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
 
 export function floodAllTabs(_token: string | null): void {
+  if (DEV_METRO_LITE) return;
   prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/app/(tabs)/pay"));
   prefetchModule(() => import("@/components/pay/PayHomeScreen"));

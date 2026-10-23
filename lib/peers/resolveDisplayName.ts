@@ -7,8 +7,57 @@ import {
   hydratePeerDisplayName,
   rememberPeerDisplayName,
 } from "@/lib/peers/displayNameCache";
+import {
+  getPeerCategoryCached,
+  rememberPeerCategory,
+} from "@/lib/peers/peerCategoryCache";
+import type { SpendCategory } from "@/lib/pay/spendCategory";
+import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
 
 const inflight = new Map<string, Promise<string | null>>();
+const categoryInflight = new Map<string, Promise<SpendCategory | null>>();
+
+/** Catégorie commerce (soa_car, taxi…) — cache puis GET /accounts/…/public. */
+export async function resolvePeerCategory(
+  accountId: string,
+  token: string | null | undefined,
+): Promise<SpendCategory | null> {
+  const id = String(accountId ?? "")
+    .trim()
+    .toUpperCase();
+  if (!id.startsWith("BLYP-")) return null;
+
+  const cached = getPeerCategoryCached(id);
+  if (cached) return cached;
+
+  const t = String(token ?? "").trim();
+  if (!t) return null;
+
+  const existing = categoryInflight.get(id);
+  if (existing) return existing;
+
+  const job = (async () => {
+    try {
+      const { lookupAccountPublic } = await import("@/lib/api/client");
+      const res = await lookupAccountPublic(t, id);
+      const cat = normalizeSpendCategory(res?.category ?? null);
+      if (cat) {
+        rememberPeerCategory(id, cat);
+        void import("@/lib/pay/quickAmounts").then((q) => {
+          q.refreshQuickAmountsIndex();
+        });
+      }
+      return cat;
+    } catch {
+      return null;
+    } finally {
+      categoryInflight.delete(id);
+    }
+  })();
+
+  categoryInflight.set(id, job);
+  return job;
+}
 
 export async function resolvePeerDisplayName(
   accountId: string,
@@ -19,13 +68,20 @@ export async function resolvePeerDisplayName(
     .toUpperCase();
   if (!id.startsWith("BLYP-")) return null;
 
+  const t = String(token ?? "").trim();
+
   const ram = getPeerDisplayNameCached(id);
-  if (ram) return ram;
+  if (ram) {
+    void resolvePeerCategory(id, t);
+    return ram;
+  }
 
   const local = await hydratePeerDisplayName(id);
-  if (local) return local;
+  if (local) {
+    void resolvePeerCategory(id, t);
+    return local;
+  }
 
-  const t = String(token ?? "").trim();
   if (!t) return null;
 
   const existing = inflight.get(id);
@@ -41,14 +97,7 @@ export async function resolvePeerDisplayName(
         .slice(0, 48);
       if (name.length < 2) return null;
       rememberPeerDisplayName(id, name);
-      if (res?.category) {
-        void import("@/lib/peers/peerCategoryCache").then((m) => {
-          m.rememberPeerCategory(id, res.category);
-          void import("@/lib/pay/quickAmounts").then((q) => {
-            q.refreshQuickAmountsIndex();
-          });
-        });
-      }
+      void resolvePeerCategory(id, t);
       return name;
     } catch {
       return null;

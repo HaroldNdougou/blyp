@@ -5,7 +5,6 @@ import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import type { StatusFeedItem, StatusPost } from "@/lib/api/types";
-import { deleteMyStatuses, listStatusFeed } from "@/lib/api/client";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
@@ -17,6 +16,7 @@ import {
   getStatusMyUserId,
   removeMyStatusPosts,
   statusFeedHasPeerPosts,
+  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
 import {
@@ -41,6 +41,10 @@ type StatusCardProps = {
   onPress: () => void;
   onLongPress?: () => void;
   isAdd?: boolean;
+  centerLabel?: boolean;
+  showAddBadge?: boolean;
+  onAddBadgePress?: () => void;
+  onAvatarPress?: () => void;
 };
 
 const StatusActusCard = React.memo(function StatusActusCard({
@@ -50,7 +54,12 @@ const StatusActusCard = React.memo(function StatusActusCard({
   onPress,
   onLongPress,
   isAdd,
+  centerLabel,
+  showAddBadge,
+  onAddBadgePress,
+  onAvatarPress,
 }: StatusCardProps) {
+  const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createStatusStyles(colors), [colors]);
   const post = lastActivePost(row);
@@ -109,42 +118,92 @@ const StatusActusCard = React.memo(function StatusActusCard({
           </View>
         )}
         {!addEmpty ? <View style={styles.actusCardScrim} /> : null}
-        <View
-          style={
-            addEmpty ? styles.actusCardAvatarSlotAdd : styles.actusCardAvatarSlot
-          }
-        >
-          <View style={styles.actusAvatarWithBadge}>
-            <StatusRing colors={colors} variant={ring}>
-              <PeerAvatar
-                name={row.displayName}
-                phone={row.peerPhone}
-                remoteUrl={
-                  row.avatarUrl ?? demoAvatarUrlForPhone(row.peerPhone)
-                }
-                localUri={contactPhotoUriForPhone(row.peerPhone)}
-                size={addEmpty ? 52 : 48}
-                recyclingKey={row.userId}
-              />
-            </StatusRing>
-            {isAdd ? (
-              <View
-                style={[
-                  styles.actusAddBadge,
-                  { backgroundColor: colors.accent },
-                ]}
-              >
-                <Text style={styles.actusAddBadgeText} includeFontPadding={false}>
-                  +
-                </Text>
-              </View>
-            ) : null}
+        {onAvatarPress ? (
+          <Pressable
+            style={
+              addEmpty ? styles.actusCardAvatarSlotAdd : styles.actusCardAvatarSlot
+            }
+            onPress={onAvatarPress}
+            accessibilityRole="button"
+            accessibilityLabel={t("status.add")}
+          >
+            <View style={styles.actusAvatarWithBadge}>
+              <StatusRing colors={colors} variant={ring}>
+                <PeerAvatar
+                  name={row.displayName}
+                  phone={row.peerPhone}
+                  remoteUrl={
+                    row.avatarUrl ?? demoAvatarUrlForPhone(row.peerPhone)
+                  }
+                  localUri={contactPhotoUriForPhone(row.peerPhone)}
+                  size={addEmpty ? 52 : 48}
+                  recyclingKey={row.userId}
+                />
+              </StatusRing>
+              {showAddBadge ? (
+                <Pressable
+                  style={[
+                    styles.actusAddBadge,
+                    { backgroundColor: colors.accent },
+                  ]}
+                  onPress={onAddBadgePress}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("status.add")}
+                >
+                  <Text
+                    style={styles.actusAddBadgeText}
+                    includeFontPadding={false}
+                  >
+                    +
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </Pressable>
+        ) : (
+          <View
+            style={
+              addEmpty ? styles.actusCardAvatarSlotAdd : styles.actusCardAvatarSlot
+            }
+          >
+            <View style={styles.actusAvatarWithBadge}>
+              <StatusRing colors={colors} variant={ring}>
+                <PeerAvatar
+                  name={row.displayName}
+                  phone={row.peerPhone}
+                  remoteUrl={
+                    row.avatarUrl ?? demoAvatarUrlForPhone(row.peerPhone)
+                  }
+                  localUri={contactPhotoUriForPhone(row.peerPhone)}
+                  size={addEmpty ? 52 : 48}
+                  recyclingKey={row.userId}
+                />
+              </StatusRing>
+              {showAddBadge ? (
+                <Pressable
+                  style={[
+                    styles.actusAddBadge,
+                    { backgroundColor: colors.accent },
+                  ]}
+                  onPress={onAddBadgePress}
+                  accessibilityRole="button"
+                  accessibilityLabel={t("status.add")}
+                >
+                  <Text
+                    style={styles.actusAddBadgeText}
+                    includeFontPadding={false}
+                  >
+                    +
+                  </Text>
+                </Pressable>
+              ) : null}
+            </View>
           </View>
-        </View>
+        )}
         <Text
           style={[
             styles.actusCardLabel,
-            !isAdd && styles.actusCardLabelPeer,
+            centerLabel ? styles.actusCardLabelPeer : styles.actusCardLabelMine,
           ]}
           numberOfLines={2}
         >
@@ -195,7 +254,8 @@ export function ActusPanel({ isActive }: Props) {
   useEffect(() => {
     if (!token) return;
     if (statusFeedHasPeerPosts()) return;
-    void listStatusFeed(token)
+    void import("@/lib/api/client")
+      .then((api) => api.listStatusFeed(token))
       .then((res) => applyStatusFeedSnapshot(res.items, res.myUserId))
       .catch(() => {});
   }, [token]);
@@ -238,16 +298,19 @@ export function ActusPanel({ isActive }: Props) {
       return Date.parse(tb) - Date.parse(ta);
     });
 
+  const openCreateStatus = useCallback(() => {
+    router.push("/status/create");
+  }, []);
+
   const openMine = () => {
-    if (!myId) return;
-    if (myPosts.length > 0) {
-      router.push({
-        pathname: "/status/view",
-        params: { userId: myId, index: "0" },
-      });
-    } else {
-      router.push("/status/create");
-    }
+    if (!myId || myPosts.length === 0) return;
+    router.push({
+      pathname: "/status/view",
+      params: {
+        userId: myId,
+        index: String(statusViewStartIndex(myId)),
+      },
+    });
   };
 
   const confirmDeleteMine = useCallback(() => {
@@ -258,10 +321,12 @@ export function ActusPanel({ isActive }: Props) {
         text: t("status.deleteMineConfirm"),
         style: "destructive",
         onPress: () => {
-          void deleteMyStatuses(token).then(() => {
-            if (myId) removeMyStatusPosts(myId);
-            syncStatusFeedFromNetwork(token, { force: true });
-          });
+          void import("@/lib/api/client")
+            .then((api) => api.deleteMyStatuses(token))
+            .then(() => {
+              if (myId) removeMyStatusPosts(myId);
+              syncStatusFeedFromNetwork(token, { force: true });
+            });
         },
       },
     ]);
@@ -270,7 +335,11 @@ export function ActusPanel({ isActive }: Props) {
   const openPeer = (row: StatusFeedItem) => {
     router.push({
       pathname: "/status/view",
-      params: { userId: row.userId, index: "0" },
+      params: {
+        userId: row.userId,
+        index: String(statusViewStartIndex(row.userId)),
+        advanceFeed: "1",
+      },
     });
   };
 
@@ -299,10 +368,15 @@ export function ActusPanel({ isActive }: Props) {
                 ? "unseen"
                 : "seen"
           }
-          label={t("status.addCard")}
-          onPress={openMine}
+          label={
+            myPosts.length > 0 ? t("status.myStatus") : t("status.addCard")
+          }
+          onPress={myPosts.length > 0 ? openMine : openCreateStatus}
           onLongPress={myPosts.length > 0 ? confirmDeleteMine : undefined}
-          isAdd
+          isAdd={myPosts.length === 0}
+          showAddBadge
+          onAddBadgePress={openCreateStatus}
+          onAvatarPress={openCreateStatus}
         />
         {peers.map((row) => (
           <StatusActusCard
@@ -311,6 +385,7 @@ export function ActusPanel({ isActive }: Props) {
             ring={row.hasUnseen ? "unseen" : "seen"}
             label={row.displayName.split(/\s+/)[0] ?? row.displayName}
             onPress={() => openPeer(row)}
+            centerLabel
           />
         ))}
       </ScrollView>

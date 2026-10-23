@@ -1,5 +1,8 @@
 import { IncomingPaymentFlashSheet } from "@/components/pay/IncomingPaymentFlashSheet";
 import { createCommerceHomeStyles } from "@/components/pay/commerceHomeStyles";
+import { SoaCarCommerceHome } from "@/components/soa/SoaCarCommerceHome";
+import { SOA_CAR_CATEGORY } from "@/lib/soa/constants";
+import { isSoaCarCategory } from "@/lib/soa/soaCar";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
@@ -58,7 +61,8 @@ export function CommerceHomeScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createCommerceHomeStyles(colors), [colors]);
-  const { user, token, refreshUser } = useAuth();
+  const { user, token, refreshUser, updateCommerceCategory } = useAuth();
+  const [enablingSoa, setEnablingSoa] = useState(false);
   const phone = user?.phone ?? "";
   const bleBroadcastAccount = useMemo(
     () => resolveBleBroadcastAccount(user),
@@ -112,6 +116,16 @@ export function CommerceHomeScreen() {
       ? user.activeContext.name
       : user?.firstName?.trim() || t("common.account");
   const balance = user?.balanceFcfa ?? 0;
+
+  const activeCommerceCategory = useMemo(() => {
+    if (user?.activeContext?.type !== "commerce") return null;
+    const ctx = user.activeContext;
+    return (
+      ctx.category ??
+      user.commerces?.find((c) => c.id === ctx.commerceId)?.category ??
+      null
+    );
+  }, [user?.activeContext, user?.commerces]);
 
   const newestReceived = recentReceived[0];
   const newestIsJustNow = useMemo(() => {
@@ -204,6 +218,34 @@ export function CommerceHomeScreen() {
     [broadcast.setEnabled, t],
   );
 
+  const showSoaEnableBanner =
+    viewingCommerceId &&
+    user?.activeContext?.type === "commerce" &&
+    !isSoaCarCategory(activeCommerceCategory);
+
+  const onEnableSoaCar = useCallback(() => {
+    if (!viewingCommerceId || enablingSoa) return;
+    setEnablingSoa(true);
+    void updateCommerceCategory(viewingCommerceId, SOA_CAR_CATEGORY)
+      .catch(() => {
+        Alert.alert(t("common.genericError"), t("commerce.categoryUpdateFailed"));
+      })
+      .finally(() => setEnablingSoa(false));
+  }, [viewingCommerceId, enablingSoa, updateCommerceCategory, t]);
+
+  if (
+    viewingCommerceId &&
+    isSoaCarCategory(activeCommerceCategory) &&
+    user?.activeContext?.type === "commerce"
+  ) {
+    return (
+      <SoaCarCommerceHome
+        commerceId={viewingCommerceId}
+        commerceName={user.activeContext.name}
+      />
+    );
+  }
+
   return (
     <View style={[styles.safe, { backgroundColor: colors.background }]}>
       <View
@@ -252,6 +294,29 @@ export function CommerceHomeScreen() {
 
       <SafeAreaView style={styles.bodySafe} edges={["left", "right"]}>
         <View style={styles.body}>
+          {showSoaEnableBanner ? (
+            <Pressable
+              style={[
+                styles.soaEnableBanner,
+                { borderColor: colors.borderLight, backgroundColor: colors.surface },
+              ]}
+              onPress={onEnableSoaCar}
+              disabled={enablingSoa}
+              accessibilityRole="button"
+              accessibilityLabel={t("soaCar.enableBannerCta")}
+            >
+              <Text style={[styles.soaEnableBannerText, { color: colors.text }]}>
+                {t("soaCar.enableBannerTitle")}
+              </Text>
+              {enablingSoa ? (
+                <ActivityIndicator color={colors.accent} size="small" />
+              ) : (
+                <Text style={[styles.soaEnableBannerCta, { color: colors.accent }]}>
+                  {t("soaCar.enableBannerCta")}
+                </Text>
+              )}
+            </Pressable>
+          ) : null}
           <View style={styles.center}>
             <View style={styles.balanceBlock}>
               <Text style={styles.balanceLabel}>

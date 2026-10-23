@@ -591,6 +591,7 @@ export async function pay(
   recipientPhone: string | null,
   transactionPin: string,
   recipientAccountId?: string | null,
+  soaSeatNumber?: number | null,
 ): Promise<{
   balanceFcfa: number;
   transactionId: string | null;
@@ -605,6 +606,7 @@ export async function pay(
       recipientPhone,
       transactionPin,
       recipientAccountId,
+      soaSeatNumber,
     );
   }
   return request("/payments/pay", {
@@ -616,8 +618,57 @@ export async function pay(
       recipientPhone,
       recipientAccountId,
       transactionPin,
+      soaSeatNumber:
+        soaSeatNumber != null && Number.isFinite(soaSeatNumber)
+          ? soaSeatNumber
+          : undefined,
     }),
   });
+}
+
+export async function fetchSoaTripByAccount(
+  token: string,
+  accountId: string,
+): Promise<import("@/lib/soa/soaCar").SoaCarTrip> {
+  const id = String(accountId ?? "").trim().toUpperCase();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockGetSoaTripByAccount(token, id);
+  }
+  const res = await request<{ trip: import("@/lib/soa/soaCar").SoaCarTrip }>(
+    `/accounts/${encodeURIComponent(id)}/soa-trip`,
+    { token },
+  );
+  return res.trip;
+}
+
+export async function fetchSoaTripForCommerce(
+  token: string,
+  commerceId: string,
+): Promise<import("@/lib/soa/soaCar").SoaCarTrip> {
+  const id = String(commerceId ?? "").trim();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockGetSoaTripForCommerce(token, id);
+  }
+  const res = await request<{ trip: import("@/lib/soa/soaCar").SoaCarTrip }>(
+    `/commerces/${encodeURIComponent(id)}/soa-trip`,
+    { token },
+  );
+  return res.trip;
+}
+
+export async function resetSoaTripForCommerce(
+  token: string,
+  commerceId: string,
+): Promise<import("@/lib/soa/soaCar").SoaCarTrip> {
+  const id = String(commerceId ?? "").trim();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockResetSoaTripForCommerce(token, id);
+  }
+  const res = await request<{ trip: import("@/lib/soa/soaCar").SoaCarTrip }>(
+    `/commerces/${encodeURIComponent(id)}/soa-trip`,
+    { method: "POST", token },
+  );
+  return res.trip;
 }
 
 export async function createCommerce(
@@ -641,6 +692,22 @@ export async function listCommerces(
     return (await loadMock()).mockListCommerces(token);
   }
   return request("/commerces", { token });
+}
+
+export async function updateCommerceCategory(
+  token: string,
+  commerceId: string,
+  category: string,
+): Promise<{ commerce: import("./types").ApiCommerce; user: ApiUser }> {
+  const id = String(commerceId ?? "").trim();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockUpdateCommerceCategory(token, id, category);
+  }
+  return request(`/commerces/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify({ category }),
+  });
 }
 
 /** Lookup nom public (commerce / prénom) — GetItem ciblé, pour libellé BLE. */

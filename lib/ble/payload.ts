@@ -25,11 +25,13 @@ const BINARY_LEN = 2 + CODE_LEN + PHONE_LEN;
 const CAT_TAXI = 0x54; // T
 const CAT_SHOP = 0x53; // S
 const CAT_OTHER = 0x4f; // O
+const CAT_SOA_CAR = 0x41; // A — car UY2 Soa
 
 function categoryToByte(category: SpendCategory | null | undefined): number | null {
   if (category === "taxi") return CAT_TAXI;
   if (category === "shop") return CAT_SHOP;
   if (category === "other") return CAT_OTHER;
+  if (category === "soa_car") return CAT_SOA_CAR;
   return null;
 }
 
@@ -37,6 +39,7 @@ function byteToCategory(b: number | undefined): SpendCategory | null {
   if (b === CAT_TAXI) return "taxi";
   if (b === CAT_SHOP) return "shop";
   if (b === CAT_OTHER) return "other";
+  if (b === CAT_SOA_CAR) return "soa_car";
   return null;
 }
 
