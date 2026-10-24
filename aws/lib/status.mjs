@@ -3,6 +3,7 @@ import {
   GetCommand,
   PutCommand,
   QueryCommand,
+  UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { randomUUID } from "node:crypto";
 import { publicAvatarUrl } from "./avatar.mjs";
@@ -49,6 +50,10 @@ function statusViewSk(postId) {
   return `STATUSVIEW#${postId}`;
 }
 
+function statusViewerSk(viewerId) {
+  return `STATUSVIEW#${String(viewerId ?? "").trim()}`;
+}
+
 function statusMetaPk(postId) {
   return `STATUS#${postId}`;
 }
@@ -87,12 +92,32 @@ async function listPostsForUser(authorId) {
       textStyle: it.kind === "text" ? textStyleFromItem(it) : null,
       createdAt: String(it.createdAt ?? ""),
       expiresAt: String(it.expiresAtIso ?? ""),
+      editedAt: it.editedAtIso ? String(it.editedAtIso) : null,
+      viewCount: Number(it.viewCount) || 0,
     }))
     .filter((p) => p.id)
-    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    .sort((a, b) => postSortMs(a) - postSortMs(b));
 }
 
-async function loadViewedPostIds(viewerId) {
+function postSortMs(p) {
+  const edited = Date.parse(String(p.editedAt ?? ""));
+  if (Number.isFinite(edited)) return edited;
+  const created = Date.parse(String(p.createdAt ?? ""));
+  return Number.isFinite(created) ? created : 0;
+}
+
+function isPostUnseenForViewer(post, viewedAtByPostId) {
+  const id = String(post.id ?? "").trim();
+  if (!id) return false;
+  const viewedAt = viewedAtByPostId.get(id);
+  if (!viewedAt) return true;
+  const editedMs = Date.parse(String(post.editedAt ?? ""));
+  if (!Number.isFinite(editedMs)) return false;
+  const seenMs = Date.parse(String(viewedAt));
+  return !Number.isFinite(seenMs) || editedMs > seenMs;
+}
+
+async function loadViewedPosts(viewerId) {
   const res = await doc.send(
     new QueryCommand({
       TableName: getTableName(),
@@ -101,16 +126,16 @@ async function loadViewedPostIds(viewerId) {
         ":pk": userPk(viewerId),
         ":sk": "STATUSVIEW#",
       },
-      ProjectionExpression: "SK",
+      ProjectionExpression: "SK, viewedAt",
     }),
   );
-  const set = new Set();
+  const map = new Map();
   for (const it of res.Items ?? []) {
     const sk = String(it.SK ?? "");
     const id = sk.replace(/^STATUSVIEW#/, "");
-    if (id) set.add(id);
+    if (id) map.set(id, String(it.viewedAt ?? ""));
   }
-  return set;
+  return map;
 }
 
 async function postToPublic(post) {
@@ -128,8 +153,14 @@ async function postToPublic(post) {
     createdAt: post.createdAt,
     expiresAt: post.expiresAt,
   };
+  if (post.editedAt) {
+    out.editedAt = post.editedAt;
+  }
   if (post.kind === "text" && post.textStyle) {
     out.textStyle = post.textStyle;
+  }
+  if (post.viewCount != null && Number.isFinite(Number(post.viewCount))) {
+    out.viewCount = Math.max(0, Math.floor(Number(post.viewCount)));
   }
   return out;
 }
@@ -160,7 +191,7 @@ export async function listStatusFeed(userId) {
     : null;
 
   const convs = await listConversations(userId);
-  const viewed = await loadViewedPostIds(userId);
+  const viewed = await loadViewedPosts(userId);
   const items = [];
   const seenUsers = new Set();
 
@@ -174,8 +205,17 @@ export async function listStatusFeed(userId) {
     seenUsers.add(targetUserId);
     const rawPosts = await listPostsForUser(targetUserId);
     if (rawPosts.length === 0 && targetUserId !== userId) return;
-    const posts = await Promise.all(rawPosts.map((p) => postToPublic(p)));
-    const hasUnseen = posts.some((p) => !viewed.has(p.id));
+    const posts = await Promise.all(
+      rawPosts.map(async (p) => {
+        let viewCount = p.viewCount ?? 0;
+        if (targetUserId === userId) {
+          const meta = await getStatusMeta(p.id);
+          viewCount = Number(meta?.viewCount) || viewCount;
+        }
+        return postToPublic({ ...p, viewCount });
+      }),
+    );
+    const hasUnseen = posts.some((p) => isPostUnseenForViewer(p, viewed));
     items.push({
       userId: targetUserId,
       displayName,
@@ -198,9 +238,9 @@ export async function listStatusFeed(userId) {
     if (a.userId === userId) return -1;
     if (b.userId === userId) return 1;
     if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
-    const ta = a.posts[a.posts.length - 1]?.createdAt ?? "";
-    const tb = b.posts[b.posts.length - 1]?.createdAt ?? "";
-    return Date.parse(tb) - Date.parse(ta);
+    const ta = postSortMs(a.posts[a.posts.length - 1] ?? {});
+    const tb = postSortMs(b.posts[b.posts.length - 1] ?? {});
+    return tb - ta;
   });
 
   return { items, myUserId: userId };
@@ -242,6 +282,7 @@ export async function publishStatus(userId, body) {
   if (mediaKey) statusItem.mediaKey = mediaKey;
   if (text) statusItem.text = text;
   if (textStyle) statusItem.textStyle = textStyle;
+  statusItem.viewCount = 0;
 
   await doc.send(
     new PutCommand({
@@ -261,6 +302,7 @@ export async function publishStatus(userId, body) {
         userId,
         expiresAtIso,
         expiresAt,
+        viewCount: 0,
       },
     }),
   );
@@ -288,6 +330,29 @@ async function getStatusMeta(postId) {
   return res.Item ?? null;
 }
 
+async function deleteStatusMetaViewers(postId) {
+  const pk = statusMetaPk(postId);
+  const res = await doc.send(
+    new QueryCommand({
+      TableName: getTableName(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": pk,
+        ":sk": "STATUSVIEW#",
+      },
+    }),
+  );
+  for (const it of res.Items ?? []) {
+    if (String(it.SK ?? "") === "META") continue;
+    await doc.send(
+      new DeleteCommand({
+        TableName: getTableName(),
+        Key: { PK: it.PK, SK: it.SK },
+      }),
+    );
+  }
+}
+
 export async function recordStatusView(viewerId, postId) {
   const id = String(postId ?? "").trim();
   if (!id) return { error: "ID_REQUIRED" };
@@ -301,6 +366,7 @@ export async function recordStatusView(viewerId, postId) {
     Number(meta.expiresAt) > 0
       ? meta.expiresAt
       : ttlFromNowMs(Math.max(0, exp - Date.now()));
+  const viewedAtIso = new Date().toISOString();
 
   await doc.send(
     new PutCommand({
@@ -310,9 +376,179 @@ export async function recordStatusView(viewerId, postId) {
         SK: statusViewSk(id),
         entityType: "STATUS_VIEW",
         postId: id,
-        viewedAt: new Date().toISOString(),
+        viewedAt: viewedAtIso,
         expiresAt,
       },
+    }),
+  );
+  const authorId = String(meta.userId ?? "").trim();
+  if (authorId && viewerId !== authorId) {
+    const viewerSk = statusViewerSk(viewerId);
+    const existingViewer = await doc.send(
+      new GetCommand({
+        TableName: getTableName(),
+        Key: { PK: statusMetaPk(id), SK: viewerSk },
+      }),
+    );
+    const isFirstView = !existingViewer.Item;
+    await doc.send(
+      new PutCommand({
+        TableName: getTableName(),
+        Item: {
+          PK: statusMetaPk(id),
+          SK: viewerSk,
+          entityType: "STATUS_VIEWER",
+          postId: id,
+          viewerId,
+          viewedAt: viewedAtIso,
+          expiresAt,
+        },
+      }),
+    );
+    if (isFirstView) {
+      await doc.send(
+        new UpdateCommand({
+          TableName: getTableName(),
+          Key: { PK: statusMetaPk(id), SK: "META" },
+          UpdateExpression:
+            "SET viewCount = if_not_exists(viewCount, :zero) + :inc",
+          ExpressionAttributeValues: { ":zero": 0, ":inc": 1 },
+        }),
+      );
+    }
+  }
+  return { ok: true };
+}
+
+export async function listStatusPostViews(ownerUserId, postId) {
+  const uid = String(ownerUserId ?? "").trim();
+  const id = String(postId ?? "").trim();
+  if (!id) return { error: "ID_REQUIRED" };
+  const meta = await getStatusMeta(id);
+  if (!meta) return { error: "NOT_FOUND" };
+  if (String(meta.userId ?? "").trim() !== uid) {
+    return { error: "FORBIDDEN" };
+  }
+  const res = await doc.send(
+    new QueryCommand({
+      TableName: getTableName(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": statusMetaPk(id),
+        ":sk": "STATUSVIEW#",
+      },
+    }),
+  );
+  const viewers = [];
+  for (const it of res.Items ?? []) {
+    const sk = String(it.SK ?? "");
+    if (sk === "META") continue;
+    const viewerId = String(it.viewerId ?? sk.replace(/^STATUSVIEW#/, "")).trim();
+    if (!viewerId || viewerId === uid) continue;
+    const profile = await getUserProfile(viewerId);
+    const phone = profile?.phone ?? null;
+    const displayName = displayNameFromProfile(profile, phone);
+    const avatarUrl = await peerAvatarForUser(viewerId, phone);
+    viewers.push({
+      userId: viewerId,
+      displayName,
+      avatarUrl,
+      viewedAt: String(it.viewedAt ?? ""),
+    });
+  }
+  viewers.sort(
+    (a, b) => Date.parse(b.viewedAt) - Date.parse(a.viewedAt),
+  );
+  return { viewers };
+}
+
+export async function updateStatusPost(userId, postId, body) {
+  const uid = String(userId ?? "").trim();
+  const id = String(postId ?? "").trim();
+  if (!id) return { error: "ID_REQUIRED" };
+  const res = await doc.send(
+    new QueryCommand({
+      TableName: getTableName(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": userPk(uid),
+        ":sk": "STATUS#",
+      },
+    }),
+  );
+  const item = (res.Items ?? []).find((it) => String(it.postId ?? "") === id);
+  if (!item) return { error: "NOT_FOUND" };
+  const kind = item.kind === "text" ? "text" : "image";
+  const textRaw = body?.text;
+  const text =
+    textRaw === undefined || textRaw === null
+      ? String(item.text ?? "").trim() || null
+      : String(textRaw).trim() || null;
+  if (kind === "text" && !text) return { error: "TEXT_REQUIRED" };
+  const textStyle =
+    kind === "text"
+      ? normalizeTextStyleInput(body?.textStyle ?? item.textStyle)
+      : null;
+  const editedAtIso = new Date().toISOString();
+  const names = { "#txt": "text", "#ed": "editedAtIso" };
+  const values = { ":txt": text, ":ed": editedAtIso };
+  let updateExpr = "SET #txt = :txt, #ed = :ed";
+  if (kind === "text" && textStyle) {
+    names["#ts"] = "textStyle";
+    values[":ts"] = textStyle;
+    updateExpr += ", #ts = :ts";
+  }
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: item.PK, SK: item.SK },
+      UpdateExpression: updateExpr,
+      ExpressionAttributeNames: names,
+      ExpressionAttributeValues: values,
+    }),
+  );
+  const post = await postToPublic({
+    id,
+    userId: uid,
+    kind,
+    mediaKey: String(item.mediaKey ?? "").trim() || null,
+    text,
+    textStyle,
+    createdAt: String(item.createdAt ?? ""),
+    expiresAt: String(item.expiresAtIso ?? ""),
+    editedAt: editedAtIso,
+    viewCount: Number(item.viewCount) || 0,
+  });
+  return { post };
+}
+
+export async function deleteStatusPost(userId, postId) {
+  const uid = String(userId ?? "").trim();
+  const id = String(postId ?? "").trim();
+  if (!id) return { error: "ID_REQUIRED" };
+  const res = await doc.send(
+    new QueryCommand({
+      TableName: getTableName(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: {
+        ":pk": userPk(uid),
+        ":sk": "STATUS#",
+      },
+    }),
+  );
+  const item = (res.Items ?? []).find((it) => String(it.postId ?? "") === id);
+  if (!item) return { error: "NOT_FOUND" };
+  await doc.send(
+    new DeleteCommand({
+      TableName: getTableName(),
+      Key: { PK: item.PK, SK: item.SK },
+    }),
+  );
+  await deleteStatusMetaViewers(id);
+  await doc.send(
+    new DeleteCommand({
+      TableName: getTableName(),
+      Key: { PK: statusMetaPk(id), SK: "META" },
     }),
   );
   return { ok: true };
@@ -338,6 +574,7 @@ export async function deleteMyStatuses(userId) {
       }),
     );
     if (postId) {
+      await deleteStatusMetaViewers(postId);
       await doc.send(
         new DeleteCommand({
           TableName: getTableName(),

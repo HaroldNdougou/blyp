@@ -295,6 +295,10 @@ export type StatusPost = {
   textStyle?: StatusTextPostStyle | null;
   createdAt: string;
   expiresAt: string;
+  /** Dernière modification (texte / légende / style). */
+  editedAt?: string | null;
+  /** Nombre de vues (hors auteur) — présent sur les statuts du compte connecté. */
+  viewCount?: number;
 };
 
 export type StatusFeedItem = {
@@ -312,12 +316,28 @@ export type StatusFeedResponse = {
   myUserId: string;
 };
 
+export type StatusPostViewer = {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  viewedAt: string;
+};
+
+export type StatusPostViewersResponse = {
+  viewers: StatusPostViewer[];
+};
+
 export type PublishStatusBody = {
   kind: StatusPostKind;
   /** Mock / dev local. */
   mediaUrl?: string | null;
   /** Prod : clé S3 après presign + PUT. */
   mediaKey?: string | null;
+  text?: string | null;
+  textStyle?: StatusTextPostStyle | null;
+};
+
+export type UpdateStatusBody = {
   text?: string | null;
   textStyle?: StatusTextPostStyle | null;
 };

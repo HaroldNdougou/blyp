@@ -89,6 +89,8 @@ export type ThemeColors = {
   networkBannerText: string;
   /** Lecteur statuts (fond plein écran type stories). */
   statusViewerBackground: string;
+  /** Menu ⋮ sur le lecteur statut (contacts). */
+  statusViewerMenu: string;
   statusProgressTrack: string;
   /** Glyphe + sur la carte « Ajouter un statut » (toujours noir). */
   statusAddBadgePlus: string;
@@ -178,6 +180,7 @@ export const lightColors: ThemeColors = {
   networkBannerUnstableBg: "#E65100",
   networkBannerText: "#FFFFFF",
   statusViewerBackground: "#000000",
+  statusViewerMenu: "#323739",
   statusProgressTrack: "rgba(255,255,255,0.35)",
   statusAddBadgePlus: "#000000",
   statusTextFooterBar: "rgba(0,0,0,0.24)",
@@ -262,6 +265,7 @@ export const darkColors: ThemeColors = {
   networkBannerUnstableBg: "#F57C00",
   networkBannerText: "#FFFFFF",
   statusViewerBackground: "#000000",
+  statusViewerMenu: "#323739",
   statusProgressTrack: "rgba(255,255,255,0.35)",
   statusAddBadgePlus: "#000000",
   statusTextFooterBar: "rgba(0,0,0,0.32)",

@@ -1,6 +1,9 @@
 import { makeAccountId, makeCommerceAccountId } from "@/lib/accountId";
 import {
+  DEMO_PROFILES_ENABLED,
   demoStatusPostIdsViewedByDefault,
+  demoStatusViewersForJeanKamga,
+  isJeanKamgaDisplayName,
   withDemoConversations,
 } from "@/lib/dev/demoProfiles";
 import {
@@ -8,6 +11,10 @@ import {
   mockRecordSoaSeat,
   mockResetSoaTrip,
 } from "@/lib/soa/mockSoaTripStore";
+import {
+  sortStatusPostsChronological,
+  statusPostSortMs,
+} from "@/lib/status/statusPostOrder";
 import { makeTxReference } from "@/lib/txReference";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
@@ -31,6 +38,7 @@ import type {
   StatusFeedResponse,
   StatusPost,
   PublishStatusBody,
+  UpdateStatusBody,
 } from "./types";
 
 function normalizeCameroonPhone(raw: string): string | null {
@@ -1543,7 +1551,44 @@ export function mockSayHello(): {
 const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
 const mockStatusPosts: StatusPost[] = [];
 const mockStatusViews = new Map<string, Set<string>>();
+/** viewerUserId → viewedAt (ms) pour re-voir après modification. */
+const mockStatusViewedAtMs = new Map<string, Map<string, number>>();
 let mockDemoStatusViewsSeeded = false;
+let mockJeanKamgaMyPostViewsSeeded = false;
+
+function mockPostSeenByViewer(post: StatusPost, viewerId: string): boolean {
+  const set = mockStatusViews.get(post.id);
+  if (!set?.has(viewerId)) return false;
+  const editedMs = Date.parse(String(post.editedAt ?? ""));
+  if (!Number.isFinite(editedMs)) return true;
+  const viewedAt = mockStatusViewedAtMs.get(post.id)?.get(viewerId) ?? 0;
+  return viewedAt >= editedMs;
+}
+
+function ensureJeanKamgaMyPostViews(myId: string, displayName: string): void {
+  if (!DEMO_PROFILES_ENABLED || mockJeanKamgaMyPostViewsSeeded) return;
+  if (!isJeanKamgaDisplayName(displayName)) return;
+  const viewers = demoStatusViewersForJeanKamga();
+  if (viewers.length === 0) return;
+  mockJeanKamgaMyPostViewsSeeded = true;
+  for (const post of mockStatusPosts) {
+    if (post.userId !== myId) continue;
+    let set = mockStatusViews.get(post.id);
+    if (!set) {
+      set = new Set();
+      mockStatusViews.set(post.id, set);
+    }
+    let byViewer = mockStatusViewedAtMs.get(post.id);
+    if (!byViewer) {
+      byViewer = new Map();
+      mockStatusViewedAtMs.set(post.id, byViewer);
+    }
+    for (const v of viewers) {
+      set.add(v.userId);
+      byViewer.set(v.userId, Date.parse(v.viewedAt));
+    }
+  }
+}
 
 function ensureMockDemoStatusViews(myId: string): void {
   if (mockDemoStatusViewsSeeded) return;
@@ -1555,6 +1600,13 @@ function ensureMockDemoStatusViews(myId: string): void {
       mockStatusViews.set(postId, set);
     }
     set.add(myId);
+    const now = Date.now();
+    let byViewer = mockStatusViewedAtMs.get(postId);
+    if (!byViewer) {
+      byViewer = new Map();
+      mockStatusViewedAtMs.set(postId, byViewer);
+    }
+    byViewer.set(myId, now);
   }
 }
 
@@ -1574,7 +1626,9 @@ export function mockListStatusFeed(token: string): StatusFeedResponse {
   assertSession(token);
   pruneExpiredStatusPosts();
   const myId = mockMyUserId();
+  const myDisplayName = [mockFirstName, mockLastName].filter(Boolean).join(" ");
   ensureMockDemoStatusViews(myId);
+  ensureJeanKamgaMyPostViews(myId, myDisplayName);
   const byUser = new Map<string, StatusPost[]>();
   for (const p of mockStatusPosts) {
     const list = byUser.get(p.userId) ?? [];
@@ -1593,12 +1647,14 @@ export function mockListStatusFeed(token: string): StatusFeedResponse {
   ) => {
     if (seenUsers.has(userId)) return;
     seenUsers.add(userId);
-    const posts = (byUser.get(userId) ?? []).sort(
-      (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
+    const posts = sortStatusPostsChronological(byUser.get(userId) ?? []).map(
+      (p) =>
+        userId === myId
+          ? { ...p, viewCount: mockStatusViewCount(p.id, p.userId) }
+          : p,
     );
     if (posts.length === 0 && userId !== myId) return;
-    const views = posts.map((p) => mockStatusViews.get(p.id)?.has(myId) ?? false);
-    const hasUnseen = posts.some((p, i) => !views[i]);
+    const hasUnseen = posts.some((p) => !mockPostSeenByViewer(p, myId));
     items.push({
       userId,
       displayName,
@@ -1630,9 +1686,11 @@ export function mockListStatusFeed(token: string): StatusFeedResponse {
     if (a.userId === myId) return -1;
     if (b.userId === myId) return 1;
     if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
-    const ta = a.posts[a.posts.length - 1]?.createdAt ?? "";
-    const tb = b.posts[b.posts.length - 1]?.createdAt ?? "";
-    return Date.parse(tb) - Date.parse(ta);
+    const la = a.posts[a.posts.length - 1];
+    const lb = b.posts[b.posts.length - 1];
+    const ta = la ? statusPostSortMs(la) : 0;
+    const tb = lb ? statusPostSortMs(lb) : 0;
+    return tb - ta;
   });
 
   return withDemoStatusFeed({ items, myUserId: myId });
@@ -1696,8 +1754,71 @@ export function mockRecordStatusView(
     set = new Set();
     mockStatusViews.set(id, set);
   }
-  set.add(myId);
+  const now = Date.now();
+  if (!set.has(myId)) {
+    set.add(myId);
+  }
+  let byViewer = mockStatusViewedAtMs.get(id);
+  if (!byViewer) {
+    byViewer = new Map();
+    mockStatusViewedAtMs.set(id, byViewer);
+  }
+  byViewer.set(myId, now);
   return { ok: true };
+}
+
+function mockPeerProfileForUserId(
+  token: string,
+  userId: string,
+): { displayName: string; avatarUrl: string | null } {
+  const convs = withDemoConversations(mockListConversations(token).items);
+  const hit = convs.find((c) => c.peerUserId === userId);
+  return {
+    displayName: hit?.peerName ?? "Contact",
+    avatarUrl: hit?.peerAvatarUrl ?? null,
+  };
+}
+
+export function mockListStatusPostViewers(
+  token: string,
+  postId: string,
+): import("./types").StatusPostViewersResponse {
+  assertSession(token);
+  const myId = mockMyUserId();
+  const id = String(postId ?? "").trim();
+  const post = mockStatusPosts.find((p) => p.id === id);
+  if (!post) throw new ApiError("Statut introuvable", 404);
+  if (post.userId !== myId) throw new ApiError("Accès refusé", 403);
+  const set = mockStatusViews.get(id);
+  const byViewer = mockStatusViewedAtMs.get(id);
+  const viewers: import("./types").StatusPostViewer[] = [];
+  if (set) {
+    for (const uid of set) {
+      if (uid === myId) continue;
+      const viewedMs = byViewer?.get(uid) ?? 0;
+      const profile = mockPeerProfileForUserId(token, uid);
+      viewers.push({
+        userId: uid,
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
+        viewedAt: viewedMs
+          ? new Date(viewedMs).toISOString()
+          : new Date().toISOString(),
+      });
+    }
+  }
+  viewers.sort((a, b) => Date.parse(b.viewedAt) - Date.parse(a.viewedAt));
+  return { viewers };
+}
+
+function mockStatusViewCount(postId: string, authorUserId: string): number {
+  const viewers = mockStatusViews.get(postId);
+  if (!viewers) return 0;
+  let n = 0;
+  for (const uid of viewers) {
+    if (uid !== authorUserId) n += 1;
+  }
+  return n;
 }
 
 export function mockDeleteMyStatuses(token: string): { ok: boolean } {
@@ -1706,6 +1827,59 @@ export function mockDeleteMyStatuses(token: string): { ok: boolean } {
   for (let i = mockStatusPosts.length - 1; i >= 0; i--) {
     if (mockStatusPosts[i]!.userId === myId) mockStatusPosts.splice(i, 1);
   }
+  return { ok: true };
+}
+
+export function mockUpdateStatusPost(
+  token: string,
+  postId: string,
+  body: UpdateStatusBody,
+): { post: StatusPost } {
+  assertSession(token);
+  const myId = mockMyUserId();
+  const id = String(postId ?? "").trim();
+  const idx = mockStatusPosts.findIndex((p) => p.id === id && p.userId === myId);
+  if (idx < 0) throw new ApiError("Statut introuvable", 404);
+  const prev = mockStatusPosts[idx]!;
+  const text =
+    body.text === undefined
+      ? prev.text
+      : String(body.text ?? "").trim() || null;
+  if (prev.kind === "text" && !text) {
+    throw new ApiError("Texte requis", 400);
+  }
+  let textStyle = prev.textStyle ?? null;
+  if (prev.kind === "text" && body.textStyle) {
+    textStyle = {
+      bgIndex: Math.max(0, Math.min(7, Math.floor(Number(body.textStyle.bgIndex) || 0))),
+      fontIndex: Math.max(
+        0,
+        Math.min(5, Math.floor(Number(body.textStyle.fontIndex) || 0)),
+      ),
+    };
+  }
+  const editedAt = new Date().toISOString();
+  const post: StatusPost = {
+    ...prev,
+    text,
+    textStyle,
+    editedAt,
+  };
+  mockStatusPosts[idx] = post;
+  return { post };
+}
+
+export function mockDeleteStatusPost(
+  token: string,
+  postId: string,
+): { ok: boolean } {
+  assertSession(token);
+  const myId = mockMyUserId();
+  const id = String(postId ?? "").trim();
+  const idx = mockStatusPosts.findIndex((p) => p.id === id && p.userId === myId);
+  if (idx >= 0) mockStatusPosts.splice(idx, 1);
+  mockStatusViews.delete(id);
+  mockStatusViewedAtMs.delete(id);
   return { ok: true };
 }
 

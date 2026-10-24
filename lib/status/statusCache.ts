@@ -1,9 +1,19 @@
 import type { StatusFeedItem, StatusPost } from "@/lib/api/types";
+import { sortStatusPostsChronological } from "@/lib/status/statusPostOrder";
 
 let feed: StatusFeedItem[] = [];
 let myUserId = "";
 const viewedPostIds = new Set<string>();
+/** Dernier visionnage local (pour re-voir après modification). */
+const viewedPostAtMs = new Map<string, number>();
+/** Suppressions locales (optimiste) — filtre les sync réseau. */
+const tombstonedStatusPostIds = new Set<string>();
 const listeners = new Set<() => void>();
+
+function withoutTombstonedPosts(posts: StatusPost[]): StatusPost[] {
+  if (tombstonedStatusPostIds.size === 0) return posts;
+  return posts.filter((p) => !tombstonedStatusPostIds.has(p.id));
+}
 
 function notify() {
   listeners.forEach((l) => l());
@@ -26,8 +36,33 @@ export function getStatusMyUserId(): string {
   return myUserId;
 }
 
+function isPostSeenByViewer(post: StatusPost): boolean {
+  const id = String(post.id ?? "").trim();
+  if (!id || !viewedPostIds.has(id)) return false;
+  const editedMs = Date.parse(String(post.editedAt ?? ""));
+  if (!Number.isFinite(editedMs)) return true;
+  const seenMs = viewedPostAtMs.get(id) ?? 0;
+  return seenMs >= editedMs;
+}
+
 export function isStatusPostViewed(postId: string): boolean {
-  return viewedPostIds.has(postId);
+  const id = String(postId ?? "").trim();
+  if (!id) return false;
+  for (const row of feed) {
+    const post = row.posts.find((p) => p.id === id);
+    if (post) return isPostSeenByViewer(post);
+  }
+  return viewedPostIds.has(id);
+}
+
+/** Statuts actifs, triés pour le lecteur (modif = fin de file). */
+export function postsInViewerOrder(posts: StatusPost[]): StatusPost[] {
+  const now = Date.now();
+  const live = posts.filter((p) => {
+    const exp = Date.parse(p.expiresAt);
+    return Number.isFinite(exp) ? exp > now : true;
+  });
+  return sortStatusPostsChronological(live);
 }
 
 function phoneKey(phone: string | null | undefined): string {
@@ -35,9 +70,9 @@ function phoneKey(phone: string | null | undefined): string {
 }
 
 function rowHasUnseenPosts(row: StatusFeedItem): boolean {
-  const live = activePosts(row.posts);
+  const live = postsInViewerOrder(row.posts);
   if (live.length === 0) return false;
-  return live.some((p) => !viewedPostIds.has(p.id));
+  return live.some((p) => !isPostSeenByViewer(p));
 }
 
 function withLocalUnseen(row: StatusFeedItem): StatusFeedItem {
@@ -86,22 +121,60 @@ export function applyStatusFeedSnapshot(
 ): void {
   for (const row of items) {
     if (!row.hasUnseen) {
+      const seenAt = Date.now();
       for (const p of activePosts(row.posts)) {
         viewedPostIds.add(p.id);
+        viewedPostAtMs.set(p.id, seenAt);
       }
     }
   }
-  feed = items.map(withLocalUnseen);
+  feed = items.map((row) =>
+    withLocalUnseen({
+      ...row,
+      posts: withoutTombstonedPosts(row.posts),
+    }),
+  );
   myUserId = ownerUserId;
   notify();
 }
 
+export function markStatusPostDeletedLocal(postId: string): void {
+  const id = String(postId ?? "").trim();
+  if (!id) return;
+  tombstonedStatusPostIds.add(id);
+}
+
+export function clearStatusPostDeletedLocal(postId: string): void {
+  tombstonedStatusPostIds.delete(String(postId ?? "").trim());
+}
+
 export function markStatusPostViewedLocal(postId: string): void {
   const id = String(postId ?? "").trim();
-  if (!id || viewedPostIds.has(id)) return;
+  if (!id) return;
   viewedPostIds.add(id);
+  viewedPostAtMs.set(id, Date.now());
   feed = feed.map((row) => withLocalUnseen(row));
   notify();
+}
+
+/** Après modification : le statut redevient « non vu » pour le lecteur. */
+export function markStatusPostBumpedAfterEdit(postId: string): void {
+  const id = String(postId ?? "").trim();
+  if (!id) return;
+  viewedPostIds.delete(id);
+  viewedPostAtMs.delete(id);
+  feed = feed.map((row) => withLocalUnseen(row));
+  notify();
+}
+
+export function findStatusPostById(postId: string): StatusPost | undefined {
+  const id = String(postId ?? "").trim();
+  if (!id) return undefined;
+  for (const row of feed) {
+    const hit = row.posts.find((p) => p.id === id);
+    if (hit) return hit;
+  }
+  return undefined;
 }
 
 export function findStatusFeedItem(userId: string): StatusFeedItem | undefined {
@@ -121,9 +194,9 @@ export function activePosts(posts: StatusPost[]): StatusPost[] {
 export function statusViewStartIndex(userId: string): number {
   const row = findStatusFeedItem(userId);
   if (!row) return 0;
-  const posts = activePosts(row.posts);
+  const posts = postsInViewerOrder(row.posts);
   for (let i = 0; i < posts.length; i++) {
-    if (!viewedPostIds.has(posts[i]!.id)) return i;
+    if (!isPostSeenByViewer(posts[i]!)) return i;
   }
   return 0;
 }
@@ -151,6 +224,7 @@ export function mergePublishedStatusPost(
 ): void {
   const uid = String(ownerUserId ?? "").trim();
   if (!uid || !post?.id) return;
+  if (tombstonedStatusPostIds.has(post.id)) return;
   myUserId = uid;
   const rowIdx = feed.findIndex((r) => r.userId === uid);
   if (rowIdx < 0) {
@@ -169,9 +243,10 @@ export function mergePublishedStatusPost(
     return;
   }
   const row = feed[rowIdx]!;
-  const posts = [...row.posts.filter((p) => p.id !== post.id), post].sort(
-    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt),
-  );
+  const posts = sortStatusPostsChronological([
+    ...row.posts.filter((p) => p.id !== post.id),
+    post,
+  ]);
   feed = feed.map((r, i) =>
     i === rowIdx ? { ...r, posts, hasUnseen: false } : r,
   );
@@ -183,6 +258,18 @@ export function removeMyStatusPosts(ownerUserId: string): void {
   feed = feed.map((r) =>
     r.userId === uid ? { ...r, posts: [], hasUnseen: false } : r,
   );
+  notify();
+}
+
+export function removeMyStatusPost(ownerUserId: string, postId: string): void {
+  const uid = String(ownerUserId ?? "").trim();
+  const pid = String(postId ?? "").trim();
+  if (pid) markStatusPostDeletedLocal(pid);
+  feed = feed.map((r) => {
+    if (r.userId !== uid) return r;
+    const posts = r.posts.filter((p) => p.id !== pid);
+    return { ...r, posts, hasUnseen: rowHasUnseenPosts({ ...r, posts }) };
+  });
   notify();
 }
 

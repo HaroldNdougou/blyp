@@ -52,9 +52,12 @@ import {
 } from "../../lib/media.mjs";
 import {
   deleteMyStatuses,
+  deleteStatusPost,
   listStatusFeed,
+  listStatusPostViews,
   publishStatus,
   recordStatusView,
+  updateStatusPost,
 } from "../../lib/status.mjs";
 import { translateTextBatch } from "../../lib/translate.mjs";
 
@@ -605,8 +608,38 @@ export async function handler(event) {
       return ok(result);
     }
 
+    const statusViewersMatch = path.match(
+      /^\/status\/posts\/([^/]+)\/viewers$/,
+    );
+    if (method === "GET" && statusViewersMatch) {
+      const postId = decodeURIComponent(statusViewersMatch[1]);
+      const result = await listStatusPostViews(userId, postId);
+      if (result.error === "NOT_FOUND") return notFound("Statut introuvable");
+      if (result.error === "FORBIDDEN") return forbidden("Accès refusé");
+      if (result.error === "ID_REQUIRED") return badRequest("id requis");
+      return ok(result);
+    }
+
     if (method === "DELETE" && path === "/status/me") {
       return ok(await deleteMyStatuses(userId));
+    }
+
+    const statusPostMatch = path.match(/^\/status\/posts\/([^/]+)$/);
+    if (method === "PATCH" && statusPostMatch) {
+      const postId = decodeURIComponent(statusPostMatch[1]);
+      const body = parseJsonBody(event) ?? {};
+      const result = await updateStatusPost(userId, postId, body);
+      if (result.error === "NOT_FOUND") return notFound("Statut introuvable");
+      if (result.error === "ID_REQUIRED") return badRequest("id requis");
+      if (result.error === "TEXT_REQUIRED") return badRequest("Texte requis");
+      return ok(result);
+    }
+    if (method === "DELETE" && statusPostMatch) {
+      const postId = decodeURIComponent(statusPostMatch[1]);
+      const result = await deleteStatusPost(userId, postId);
+      if (result.error === "NOT_FOUND") return notFound("Statut introuvable");
+      if (result.error === "ID_REQUIRED") return badRequest("id requis");
+      return ok(result);
     }
 
     return notFound(`Route messaging inconnue: ${method} ${path}`);

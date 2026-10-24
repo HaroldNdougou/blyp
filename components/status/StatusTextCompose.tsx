@@ -8,7 +8,8 @@ import {
   type StatusTextFontVariant,
 } from "@/lib/status/textStatusPalette";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useMemo, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -61,6 +62,16 @@ export function StatusTextCompose({
   const [fontPickerOpen, setFontPickerOpen] = useState(false);
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const styleRibbonOpen = fontPickerOpen || colorPickerOpen;
+  const inputRef = useRef<TextInput>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      const focusInput = () => inputRef.current?.focus();
+      const delayMs = Platform.OS === "android" ? 100 : 0;
+      const id = setTimeout(focusInput, delayMs);
+      return () => clearTimeout(id);
+    }, []),
+  );
 
   const hasText = value.trim().length > 0;
   const dockBottom =
@@ -161,6 +172,7 @@ export function StatusTextCompose({
         pointerEvents="box-none"
       >
         <TextInput
+          ref={inputRef}
           style={inputStyle}
           placeholder={t("status.textPlaceholder")}
           placeholderTextColor="rgba(255,255,255,0.55)"
@@ -169,6 +181,7 @@ export function StatusTextCompose({
           multiline
           maxLength={700}
           autoFocus
+          showSoftInputOnFocus
           textAlignVertical="center"
         />
       </View>

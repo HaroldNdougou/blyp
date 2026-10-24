@@ -680,12 +680,30 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /status/posts/{id}/view
             Method: POST
+        StatusViewers:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/posts/{id}/viewers
+            Method: GET
         StatusDeleteMine:
           Type: HttpApi
           Properties:
             ApiId: !Ref BlypApi
             Path: /status/me
             Method: DELETE
+        StatusDeletePost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/posts/{id}
+            Method: DELETE
+        StatusUpdatePost:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /status/posts/{id}
+            Method: PATCH
 
   RealtimeApi:
     Type: AWS::ApiGatewayV2::Api

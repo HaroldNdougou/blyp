@@ -9,8 +9,10 @@ import {
   demoApiResponse,
   isDemoPath,
   demoStatusFeedFallback,
+  mergeJeanKamgaDemoStatusViewers,
   withDemoConversations,
   withDemoStatusFeed,
+  withJeanKamgaDemoViewsOnMyStatusFeed,
 } from "@/lib/dev/demoProfiles";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { withNormalizedReplyTo } from "@/lib/messages/replyPreview";
@@ -1657,10 +1659,12 @@ export async function listStatusFeed(
       "/status/feed",
       { token },
     );
-    return withDemoStatusFeed({
-      ...data,
-      myUserId: data.myUserId || myUserId,
-    });
+    return withJeanKamgaDemoViewsOnMyStatusFeed(
+      withDemoStatusFeed({
+        ...data,
+        myUserId: data.myUserId || myUserId,
+      }),
+    );
   } catch {
     return demoStatusFeedFallback(myUserId);
   }
@@ -1717,7 +1721,64 @@ export async function recordStatusView(
   });
 }
 
+export async function listStatusPostViewers(
+  token: string,
+  postId: string,
+): Promise<import("./types").StatusPostViewersResponse> {
+  let data: import("./types").StatusPostViewersResponse;
+  if (USE_MOCK_API) {
+    data = (await loadMock()).mockListStatusPostViewers(token, postId);
+  } else {
+    data = await request(
+      `/status/posts/${encodeURIComponent(postId)}/viewers`,
+      { token },
+    );
+  }
+  const { findStatusFeedItem, getStatusMyUserId } = await import(
+    "@/lib/status/statusCache"
+  );
+  const myId = getStatusMyUserId() || accessTokenSubject(token) || "";
+  const row = myId ? findStatusFeedItem(myId) : undefined;
+  if (row?.userId === myId) {
+    return {
+      viewers: mergeJeanKamgaDemoStatusViewers(
+        row.displayName,
+        data.viewers ?? [],
+      ),
+    };
+  }
+  return data;
+}
+
 export async function deleteMyStatuses(token: string): Promise<{ ok: boolean }> {
   if (USE_MOCK_API) return (await loadMock()).mockDeleteMyStatuses(token);
   return request("/status/me", { method: "DELETE", token });
+}
+
+export async function deleteStatusPost(
+  token: string,
+  postId: string,
+): Promise<{ ok: boolean }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockDeleteStatusPost(token, postId);
+  }
+  return request(`/status/posts/${encodeURIComponent(postId)}`, {
+    method: "DELETE",
+    token,
+  });
+}
+
+export async function updateStatusPost(
+  token: string,
+  postId: string,
+  body: import("./types").UpdateStatusBody,
+): Promise<{ post: import("./types").StatusPost }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockUpdateStatusPost(token, postId, body);
+  }
+  return request(`/status/posts/${encodeURIComponent(postId)}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(body),
+  });
 }

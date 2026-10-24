@@ -31,7 +31,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { pushStatusGridLocalPicks } from "@/lib/status/statusGridLocalCache";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -61,6 +61,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { useLocalSearchParams } from "expo-router";
 
 type Step = "hub" | "photo" | "text";
 
@@ -73,6 +74,7 @@ type GridRow =
   | { kind: "photo"; id: string; uri: string };
 
 export function StatusCreateScreen() {
+  const { mode: createMode } = useLocalSearchParams<{ mode?: string }>();
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createStatusCreateStyles(colors), [colors]);
@@ -314,6 +316,13 @@ export function StatusCreateScreen() {
     setStep("text");
     setComposeLayerOpen(true);
   }, []);
+
+  const textEntryOpenedRef = useRef(false);
+  useEffect(() => {
+    if (createMode !== "text" || textEntryOpenedRef.current) return;
+    textEntryOpenedRef.current = true;
+    openTextCompose();
+  }, [createMode, openTextCompose]);
 
   const close = useCallback(() => {
     if (composeLayerOpen) {

@@ -23,6 +23,7 @@ if (!DEV_METRO_LITE) {
   prefetchModule(() => import("@/app/(tabs)/profile"));
   prefetchModule(() => import("@/app/actus"));
   prefetchModule(() => import("@/components/status/ActusScreen"));
+  prefetchModule(() => import("@/app/status/mine"));
   prefetchModule(() => import("@/app/chat/[id]"));
   prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
   prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));

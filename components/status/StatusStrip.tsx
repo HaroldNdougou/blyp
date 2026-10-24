@@ -11,7 +11,6 @@ import {
   ensureStatusFeedPlaceholder,
   getStatusFeedSnapshot,
   getStatusMyUserId,
-  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -72,13 +71,7 @@ export function StatusStrip() {
   const openMine = () => {
     if (!myId) return;
     if (myPosts.length > 0) {
-      router.push({
-        pathname: "/status/view",
-        params: {
-          userId: myId,
-          index: String(statusViewStartIndex(myId)),
-        },
-      });
+      router.push("/status/mine");
     } else {
       router.push("/status/create");
     }

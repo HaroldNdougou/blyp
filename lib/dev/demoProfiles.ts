@@ -12,6 +12,7 @@ import type {
   StatusFeedItem,
   StatusFeedResponse,
   StatusPost,
+  StatusPostViewer,
 } from "@/lib/api/types";
 import i18n from "@/lib/i18n";
 import { sortConversationsByActivity } from "@/lib/messagesCache";
@@ -637,6 +638,72 @@ export function withDemoStatusFeed(res: StatusFeedResponse): StatusFeedResponse 
   });
 
   return { items, myUserId: myId };
+}
+
+/** Compte dev Jean Kamga — vues démo sur ses propres statuts. */
+export function isJeanKamgaDisplayName(
+  displayName: string | null | undefined,
+): boolean {
+  const n = String(displayName ?? "").trim().toLowerCase();
+  if (!n) return false;
+  return n.includes("jean") && n.includes("kamga");
+}
+
+function demoProfilesByMessageRecency(): DemoProfile[] {
+  return [...PROFILES].sort((a, b) => {
+    const minA = Math.min(...a.lines.map((l) => l.minutesAgo));
+    const minB = Math.min(...b.lines.map((l) => l.minutesAgo));
+    return minA - minB;
+  });
+}
+
+/** Contacts fictifs les plus récents dans la messagerie (pour vues statut Jean Kamga). */
+export function demoStatusViewersForJeanKamga(limit = 4): StatusPostViewer[] {
+  if (!DEMO_PROFILES_ENABLED) return [];
+  const peers = demoProfilesByMessageRecency().slice(0, limit);
+  const now = Date.now();
+  return peers.map((p, i) => ({
+    userId: peerUserId(p),
+    displayName: p.name,
+    avatarUrl: demoPeerAvatarUrl(p),
+    viewedAt: new Date(now - (i + 1) * 11 * 60_000).toISOString(),
+  }));
+}
+
+export function withJeanKamgaDemoViewsOnMyStatusFeed(
+  res: StatusFeedResponse,
+): StatusFeedResponse {
+  if (!DEMO_PROFILES_ENABLED) return res;
+  const myId = res.myUserId;
+  const demoViewers = demoStatusViewersForJeanKamga();
+  if (demoViewers.length === 0) return res;
+  const items = res.items.map((row) => {
+    if (row.userId !== myId || !isJeanKamgaDisplayName(row.displayName)) {
+      return row;
+    }
+    const posts = row.posts.map((post) => ({
+      ...post,
+      viewCount: Math.max(post.viewCount ?? 0, demoViewers.length),
+    }));
+    return { ...row, posts };
+  });
+  return { ...res, items };
+}
+
+export function mergeJeanKamgaDemoStatusViewers(
+  displayName: string,
+  viewers: StatusPostViewer[],
+): StatusPostViewer[] {
+  if (!DEMO_PROFILES_ENABLED || !isJeanKamgaDisplayName(displayName)) {
+    return viewers;
+  }
+  const demo = demoStatusViewersForJeanKamga();
+  const merged = [...viewers];
+  for (const d of demo) {
+    if (!merged.some((m) => m.userId === d.userId)) merged.push(d);
+  }
+  merged.sort((a, b) => Date.parse(b.viewedAt) - Date.parse(a.viewedAt));
+  return merged;
 }
 
 /** IDs des posts déjà « vus » pour le mock (pairs 5–8). */

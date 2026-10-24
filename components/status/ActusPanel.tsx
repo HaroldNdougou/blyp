@@ -123,7 +123,10 @@ const StatusActusCard = React.memo(function StatusActusCard({
             style={
               addEmpty ? styles.actusCardAvatarSlotAdd : styles.actusCardAvatarSlot
             }
-            onPress={onAvatarPress}
+            onPress={(e) => {
+              e.stopPropagation();
+              onAvatarPress();
+            }}
             accessibilityRole="button"
             accessibilityLabel={t("status.add")}
           >
@@ -146,7 +149,10 @@ const StatusActusCard = React.memo(function StatusActusCard({
                     styles.actusAddBadge,
                     { backgroundColor: colors.accent },
                   ]}
-                  onPress={onAddBadgePress}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onAddBadgePress?.();
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel={t("status.add")}
                 >
@@ -185,7 +191,10 @@ const StatusActusCard = React.memo(function StatusActusCard({
                     styles.actusAddBadge,
                     { backgroundColor: colors.accent },
                   ]}
-                  onPress={onAddBadgePress}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onAddBadgePress?.();
+                  }}
                   accessibilityRole="button"
                   accessibilityLabel={t("status.add")}
                 >
@@ -302,16 +311,13 @@ export function ActusPanel({ isActive }: Props) {
     router.push("/status/create");
   }, []);
 
-  const openMine = () => {
-    if (!myId || myPosts.length === 0) return;
-    router.push({
-      pathname: "/status/view",
-      params: {
-        userId: myId,
-        index: String(statusViewStartIndex(myId)),
-      },
-    });
-  };
+  const openMyStatusList = useCallback(() => {
+    if (myPosts.length === 0) {
+      openCreateStatus();
+      return;
+    }
+    router.push("/status/mine");
+  }, [myPosts.length, openCreateStatus]);
 
   const confirmDeleteMine = useCallback(() => {
     if (!token || myPosts.length === 0) return;
@@ -371,7 +377,7 @@ export function ActusPanel({ isActive }: Props) {
           label={
             myPosts.length > 0 ? t("status.myStatus") : t("status.addCard")
           }
-          onPress={myPosts.length > 0 ? openMine : openCreateStatus}
+          onPress={openMyStatusList}
           onLongPress={myPosts.length > 0 ? confirmDeleteMine : undefined}
           isAdd={myPosts.length === 0}
           showAddBadge

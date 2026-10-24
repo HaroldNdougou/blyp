@@ -1,8 +1,9 @@
 import type { StatusFeedItem, StatusPost } from "@/lib/api/types";
-import { activePosts, getStatusFeedSnapshot } from "@/lib/status/statusCache";
+import { postsInViewerOrder, getStatusFeedSnapshot } from "@/lib/status/statusCache";
+import { statusPostSortMs } from "@/lib/status/statusPostOrder";
 
 function latestActivePost(row: StatusFeedItem): StatusPost | null {
-  const posts = activePosts(row.posts);
+  const posts = postsInViewerOrder(row.posts);
   return posts.length > 0 ? posts[posts.length - 1]! : null;
 }
 
@@ -10,13 +11,13 @@ function latestActivePost(row: StatusFeedItem): StatusPost | null {
 export function buildStatusViewerUserQueue(entryUserId: string): string[] {
   const entry = String(entryUserId ?? "").trim();
   const rows = getStatusFeedSnapshot().filter(
-    (r) => activePosts(r.posts).length > 0,
+    (r) => postsInViewerOrder(r.posts).length > 0,
   );
   const sorted = [...rows].sort((a, b) => {
     if (a.hasUnseen !== b.hasUnseen) return a.hasUnseen ? -1 : 1;
-    const ta = latestActivePost(a)?.createdAt ?? "";
-    const tb = latestActivePost(b)?.createdAt ?? "";
-    return Date.parse(tb) - Date.parse(ta);
+    const ta = latestActivePost(a) ? statusPostSortMs(latestActivePost(a)!) : 0;
+    const tb = latestActivePost(b) ? statusPostSortMs(latestActivePost(b)!) : 0;
+    return tb - ta;
   });
   const ids = sorted.map((r) => r.userId);
   if (!entry) return ids;

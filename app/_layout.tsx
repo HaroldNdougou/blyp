@@ -132,6 +132,19 @@ function RootShell() {
             contentStyle: { backgroundColor: "#000000" },
           }}
         />
+        <Stack.Screen
+          name="status/mine"
+          options={{
+            animation: "slide_from_right",
+          }}
+        />
+        <Stack.Screen
+          name="status/edit/[id]"
+          options={{
+            presentation: "modal",
+            animation: "slide_from_bottom",
+          }}
+        />
         <Stack.Screen name="forward" />
         <Stack.Screen
           name="chat/[id]"

@@ -167,17 +167,30 @@ export function formatConversationWhen(iso: string | null | undefined): string {
   });
 }
 
-/** Lecteur statut — sous le nom, à côté de la photo. */
-export function formatStatusPublishedWhen(iso: string): string {
+/** Statut publié : relatif récent puis « Aujourd'hui, 22:00 » / hier / date. */
+export function formatStatusPublishedWhen(
+  iso: string,
+  nowMs = Date.now(),
+): string {
   if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const now = new Date();
+  const t = d.getTime();
+  if (Number.isNaN(t)) return "";
+  const now = new Date(nowMs);
   const diffDays = Math.round(
     (startOfLocalDay(now) - startOfLocalDay(d)) / 86_400_000,
   );
   const time = formatMessageTime(iso);
-  if (diffDays === 0) return i18n.t("dates.todayAt", { time });
+  const diffSec = Math.max(0, Math.floor((nowMs - t) / 1000));
+
+  if (diffDays === 0) {
+    if (diffSec < 60) return i18n.t("dates.now");
+    const minutes = Math.floor(diffSec / 60);
+    if (minutes < 60) {
+      return i18n.t("status.publishedWhenMinutes", { count: minutes });
+    }
+    return i18n.t("dates.todayAt", { time });
+  }
   if (diffDays === 1) return i18n.t("dates.yesterdayAt", { time });
   const locale = currentNumberLocale();
   const datePart = d.toLocaleDateString(locale, {
