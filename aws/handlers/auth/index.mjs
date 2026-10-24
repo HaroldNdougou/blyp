@@ -67,6 +67,7 @@ import {
   updateCommerceCategory,
 } from "../../lib/commerce.mjs";
 import {
+  getSoaCarDayReport,
   getSoaCarTripByAccountId,
   getSoaCarTripForOwner,
   resetSoaCarTrip,
@@ -517,6 +518,21 @@ async function handleSoaTripReset(userId, commerceIdRaw) {
   return ok({ trip: result.trip });
 }
 
+async function handleSoaDayReport(userId, commerceIdRaw, dayKey) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  const result = await getSoaCarDayReport(userId, commerceId, dayKey);
+  if (result.error === "NOT_FOUND") return notFound("Commerce introuvable");
+  if (result.error === "NOT_SOA_CAR") {
+    return badRequest("Ce commerce n’est pas un car Soa");
+  }
+  if (result.error === "DAY_INVALID") return badRequest("Date invalide");
+  if (result.error === "COMMERCE_REQUIRED") {
+    return badRequest("commerceId requis");
+  }
+  return ok(result);
+}
+
 export async function handler(event, context) {
   /** Ne pas attendre les promesses SMS en arrière-plan après la réponse. */
   if (context && typeof context.callbackWaitsForEmptyEventLoop === "boolean") {
@@ -683,6 +699,18 @@ export async function handler(event, context) {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
       return await handleSoaTripByAccount(decodeURIComponent(accountSoaTrip[1]));
+    }
+
+    const commerceSoaDayReport = path.match(
+      /^\/commerces\/([^/]+)\/soa-trip\/day-report$/,
+    );
+    if (method === "GET" && commerceSoaDayReport) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const commerceId = decodeURIComponent(commerceSoaDayReport[1]);
+      const qs = event.queryStringParameters ?? {};
+      const day = String(qs.day ?? "").trim();
+      return await handleSoaDayReport(auth.userId, commerceId, day);
     }
 
     const commerceSoaTrip = path.match(/^\/commerces\/([^/]+)\/soa-trip$/);

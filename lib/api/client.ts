@@ -673,6 +673,49 @@ export async function resetSoaTripForCommerce(
   return res.trip;
 }
 
+export async function fetchSoaDayReport(
+  token: string,
+  commerceId: string,
+  dayKey: string,
+): Promise<import("@/lib/soa/soaCar").SoaCarDayReport> {
+  const id = String(commerceId ?? "").trim();
+  const day = String(dayKey ?? "").trim();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSoaDayReportForCommerce(token, id, day);
+  }
+  const report = await request<import("@/lib/soa/soaCar").SoaCarDayReport>(
+    `/commerces/${encodeURIComponent(id)}/soa-trip/day-report?day=${encodeURIComponent(day)}`,
+    { token },
+  );
+  if (__DEV__ && report.tripCount === 0) {
+    const { buildDemoActiveTripSeats } = await import(
+      "@/lib/soa/buildDemoTripSeats"
+    );
+    const {
+      buildDemoSoaArchivedTrips,
+      demoSoaDayReportFromArchives,
+    } = await import("@/lib/soa/demoSoaTripSeed");
+    const { soaCommerceDayKey } = await import("@/lib/soa/soaDayKey");
+    const activeSeats = buildDemoActiveTripSeats();
+    const demo = demoSoaDayReportFromArchives(
+      day,
+      buildDemoSoaArchivedTrips(),
+      day === soaCommerceDayKey()
+        ? {
+            tripId: "active",
+            totalFcfa: activeSeats.reduce((s, x) => s + x.amountFcfa, 0),
+            tripStartedAt: new Date(Date.now() - 25 * 60_000).toISOString(),
+            endedAt: null,
+            isActive: true,
+            seats: activeSeats,
+          }
+        : null,
+    );
+    if (demo.tripCount > 0) return demo;
+  }
+  return report;
+}
+
 export async function createCommerce(
   token: string,
   input: { name: string; category?: string; phone?: string },

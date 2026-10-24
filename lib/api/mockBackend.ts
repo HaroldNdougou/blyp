@@ -10,6 +10,7 @@ import {
   mockGetSoaTrip,
   mockRecordSoaSeat,
   mockResetSoaTrip,
+  mockSoaDayReport,
 } from "@/lib/soa/mockSoaTripStore";
 import {
   sortStatusPostsChronological,
@@ -1922,4 +1923,19 @@ export function mockResetSoaTripForCommerce(
     throw new ApiError("Ce commerce n’est pas un car Soa", 400);
   }
   return mockResetSoaTrip(commerce.id);
+}
+
+export function mockSoaDayReportForCommerce(
+  token: string,
+  commerceId: string,
+  dayKey: string,
+): import("@/lib/soa/soaCar").SoaCarDayReport {
+  assertSession(token);
+  const id = String(commerceId ?? "").trim();
+  const commerce = mockCommerces.find((c) => c.id === id);
+  if (!commerce) throw new ApiError("Commerce introuvable", 404);
+  if (commerce.category !== "soa_car") {
+    throw new ApiError("Ce commerce n’est pas un car Soa", 400);
+  }
+  return mockSoaDayReport(commerce.id, dayKey);
 }

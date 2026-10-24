@@ -5,6 +5,8 @@ export type SoaTripSeat = {
   amountFcfa: number;
   paidAt: string;
   transactionId: string;
+  payerName?: string | null;
+  payerPhone?: string | null;
 };
 
 export type SoaCarTrip = {
@@ -13,6 +15,22 @@ export type SoaCarTrip = {
   totalFcfa: number;
   seats: SoaTripSeat[];
   tripStartedAt: string;
+};
+
+export type SoaCarTripReportRow = {
+  tripId: string;
+  totalFcfa: number;
+  tripStartedAt: string;
+  endedAt: string | null;
+  isActive: boolean;
+  seats: SoaTripSeat[];
+};
+
+export type SoaCarDayReport = {
+  dayKey: string;
+  totalFcfa: number;
+  tripCount: number;
+  trips: SoaCarTripReportRow[];
 };
 
 export function isSoaCarCategory(

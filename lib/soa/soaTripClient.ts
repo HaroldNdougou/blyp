@@ -1,4 +1,5 @@
 export {
+  fetchSoaDayReport,
   fetchSoaTripByAccount,
   fetchSoaTripForCommerce,
   resetSoaTripForCommerce,

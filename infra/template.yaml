@@ -359,6 +359,12 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /commerces/{commerceId}/soa-trip
             Method: POST
+        CommerceSoaDayReport:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}/soa-trip/day-report
+            Method: GET
 
   WalletFunction:
     Type: AWS::Serverless::Function

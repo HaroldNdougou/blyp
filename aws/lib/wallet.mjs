@@ -724,11 +724,17 @@ export async function executePayment(
   ) {
     try {
       const { recordSoaSeatPayment } = await import("./soaCarTrip.mjs");
+      const soaPayerName =
+        `${String(payerProfile.firstName ?? "").trim()} ${String(payerProfile.lastName ?? "").trim()}`.trim() ||
+        "Client Blyp";
+      const soaPayerPhone =
+        String(payerProfile.phone ?? "").replace(/\D/g, "").slice(-9) || null;
       await recordSoaSeatPayment(
         target.commerceId,
         soaSeatNumber,
         amount,
         receiveTxId,
+        { payerName: soaPayerName, payerPhone: soaPayerPhone },
       );
     } catch (err) {
       console.warn("[wallet] soa seat record failed", err?.message ?? err);

@@ -1,6 +1,8 @@
 import { createHistoryStyles } from "@/components/history/historyStyles";
 import { PaymentReceiptScreen } from "@/components/pay/PaymentReceiptScreen";
+import { SoaCarReportScreen } from "@/components/soa/SoaCarReportScreen";
 import { useAuth } from "@/contexts/AuthContext";
+import { isSoaCarCategory } from "@/lib/soa/soaCar";
 import { useTheme } from "@/contexts/ThemeContext";
 import { ApiError } from "@/lib/api/errors";
 import type { TransactionItem } from "@/lib/api/types";
@@ -201,6 +203,18 @@ const HistoryRowItem = memo(function HistoryRowItem({
 export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const { token, user } = useAuth();
+  const soaCommerceId =
+    user?.activeContext?.type === "commerce"
+      ? user.activeContext.commerceId
+      : null;
+  const soaCategory =
+    user?.activeContext?.type === "commerce"
+      ? user.activeContext.category ??
+        user.commerces?.find((c) => c.id === soaCommerceId)?.category ??
+        null
+      : null;
+  const showSoaReport =
+    Boolean(soaCommerceId) && isSoaCarCategory(soaCategory);
   const phone = user?.phone ?? "";
   const { colors } = useTheme();
   const { t } = useTranslation();
@@ -504,6 +518,10 @@ export default function HistoryScreen() {
       </View>
     );
   }, [error, loading, token, filter, styles, colors, t]);
+
+  if (showSoaReport && soaCommerceId) {
+    return <SoaCarReportScreen commerceId={soaCommerceId} />;
+  }
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
