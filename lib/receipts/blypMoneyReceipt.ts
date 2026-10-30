@@ -7,6 +7,7 @@ import type { MerchantReceipt } from "@/lib/receipts/types";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { resolveAppLanguage } from "@/lib/i18n/locale";
 import { bytesToBase64 } from "@/lib/ble/base64";
+import { loadPdfLib } from "@/lib/pdf/loadPdfLib";
 import FS from "@/lib/voice/fileSystemLegacy";
 import i18n from "@/lib/i18n";
 
@@ -55,7 +56,7 @@ async function writePdfToCache(
 export async function generateBlypMoneyReceiptPdf(
   draft: BlypMoneyReceiptDraft,
 ): Promise<{ uri: string; sizeBytes: number }> {
-  const { PDFDocument, StandardFonts, rgb } = await import("pdf-lib");
+  const { PDFDocument, StandardFonts, rgb } = loadPdfLib();
   const lang = resolveAppLanguage();
   const t = i18n.getFixedT(lang);
 

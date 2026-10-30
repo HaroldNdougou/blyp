@@ -60,12 +60,35 @@ export function buildDemoActiveTripSeats() {
   return buildDemoTripSeats(0, 9, Date.now(), 12);
 }
 
+function recentDayKeys(count = 14) {
+  const keys = [];
+  const base = new Date();
+  for (let i = 0; i < count; i++) {
+    const d = new Date(base);
+    d.setDate(d.getDate() - i);
+    keys.push(
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Africa/Douala",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d),
+    );
+  }
+  return keys;
+}
+
+function demoSoaDayNoonMs(dayKey) {
+  return Date.parse(`${dayKey}T12:00:00+01:00`);
+}
+
 export function buildDevDemoArchiveRows() {
   const rows = [];
+  const dayKeys = recentDayKeys(14);
   for (let dayIndex = 0; dayIndex < 14; dayIndex++) {
     const tripCount = dayIndex % 4 === 0 ? 3 : dayIndex % 2 === 0 ? 2 : 1;
     for (let t = 0; t < tripCount; t++) {
-      const baseMs = Date.now() - dayIndex * 86_400_000 - t * 52 * 60_000;
+      const baseMs = demoSoaDayNoonMs(dayKeys[dayIndex]) - t * 52 * 60_000;
       const endedAt = new Date(baseMs).toISOString();
       const startedAt = new Date(baseMs - 38 * 60_000).toISOString();
       const paymentCount = demoPaymentsCountForTrip(dayIndex, t);

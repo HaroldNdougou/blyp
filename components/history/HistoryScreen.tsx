@@ -1,4 +1,5 @@
 import { createHistoryStyles } from "@/components/history/historyStyles";
+import { PayRegisterOverlayFallback } from "@/components/pay/PayRegisterOverlayFallback";
 import { PaymentReceiptScreen } from "@/components/pay/PaymentReceiptScreen";
 import { SoaCarReportScreen } from "@/components/soa/SoaCarReportScreen";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,7 +29,9 @@ import { Ionicons } from "@expo/vector-icons";
 import { FlashList } from "@shopify/flash-list";
 import { useFocusEffect } from "@react-navigation/native";
 import React, {
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -48,6 +51,9 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+
+const importPayRegisterOverlay = () => import("@/components/pay/PayRegisterOverlay");
+const PayRegisterOverlay = lazy(importPayRegisterOverlay);
 
 type HistoryRow = HistoryUiRow;
 
@@ -174,7 +180,7 @@ const HistoryRowItem = memo(function HistoryRowItem({
             {item.dateLabel}
           </Text>
           {item.reference ? (
-            <Text style={styles.refText} numberOfLines={1}>
+            <Text style={styles.refText} numberOfLines={2}>
               {item.reference}
             </Text>
           ) : null}
@@ -235,6 +241,7 @@ export default function HistoryScreen() {
   });
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<HistoryRow | null>(null);
+  const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
   /** Même référence snapshot tx ⇒ zéro setState au focus. */
   const snapshotRef = useRef<TransactionItem[] | null>(
     phone ? getTransactionsSnapshot(phone) : null,
@@ -253,6 +260,24 @@ export default function HistoryScreen() {
     snapshotRef.current = items;
     setRows(ensureHistoryUiRows(phone, items) ?? []);
   }, [phone]);
+
+  useEffect(() => {
+    if (!token) void importPayRegisterOverlay();
+  }, [token]);
+
+  useEffect(() => {
+    if (user && !user.needsOnboarding) {
+      setRegisterInviteVisible(false);
+    }
+  }, [user]);
+
+  const openSignIn = useCallback(() => {
+    void importPayRegisterOverlay();
+    setRegisterInviteVisible(true);
+  }, []);
+
+  const showRegisterOverlay =
+    registerInviteVisible && (!user || Boolean(user.needsOnboarding));
 
   useEffect(() => {
     if (phoneRef.current !== phone) {
@@ -471,6 +496,18 @@ export default function HistoryScreen() {
             />
           </View>
           <Text style={styles.emptyTitle}>{t("history.signInRequired")}</Text>
+          <Pressable
+            style={({ pressed }) => [
+              styles.signInBtn,
+              pressed && styles.signInBtnPressed,
+            ]}
+            onPress={openSignIn}
+            onPressIn={() => void importPayRegisterOverlay()}
+            accessibilityRole="button"
+            accessibilityLabel={t("history.signInCta")}
+          >
+            <Text style={styles.signInBtnText}>{t("history.signInCta")}</Text>
+          </Pressable>
         </View>
       );
     }
@@ -514,10 +551,9 @@ export default function HistoryScreen() {
           />
         </View>
         <Text style={styles.emptyTitle}>{t("history.empty")}</Text>
-        <Text style={styles.emptyText}>{t("history.emptyHint")}</Text>
       </View>
     );
-  }, [error, loading, token, filter, styles, colors, t]);
+  }, [error, loading, token, filter, styles, colors, t, openSignIn]);
 
   if (showSoaReport && soaCommerceId) {
     return <SoaCarReportScreen commerceId={soaCommerceId} />;
@@ -596,6 +632,20 @@ export default function HistoryScreen() {
         />
       </View>
     </SafeAreaView>
+
+      {showRegisterOverlay ? (
+        <Suspense
+          fallback={
+            <PayRegisterOverlayFallback
+              onClose={() => setRegisterInviteVisible(false)}
+            />
+          }
+        >
+          <PayRegisterOverlay
+            onComplete={() => setRegisterInviteVisible(false)}
+          />
+        </Suspense>
+      ) : null}
 
       {selected ? (
         <View style={[StyleSheet.absoluteFillObject, { zIndex: 20 }]}>

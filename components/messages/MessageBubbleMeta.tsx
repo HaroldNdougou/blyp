@@ -51,6 +51,8 @@ export function MessageBubbleMetaRow({
   /** Vocal : durée à droite, même ligne que l’heure. */
   trailingText,
   trailingTextStyle,
+  trailingTextAtStart,
+  trailingTextHidden,
   moneyReceiptOn,
   moneyReceiptToggle,
 }: {
@@ -69,6 +71,10 @@ export function MessageBubbleMetaRow({
   fruitMoneyClaimedLabel?: string | null;
   trailingText?: string | null;
   trailingTextStyle?: StyleProp<TextStyle>;
+  /** Vocal : durée à gauche, heure + coches à droite (WhatsApp). */
+  trailingTextAtStart?: boolean;
+  /** Durée incluse dans l’a11y mais rendue ailleurs (ex. vocal sous le bouton play). */
+  trailingTextHidden?: boolean;
   /** Reçu exigé (destinataire, en attente). */
   moneyReceiptOn?: boolean;
   /** Émetteur — activer / désactiver le reçu (transfert en attente). */
@@ -231,17 +237,37 @@ export function MessageBubbleMetaRow({
           : time;
 
   const metaLine = trail ? (
-    <View
-      style={[
-        styles.bubbleMetaRow,
-        { width: "100%", justifyContent: "space-between" },
-      ]}
-    >
-      <View style={styles.bubbleMetaRow}>{row}</View>
-      <Text style={trailingTextStyle} accessibilityElementsHidden>
-        {trail}
-      </Text>
-    </View>
+    trailingTextHidden ? (
+      row
+    ) : trailingTextAtStart ? (
+      <View
+        style={[
+          styles.bubbleMetaRow,
+          {
+            width: "100%",
+            justifyContent: "space-between",
+            alignItems: "flex-end",
+          },
+        ]}
+      >
+        <Text style={trailingTextStyle} accessibilityElementsHidden>
+          {trail}
+        </Text>
+        <View style={styles.bubbleMetaRow}>{row}</View>
+      </View>
+    ) : (
+      <View
+        style={[
+          styles.bubbleMetaRow,
+          { width: "100%", justifyContent: "space-between" },
+        ]}
+      >
+        <View style={styles.bubbleMetaRow}>{row}</View>
+        <Text style={trailingTextStyle} accessibilityElementsHidden>
+          {trail}
+        </Text>
+      </View>
+    )
   ) : (
     row
   );

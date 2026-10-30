@@ -1,5 +1,9 @@
 import FS from "@/lib/voice/fileSystemLegacy";
 import { voiceUriExists } from "@/lib/voice/cache";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 function safeKey(key: string): string {
   return String(key ?? "").replace(/[^a-zA-Z0-9._-]+/g, "_");
@@ -16,7 +20,11 @@ export async function peekImageCache(key: string): Promise<string | null> {
   const dest = await destFor(key);
   if (!dest) return null;
   const info = await FS.getInfoAsync(dest);
-  return info.exists ? dest : null;
+  if (info.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
+  return null;
 }
 
 export { voiceUriExists as imageUriExists };
@@ -36,5 +44,6 @@ export async function copyImageIntoCache(
     await FS.makeDirectoryAsync(dir, { intermediates: true });
   }
   await FS.copyAsync({ from: src, to: dest });
+  await noteMediaCacheWrite(dest, "image");
   return dest;
 }

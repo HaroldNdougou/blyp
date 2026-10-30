@@ -54,6 +54,8 @@ let playing = false;
 let paused = false;
 let session = 0;
 let lastEmitAt = 0;
+let scrubbing = false;
+let resumeAfterScrub = false;
 
 const statusListeners = new Set<(s: VoicePlayStatus) => void>();
 const finishListeners = new Set<(messageId: string) => void>();
@@ -190,6 +192,52 @@ export async function seekVoice(ms: number): Promise<void> {
   }
 }
 
+/** UI + position logique pendant le glisser — pas de setPositionAsync (évite le « dansé »). */
+export function previewVoiceScrub(ms: number): void {
+  if (!current || !scrubbing) return;
+  const cap = durationMs > 0 ? durationMs : ms;
+  positionMs = Math.max(0, Math.min(ms, cap));
+  emitStatus(true);
+}
+
+export async function beginVoiceScrub(): Promise<boolean> {
+  if (!current) return false;
+  scrubbing = true;
+  resumeAfterScrub = playing;
+  if (playing) {
+    await pauseVoice();
+  }
+  return resumeAfterScrub;
+}
+
+export async function commitVoiceScrub(ms: number): Promise<void> {
+  if (!current) {
+    scrubbing = false;
+    resumeAfterScrub = false;
+    return;
+  }
+  const cap = durationMs > 0 ? durationMs : ms;
+  const next = Math.max(0, Math.min(ms, cap));
+  positionMs = next;
+  emitStatus(true);
+  try {
+    await current.setPositionAsync(next);
+  } catch {
+    /* ignore */
+  }
+  const resume = resumeAfterScrub;
+  scrubbing = false;
+  resumeAfterScrub = false;
+  if (resume) {
+    await resumeVoice();
+  }
+}
+
+export function cancelVoiceScrub(): void {
+  scrubbing = false;
+  resumeAfterScrub = false;
+}
+
 export async function setVoiceRate(rate: VoiceRate): Promise<void> {
   currentRate = rate;
   if (current) await applyRate(current, rate);
@@ -282,7 +330,11 @@ export async function playVoice(
   sound.setOnPlaybackStatusUpdate((st) => {
     if (mySession !== session) return;
     if (!st.isLoaded) return;
-    if (typeof st.positionMillis === "number") positionMs = st.positionMillis;
+    if (!scrubbing) {
+      if (typeof st.positionMillis === "number") {
+        positionMs = st.positionMillis;
+      }
+    }
     if (typeof st.durationMillis === "number" && st.durationMillis > 0) {
       durationMs = st.durationMillis;
     }

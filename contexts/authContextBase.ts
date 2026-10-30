@@ -9,6 +9,8 @@ export type AuthContextValue = {
   verifyAndSignIn: (phoneDigits: string, code: string) => Promise<ApiUser>;
   refreshUser: () => Promise<void>;
   signOut: () => Promise<void>;
+  /** Annule l’inscription (supprime le compte incomplet) puis déconnecte. */
+  cancelRegistration: () => Promise<void>;
   updateBalance: (balanceFcfa: number) => void;
   applyIncomingPayment: (data: {
     amountFcfa?: string;
@@ -46,6 +48,7 @@ const DEV_FALLBACK: AuthContextValue = {
   },
   refreshUser: async () => {},
   signOut: async () => {},
+  cancelRegistration: async () => {},
   updateBalance: () => {},
   applyIncomingPayment: () => {},
   setActiveContext: async () => {

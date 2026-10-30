@@ -1,6 +1,10 @@
 /** PUT signé S3 — FileSystem, hors chemin Pay. */
 
 import FS from "@/lib/voice/fileSystemLegacy";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 export async function uploadImageFile(
   uploadUrl: string,
@@ -32,7 +36,11 @@ export async function cacheImageFile(
   const safe = key.replace(/[^a-zA-Z0-9._-]+/g, "_");
   const dest = `${dir}${safe}`;
   const existing = await FS.getInfoAsync(dest);
-  if (existing.exists) return dest;
+  if (existing.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
   const dl = await FS.downloadAsync(remoteUrl, dest);
+  await noteMediaCacheWrite(dl.uri, "image");
   return dl.uri;
 }

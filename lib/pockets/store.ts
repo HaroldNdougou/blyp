@@ -4,7 +4,7 @@
  */
 import { useSyncExternalStore } from "react";
 import type { Pocket, PocketTransaction } from "@/lib/api/types";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 
 export const SAVINGS_POCKET_ID = "savings";
 
@@ -158,34 +158,34 @@ export async function hydratePockets(phone: string): Promise<void> {
   if (!phone || hydrated.has(phone)) return;
   hydrated.add(phone);
   try {
-    const db = await getDb();
-    if (!db) return;
-    const rows = await db.getAllAsync<{ key: string; json: string }>(
-      `SELECT key, json FROM kv_cache WHERE phone = ? AND (key = 'pockets' OR key LIKE 'ptx:%')`,
-      phone,
-    );
-    let changed = false;
-    for (const r of rows) {
-      try {
-        const v = JSON.parse(r.json);
-        if (r.key === "pockets") {
-          if (!pocketsByPhone.has(phone) && Array.isArray(v)) {
-            pocketsByPhone.set(phone, sortPockets(v as Pocket[]));
-            changed = true;
+    await runDbRead(async (db) => {
+      const rows = await db.getAllAsync<{ key: string; json: string }>(
+        `SELECT key, json FROM kv_cache WHERE phone = ? AND (key = 'pockets' OR key LIKE 'ptx:%')`,
+        phone,
+      );
+      let changed = false;
+      for (const r of rows) {
+        try {
+          const v = JSON.parse(r.json);
+          if (r.key === "pockets") {
+            if (!pocketsByPhone.has(phone) && Array.isArray(v)) {
+              pocketsByPhone.set(phone, sortPockets(v as Pocket[]));
+              changed = true;
+            }
+          } else {
+            const id = r.key.slice(4);
+            const k = txKey(phone, id);
+            if (!txByKey.has(k) && Array.isArray(v)) {
+              txByKey.set(k, v as PocketTransaction[]);
+              changed = true;
+            }
           }
-        } else {
-          const id = r.key.slice(4);
-          const k = txKey(phone, id);
-          if (!txByKey.has(k) && Array.isArray(v)) {
-            txByKey.set(k, v as PocketTransaction[]);
-            changed = true;
-          }
+        } catch {
+          /* ligne corrompue */
         }
-      } catch {
-        /* ligne corrompue */
       }
-    }
-    if (changed) emit();
+      if (changed) emit();
+    });
   } catch {
     /* best effort */
   }

@@ -13,6 +13,7 @@ import {
 } from "@/lib/ble/broadcastStopGate";
 import { withTimeout } from "@/lib/ble/timeout";
 import { stopTaxiScan } from "@/lib/ble/scan";
+import { getWarmBleAdvertiser, warmBleAdvertiserModule } from "@/lib/ble/warmBroadcast";
 import type { BleAdvertiseStatus } from "@/lib/ble/types";
 
 export type StartAdvertiseInput = {
@@ -37,6 +38,9 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function loadAdvertiser(): Promise<typeof import("react-native-ble-advertiser") | null> {
+  warmBleAdvertiserModule();
+  const warmed = await getWarmBleAdvertiser();
+  if (warmed) return warmed;
   if (!isBleAdvertiserNativeAvailable()) return null;
   try {
     return await import("react-native-ble-advertiser");
@@ -80,10 +84,18 @@ async function hardNativeStop(
 export async function startTaxiBroadcast(
   input: StartAdvertiseInput,
 ): Promise<StartAdvertiseResult> {
-  /** Purge boot / toggle OFF — attendre avant start (sinon MIUI → erreur ou idle). */
-  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
+  warmBleAdvertiserModule();
+  await withTimeout(waitTaxiBroadcastStopped(), 250, undefined);
 
-  const adv = await loadAdvertiser();
+  const [adv, radio] = await Promise.all([
+    loadAdvertiser(),
+    withTimeout(
+      prepareBleRadio({ advertise: true, forcePrompt: true }),
+      10_000,
+      "denied" as const,
+    ),
+  ]);
+
   if (!adv) {
     return {
       ok: false,
@@ -92,11 +104,6 @@ export async function startTaxiBroadcast(
     };
   }
 
-  const radio = await withTimeout(
-    prepareBleRadio({ advertise: true, forcePrompt: true }),
-    8_000,
-    "denied",
-  );
   if (radio === "powered_off") {
     return { ok: false, status: "powered_off" };
   }
@@ -122,26 +129,33 @@ export async function startTaxiBroadcast(
     };
   }
 
-  /** Coupe toute pub orpheline puis le scan. */
   await nativeStop(adv);
-  await stopTaxiScan();
-  await withTimeout(waitTaxiBroadcastStopped(), 900, undefined);
+  void stopTaxiScan();
+  await withTimeout(waitTaxiBroadcastStopped(), 200, undefined);
 
   const gen = ++broadcastGeneration;
   setBleBroadcasting(true);
 
   try {
     adv.setCompanyId(BLYP_BLE_COMPANY_ID);
+    const txHigh =
+      typeof adv.ADVERTISE_TX_POWER_HIGH === "number"
+        ? adv.ADVERTISE_TX_POWER_HIGH
+        : 3;
+    const modeLowLatency =
+      typeof adv.ADVERTISE_MODE_LOW_LATENCY === "number"
+        ? adv.ADVERTISE_MODE_LOW_LATENCY
+        : 2;
     const started = await withTimeout(
       adv.broadcast(BLYP_BLE_SERVICE_UUID, manuf, {
         connectable: false,
         includeDeviceName: false,
         includeTxPowerLevel: false,
         includeServiceUuid: false,
-        advertiseMode: 2, // LOW_LATENCY
-        txPowerLevel: 3, // HIGH
+        advertiseMode: modeLowLatency,
+        txPowerLevel: txHigh,
       } as Parameters<typeof adv.broadcast>[2]).then(() => true as const),
-      4_000,
+      8_000,
       false as const,
     );
     if (!started) {
@@ -174,16 +188,20 @@ export async function startTaxiBroadcast(
 }
 
 /**
- * Coupe vraiment la diffusion. Safe à appeler en rafale (OFF / reload / background).
+ * Coupe vraiment la diffusion. Safe à appeler en rafale (OFF / reload).
  * UI doit passer OFF immédiatement ; cet appel peut rester fire-and-forget.
  */
 /**
  * Après reload natif : la pub OEM peut rester ON alors que le switch JS est OFF.
  * Une seule fois par session, avant que Pay ne scanne.
  */
-export function purgeOrphanTaxiBroadcastOnce(): void {
+export async function purgeOrphanTaxiBroadcastOnce(): Promise<void> {
   if (orphanPurgeDone) return;
   orphanPurgeDone = true;
+  const { isTaxiBroadcastWantedPersisted } = await import(
+    "@/lib/ble/taxiBroadcastPref"
+  );
+  if (await isTaxiBroadcastWantedPersisted()) return;
   void stopTaxiBroadcast();
 }
 

@@ -6,6 +6,12 @@ import {
   startBleBroadcastForeground,
   stopBleBroadcastForeground,
 } from "@/lib/ble/foregroundService";
+import {
+  clearTaxiBroadcastPref,
+  loadTaxiBroadcastPref,
+  persistTaxiBroadcastWant,
+  toBroadcastAccount,
+} from "@/lib/ble/taxiBroadcastPref";
 import type { BleAdvertiseStatus } from "@/lib/ble/types";
 import { withTimeout } from "@/lib/ble/timeout";
 import i18n from "@/lib/i18n";
@@ -27,14 +33,13 @@ type Listener = (snap: TaxiBroadcastSnapshot) => void;
 let on = false;
 let busy = false;
 let status: BleAdvertiseStatus = "idle";
-/** Utilisateur veut rester en ligne (y compris arrière-plan). */
 let wantOn = false;
 let lastAccount: TaxiBroadcastAccount | null = null;
+let activateGeneration = 0;
 const listeners = new Set<Listener>();
 
 function emit() {
-  const snap = { on, busy, status };
-  listeners.forEach((l) => l(snap));
+  listeners.forEach((l) => l(getTaxiBroadcastSnapshot()));
 }
 
 export function getTaxiBroadcastSnapshot(): TaxiBroadcastSnapshot {
@@ -47,12 +52,16 @@ export function subscribeTaxiBroadcast(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
-async function showForegroundNotification(): Promise<void> {
-  await startBleBroadcastForeground({
-    title: i18n.t("commerce.onlineNotificationTitle"),
-    body: i18n.t("commerce.onlineNotificationBody"),
-    stopLabel: i18n.t("commerce.onlineNotificationStop"),
-  });
+function showForegroundNotificationFireAndForget(): void {
+  void withTimeout(
+    startBleBroadcastForeground({
+      title: i18n.t("commerce.onlineNotificationTitle"),
+      body: i18n.t("commerce.onlineNotificationBody"),
+      stopLabel: i18n.t("commerce.onlineNotificationStop"),
+    }),
+    2_000,
+    undefined,
+  );
 }
 
 export async function setTaxiBroadcastEnabled(
@@ -60,6 +69,7 @@ export async function setTaxiBroadcastEnabled(
   account: TaxiBroadcastAccount,
 ): Promise<{ status: BleAdvertiseStatus; message?: string }> {
   lastAccount = account;
+  const gen = ++activateGeneration;
 
   if (!enabled) {
     wantOn = false;
@@ -67,66 +77,69 @@ export async function setTaxiBroadcastEnabled(
     status = "idle";
     busy = false;
     emit();
-    await withTimeout(stopBleBroadcastForeground(), 800, undefined);
-    await withTimeout(stopTaxiBroadcast(), 1_200, undefined);
+    void persistTaxiBroadcastWant(false, account);
+    await withTimeout(stopBleBroadcastForeground(), 500, undefined);
+    await withTimeout(stopTaxiBroadcast(), 800, undefined);
     return { status: "idle" };
   }
 
   if (!account.accountId || !account.phone) {
+    wantOn = false;
     on = false;
     status = "error";
+    busy = false;
     emit();
     return { status: "error", message: "INVALID_ACCOUNT" };
   }
 
   wantOn = true;
-  busy = true;
+  /** Pas optimiste : En ligne seulement quand la radio confirme. */
+  on = false;
+  status = "idle";
+  busy = false;
   emit();
 
-  try {
-    const res = await withTimeout(
-      startTaxiBroadcast({
-        accountId: account.accountId,
-        phone: account.phone,
-        category: account.category ?? null,
-      }),
-      12_000,
-      { ok: false, status: "error" as const, message: "TIMEOUT" },
-    );
+  const res = await withTimeout(
+    startTaxiBroadcast({
+      accountId: account.accountId,
+      phone: account.phone,
+      category: account.category ?? null,
+    }),
+    20_000,
+    { ok: false, status: "error" as const, message: "TIMEOUT" },
+  );
 
-    if (!wantOn) {
-      await stopBleBroadcastForeground();
-      void stopTaxiBroadcast();
-      on = false;
-      status = "idle";
-      emit();
-      return { status: "idle" };
-    }
-
-    if (res.ok) {
-      await withTimeout(showForegroundNotification(), 1_500, undefined);
-      on = true;
-      status = "broadcasting";
-      emit();
-      return { status: "broadcasting" };
-    }
-
-    await stopBleBroadcastForeground();
-    if (res.message === "TIMEOUT") {
-      await withTimeout(stopTaxiBroadcast(), 800, undefined);
-    }
+  if (gen !== activateGeneration || !wantOn) {
+    await withTimeout(stopBleBroadcastForeground(), 500, undefined);
+    void stopTaxiBroadcast();
     on = false;
-    const nextStatus = res.status === "idle" ? "error" : res.status;
-    status = nextStatus;
+    status = "idle";
     emit();
-    return { status: nextStatus, message: res.message };
-  } finally {
-    busy = false;
-    emit();
+    return { status: "idle" };
   }
+
+  if (res.ok) {
+    showForegroundNotificationFireAndForget();
+    on = true;
+    status = "broadcasting";
+    emit();
+    void persistTaxiBroadcastWant(true, account);
+    return { status: "broadcasting" };
+  }
+
+  await withTimeout(stopBleBroadcastForeground(), 500, undefined);
+  if (res.message === "TIMEOUT") {
+    await withTimeout(stopTaxiBroadcast(), 500, undefined);
+  }
+  wantOn = false;
+  on = false;
+  const nextStatus = res.status === "idle" ? "error" : res.status;
+  status = nextStatus;
+  emit();
+  void persistTaxiBroadcastWant(false, account);
+  return { status: nextStatus, message: res.message };
 }
 
-/** Change d’identité en restant en ligne : stop radio puis relance auto. */
 export async function retargetTaxiBroadcast(
   account: TaxiBroadcastAccount,
 ): Promise<{ status: BleAdvertiseStatus; message?: string }> {
@@ -134,69 +147,60 @@ export async function retargetTaxiBroadcast(
     return { status: "idle" };
   }
   lastAccount = account;
-  wantOn = true;
-  on = false;
-  busy = true;
-  emit();
-
-  try {
-    await withTimeout(stopBleBroadcastForeground(), 800, undefined);
-    await withTimeout(stopTaxiBroadcast(), 1_200, undefined);
-    if (!wantOn) {
-      on = false;
-      status = "idle";
-      emit();
-      return { status: "idle" };
-    }
-    if (!account.accountId || !account.phone) {
-      wantOn = false;
-      on = false;
-      status = "error";
-      emit();
-      return { status: "error", message: "INVALID_ACCOUNT" };
-    }
-
-    const res = await withTimeout(
-      startTaxiBroadcast({
-        accountId: account.accountId,
-        phone: account.phone,
-        category: account.category ?? null,
-      }),
-      12_000,
-      { ok: false, status: "error" as const, message: "TIMEOUT" },
-    );
-
-    if (!wantOn) {
-      await withTimeout(stopBleBroadcastForeground(), 800, undefined);
-      void stopTaxiBroadcast();
-      on = false;
-      status = "idle";
-      emit();
-      return { status: "idle" };
-    }
-
-    if (res.ok) {
-      await withTimeout(showForegroundNotification(), 1_500, undefined);
-      on = true;
-      status = "broadcasting";
-      emit();
-      return { status: "broadcasting" };
-    }
-
-    await withTimeout(stopBleBroadcastForeground(), 800, undefined);
-    if (res.message === "TIMEOUT") {
-      await withTimeout(stopTaxiBroadcast(), 800, undefined);
-    }
+  if (!account.accountId || !account.phone) {
+    wantOn = false;
     on = false;
-    const nextStatus = res.status === "idle" ? "error" : res.status;
-    status = nextStatus;
+    status = "error";
     emit();
-    return { status: nextStatus, message: res.message };
-  } finally {
-    busy = false;
-    emit();
+    return { status: "error", message: "INVALID_ACCOUNT" };
   }
+
+  const gen = ++activateGeneration;
+  wantOn = true;
+  await withTimeout(stopBleBroadcastForeground(), 500, undefined);
+  await withTimeout(stopTaxiBroadcast(), 800, undefined);
+  if (gen !== activateGeneration || !wantOn) {
+    on = false;
+    status = "idle";
+    emit();
+    return { status: "idle" };
+  }
+
+  const res = await withTimeout(
+    startTaxiBroadcast({
+      accountId: account.accountId,
+      phone: account.phone,
+      category: account.category ?? null,
+    }),
+    20_000,
+    { ok: false, status: "error" as const, message: "TIMEOUT" },
+  );
+
+  if (gen !== activateGeneration || !wantOn) {
+    on = false;
+    status = "idle";
+    emit();
+    return { status: "idle" };
+  }
+
+  if (res.ok) {
+    showForegroundNotificationFireAndForget();
+    on = true;
+    status = "broadcasting";
+    emit();
+    void persistTaxiBroadcastWant(true, account);
+    return { status: "broadcasting" };
+  }
+
+  wantOn = false;
+  on = false;
+  const nextStatus = res.status === "idle" ? "error" : res.status;
+  status = nextStatus;
+  emit();
+  void persistTaxiBroadcastWant(false, account);
+  return { status: nextStatus, message: res.message };
 }
+
 export function stopTaxiBroadcastFromSystem(): void {
   if (!wantOn && !on) return;
   const account = lastAccount ?? { accountId: null, phone: null };
@@ -207,11 +211,43 @@ export function isTaxiBroadcastWanted(): boolean {
   return wantOn;
 }
 
-/** Reload : reset UI sans stop agressif si pas en ligne. */
-export function resetTaxiBroadcastUiOnMount(): void {
-  if (wantOn) return;
+/**
+ * Au boot : restaure « En ligne » si l’utilisateur ne l’a pas coupé manuellement.
+ * Ne coupe pas la diffusion quand l’app passe en arrière-plan.
+ */
+export async function bootstrapTaxiBroadcastState(): Promise<void> {
+  if (wantOn || on) return;
+
+  const saved = await loadTaxiBroadcastPref();
+  if (saved?.wantOn) {
+    const account = toBroadcastAccount(saved);
+    lastAccount = account;
+    wantOn = true;
+    on = true;
+    status = "broadcasting";
+    emit();
+    void retargetTaxiBroadcast(account);
+    return;
+  }
+
   on = false;
   status = "idle";
   busy = false;
   emit();
+}
+
+/** @deprecated alias bootstrap */
+export function resetTaxiBroadcastUiOnMount(): void {
+  void bootstrapTaxiBroadcastState();
+}
+
+export async function clearTaxiBroadcastOnSignOut(): Promise<void> {
+  wantOn = false;
+  on = false;
+  status = "idle";
+  busy = false;
+  emit();
+  await clearTaxiBroadcastPref();
+  await withTimeout(stopBleBroadcastForeground(), 500, undefined);
+  await withTimeout(stopTaxiBroadcast(), 800, undefined);
 }

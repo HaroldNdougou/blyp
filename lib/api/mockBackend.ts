@@ -17,6 +17,7 @@ import {
   statusPostSortMs,
 } from "@/lib/status/statusPostOrder";
 import { makeTxReference } from "@/lib/txReference";
+import { parseRegistrationFullName } from "@/lib/profile/parseRegistrationFullName";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
   ApiActiveContext,
@@ -98,10 +99,10 @@ function mockUserFromState(): ApiUser {
     !mockLastName?.trim() ||
     mockLastName.trim().length < 2;
   const needsOnboarding = needsPin || needsNames;
-  const onboardingStep: OnboardingStep | null = needsPin
-    ? "pin"
-    : needsNames
-      ? "profile"
+  const onboardingStep: OnboardingStep | null = needsNames
+    ? "profile"
+    : needsPin
+      ? "pin"
       : null;
   const commerce = activeCommerce();
   return {
@@ -276,15 +277,58 @@ export function mockSetOnboardingProfile(
   assertSession(token);
   const f = String(firstName ?? "").trim();
   const l = String(lastName ?? "").trim();
-  if (f.length < 2 || l.length < 2) {
-    throw new ApiError("Prénom et nom : au moins 2 caractères chacun", 400);
+  if (f.length < 1 || f.length > 80 || l.length < 1 || l.length > 80) {
+    throw new ApiError("Nom invalide (1 à 80 caractères)", 400);
   }
-  if (mockTransactionPinPlain == null) {
-    throw new ApiError("Définissez d’abord votre code PIN de transaction", 400);
+  if (/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(f) || /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(l)) {
+    throw new ApiError("Caractères non autorisés dans le nom", 400);
   }
   mockFirstName = f;
   mockLastName = l;
   return { user: mockUserFromState() };
+}
+
+export function mockUpdateMeProfile(
+  token: string,
+  input: { fullName: string; phone?: string },
+): { user: ApiUser } {
+  assertSession(token);
+  const u = mockUserFromState();
+  if (u.needsOnboarding) {
+    throw new ApiError("Terminez l’inscription avant de modifier le profil", 400);
+  }
+  const parsed = parseRegistrationFullName(input.fullName);
+  if (!parsed) {
+    throw new ApiError("Nom invalide (1 à 80 caractères)", 400);
+  }
+  const nextPhone = String(input.phone ?? "")
+    .replace(/\D/g, "")
+    .slice(-9);
+  const curPhone = String(sessionPhone ?? "").replace(/\D/g, "").slice(-9);
+  if (nextPhone && nextPhone !== curPhone) {
+    throw new ApiError("Changement de numéro bientôt disponible", 400);
+  }
+  mockFirstName = parsed.firstName;
+  mockLastName = parsed.lastName;
+  return { user: mockUserFromState() };
+}
+
+export function mockCancelRegistration(token: string): { cancelled: true } {
+  assertSession(token);
+  const u = mockUserFromState();
+  if (!u.needsOnboarding) {
+    throw new ApiError("Inscription déjà terminée", 403);
+  }
+  sessionPhone = null;
+  sessionToken = null;
+  sessionRefreshToken = null;
+  mockSessionUserId = null;
+  mockFirstName = null;
+  mockLastName = null;
+  mockTransactionPinPlain = null;
+  mockAvatarUri = null;
+  pendingOtpPhone = null;
+  return { cancelled: true };
 }
 
 export function mockPresignKycDocument(

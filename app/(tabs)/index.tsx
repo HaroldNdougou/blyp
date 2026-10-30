@@ -1,16 +1,12 @@
 import ConversationsScreen from "@/components/messages/ConversationsScreen";
 import { useAuth } from "@/contexts/authContextBase";
-import { lazy, Suspense } from "react";
+import { Redirect } from "expo-router";
 
-const PayTabScreen = lazy(() => import("./pay"));
-
-/** Accueil : Messages si connecté, Pay sinon (index = route par défaut Expo Router). */
-export default function TabsHomeScreen() {
-  const { token } = useAuth();
-  if (token) return <ConversationsScreen />;
-  return (
-    <Suspense fallback={null}>
-      <PayTabScreen />
-    </Suspense>
-  );
+/** Onglet Messages (2ᵉ) — accueil Pay = route `pay`. */
+export default function TabsMessagesScreen() {
+  const { token, user } = useAuth();
+  if (!token || user?.needsOnboarding) {
+    return <Redirect href="/(tabs)/welcome" />;
+  }
+  return <ConversationsScreen />;
 }

@@ -8,13 +8,8 @@ import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  Text,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -70,7 +65,7 @@ export function KycVerifyScreen() {
       });
       if (!picked) {
         setCameraDismissed(true);
-        Alert.alert(t("kyc.title"), t("kyc.cameraDenied"));
+        blypAlert(t("kyc.title"), t("kyc.cameraDenied"));
         return;
       }
       setPreview({
@@ -112,9 +107,9 @@ export function KycVerifyScreen() {
       });
       await refreshUser();
       if (u.kycStatus === "approved") {
-        Alert.alert(t("kyc.title"), t("kyc.approvedMessage"));
+        blypAlert(t("kyc.title"), t("kyc.approvedMessage"));
       } else {
-        Alert.alert(t("kyc.title"), t("kyc.pendingMessage"));
+        blypAlert(t("kyc.title"), t("kyc.pendingMessage"));
       }
       router.back();
     } catch (e) {

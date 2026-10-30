@@ -11,6 +11,7 @@ type Props = {
   title: string;
   styles: ReportStyles;
   onPress: () => void;
+  onPressIn?: () => void;
 };
 
 export const SoaReportTripListRow = React.memo(function SoaReportTripListRow({
@@ -18,12 +19,14 @@ export const SoaReportTripListRow = React.memo(function SoaReportTripListRow({
   title,
   styles,
   onPress,
+  onPressIn,
 }: Props) {
   const isActive = item.isActive;
 
   return (
     <Pressable
       style={styles.tripRow}
+      onPressIn={onPressIn}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityState={{ busy: isActive }}

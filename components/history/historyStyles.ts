@@ -108,6 +108,24 @@ export function createHistoryStyles(c: ThemeColors) {
       color: c.textMuted,
       lineHeight: 20,
     },
+    signInBtn: {
+      marginTop: 20,
+      minWidth: 200,
+      height: 48,
+      paddingHorizontal: 24,
+      borderRadius: 14,
+      backgroundColor: c.accent,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    signInBtnPressed: {
+      opacity: 0.88,
+    },
+    signInBtnText: {
+      fontSize: 16,
+      fontWeight: "700",
+      color: c.accentOn,
+    },
     sectionHeader: {
       paddingTop: 12,
       paddingBottom: 6,
@@ -195,6 +213,7 @@ export function createHistoryStyles(c: ThemeColors) {
       fontWeight: "600",
       color: c.textFaint,
       letterSpacing: 0.2,
+      flexShrink: 1,
     },
     rightCol: {
       alignItems: "flex-end",

@@ -12,15 +12,8 @@ import { resolveRemoteDocumentThumbUri } from "@/lib/document/thumbRemote";
 import { Image } from "expo-image";
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  Modal,
-  Pressable,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, Modal, Pressable, Text, View, useWindowDimensions } from "react-native";
 import type { ThemeColors } from "@/lib/theme/colors";
 
 type Props = {
@@ -209,7 +202,7 @@ export function DocumentBubble({
       const { openDocumentWithViewer } = await import("@/lib/document/open");
       await openDocumentWithViewer(path, doc.fileName, doc.contentType);
     } catch {
-      Alert.alert(t("messages.title"), t("messages.documentOpenFailed"));
+      blypAlert(t("messages.title"), t("messages.documentOpenFailed"));
     } finally {
       setBusy(false);
     }

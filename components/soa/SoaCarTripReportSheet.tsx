@@ -6,24 +6,35 @@ import { SoaSeatMap } from "@/components/soa/SoaSeatMap";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { formatFcfa } from "@/lib/formatFcfa";
-import { modalPresentation } from "@/lib/perf/instantMotion";
 import type { SoaCarTripReportRow } from "@/lib/soa/soaCar";
-import {
-  indexTransactionsById,
-  resolveSoaSeatPaymentDisplay,
-} from "@/lib/soa/resolveSoaSeatPaymentDisplay";
 import { buildSoaSeatAggregateMap } from "@/lib/soa/seatAggregates";
+import type { SoaSeatPaymentDisplay } from "@/lib/soa/resolveSoaSeatPaymentDisplay";
+import { buildSoaTripPaymentDisplays } from "@/lib/soa/soaTripDetailPayments";
 import { getTransactionsSnapshot } from "@/lib/transactionsCache";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Modal, Pressable, ScrollView, Text, View } from "react-native";
+import {
+  Dimensions,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  useWindowDimensions,
+  View,
+  InteractionManager,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+const TRIP_DETAIL_MODAL_ANIMATION = "slide" as const;
 
 type Props = {
   visible: boolean;
   trip: SoaCarTripReportRow | null;
   courseNumber: number | null;
+  /** Pré-calculé au pressIn sur la ligne (liste courses). */
+  prewarmedPayments?: SoaSeatPaymentDisplay[] | null;
   onDismiss: () => void;
   onBack?: () => void;
 };
@@ -32,6 +43,7 @@ export function SoaCarTripReportSheet({
   visible,
   trip,
   courseNumber,
+  prewarmedPayments,
   onDismiss,
   onBack,
 }: Props) {
@@ -39,6 +51,21 @@ export function SoaCarTripReportSheet({
   const { colors } = useTheme();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const androidNavBarH =
+    Platform.OS === "android"
+      ? Math.max(
+          0,
+          Math.round(
+            Dimensions.get("screen").height - Dimensions.get("window").height,
+          ),
+        )
+      : 0;
+  /** Espace libéré après suppression du bouton Fermer (~marge + bouton). */
+  const closeFooterReclaimPx = 56;
+  const sheetBodyMax =
+    Math.round(windowHeight * 0.85) + closeFooterReclaimPx;
+  const sheetBottomPad = Math.max(insets.bottom, 12) + androidNavBarH;
   const styles = useMemo(
     () => createSoaTripDetailSheetStyles(colors),
     [colors],
@@ -47,12 +74,6 @@ export function SoaCarTripReportSheet({
     () => createSoaCarHomeStyles(colors, { seatMapCompact: true }),
     [colors],
   );
-
-  const txById = useMemo(() => {
-    const phone = user?.phone;
-    if (!phone) return new Map();
-    return indexTransactionsById(getTransactionsSnapshot(phone));
-  }, [user?.phone, visible, trip?.tripId]);
 
   const seatAggregates = useMemo(
     () => (trip ? buildSoaSeatAggregateMap(trip.seats) : new Map()),
@@ -73,33 +94,66 @@ export function SoaCarTripReportSheet({
     return t("soaCar.reportTripDetailTitle");
   }, [trip, courseNumber, t]);
 
+  useEffect(() => {
+    if (!visible) return;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void import("expo-system-ui").then((SystemUI) => {
+        void SystemUI.setBackgroundColorAsync(colors.modal);
+      });
+    });
+    return () => {
+      task.cancel();
+      void import("expo-system-ui").then((SystemUI) => {
+        void SystemUI.setBackgroundColorAsync(colors.background);
+      });
+    };
+  }, [visible, colors.modal, colors.background]);
+
   const payments = useMemo(() => {
     if (!trip) return [];
+    if (
+      prewarmedPayments &&
+      prewarmedPayments.length === trip.seats.length
+    ) {
+      return prewarmedPayments;
+    }
     const unknown = t("soaCar.reportPayerUnknown");
-    return [...trip.seats]
-      .sort(
-        (a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime(),
-      )
-      .map((seat) => resolveSoaSeatPaymentDisplay(seat, txById, unknown));
-  }, [trip, txById, t]);
+    return buildSoaTripPaymentDisplays(
+      trip.seats,
+      unknown,
+      getTransactionsSnapshot(user?.phone),
+    );
+  }, [trip, prewarmedPayments, t, user?.phone]);
 
-  if (!trip) return null;
+  const open = trip != null;
 
   return (
     <Modal
-      visible={visible}
+      visible={open}
       transparent
-      animationType={modalPresentation}
+      animationType={TRIP_DETAIL_MODAL_ANIMATION}
+      statusBarTranslucent
       onRequestClose={onBack ?? onDismiss}
     >
-      <Pressable style={styles.backdrop} onPress={onDismiss}>
-        <Pressable
+      {!trip ? null : (
+      <View
+        style={[
+          styles.modalRoot,
+          { minHeight: Dimensions.get("screen").height },
+        ]}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={onDismiss} />
+        <View
           style={[
             styles.sheet,
-            { paddingBottom: Math.max(insets.bottom, 20) },
+            {
+              maxHeight: sheetBodyMax + androidNavBarH,
+              height: sheetBodyMax + androidNavBarH,
+              paddingBottom: 0,
+            },
           ]}
-          onPress={(e) => e.stopPropagation()}
         >
+          <View style={styles.detailSheetTop}>
           <View style={styles.detailSheetHeader}>
             {onBack ? (
               <Pressable
@@ -132,12 +186,17 @@ export function SoaCarTripReportSheet({
             />
           </View>
 
-          <Text style={styles.paymentsListTitle}>
-            {t("soaCar.reportTripPaymentsListTitle")}
-          </Text>
-          <ScrollView
+          </View>
+          <View style={styles.detailSheetPayments}>
+            <Text style={styles.paymentsListTitle}>
+              {t("soaCar.reportTripPaymentsListTitle")}
+            </Text>
+            <ScrollView
             style={styles.scroll}
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: sheetBottomPad },
+            ]}
             showsVerticalScrollIndicator
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled
@@ -149,21 +208,9 @@ export function SoaCarTripReportSheet({
                 </Text>
               </View>
             ) : (
-              trip.seats
-                .sort(
-                  (a, b) =>
-                    new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime(),
-                )
-                .map((seat) => {
-                  const unknown = t("soaCar.reportPayerUnknown");
-                  const p = resolveSoaSeatPaymentDisplay(
-                    seat,
-                    txById,
-                    unknown,
-                  );
-                  return (
+              payments.map((p, index) => (
                 <View
-                  key={seat.transactionId}
+                  key={`${p.seatNumber}-${p.paidAtLabel}-${index}`}
                   style={styles.paymentRow}
                 >
                   <View style={styles.paymentRowTop}>
@@ -183,19 +230,13 @@ export function SoaCarTripReportSheet({
                     {p.paidAtLabel}
                   </Text>
                 </View>
-                  );
-                })
+              ))
             )}
-          </ScrollView>
-          <Pressable
-            style={[styles.cancelBtn, { marginTop: 12 }]}
-            onPress={onDismiss}
-            accessibilityRole="button"
-          >
-            <Text style={styles.cancelText}>{t("common.close")}</Text>
-          </Pressable>
-        </Pressable>
-      </Pressable>
+            </ScrollView>
+          </View>
+        </View>
+      </View>
+      )}
     </Modal>
   );
 }

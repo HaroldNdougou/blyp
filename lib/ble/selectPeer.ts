@@ -1,8 +1,12 @@
 import type { BleTaxiPeer } from "@/lib/ble/types";
 
 export type BlePeerSelectorOptions = {
-  /** Sans pub depuis tant de ms → retiré. */
-  staleMs: number;
+  /** Signal fort (même pièce) — sans pub depuis tant de ms → retiré. */
+  staleMsNear: number;
+  /** Signal faible (mur, chambre) — tolérance plus longue. */
+  staleMsFar: number;
+  /** RSSI ≥ split → near, sinon far. */
+  staleRssiSplit: number;
   minRssi: number;
   /**
    * Écart RSSI (dB) pour voler la place au taxi courant.
@@ -19,9 +23,15 @@ export function createBlePeerSelector(opts: BlePeerSelectorOptions) {
   const peers = new Map<string, BleTaxiPeer>();
   let selectedId: string | null = null;
 
+  function staleMsFor(peer: BleTaxiPeer): number {
+    return peer.rssi >= opts.staleRssiSplit
+      ? opts.staleMsNear
+      : opts.staleMsFar;
+  }
+
   function prune(now: number) {
     for (const [id, p] of peers) {
-      if (now - p.lastSeenAt > opts.staleMs) peers.delete(id);
+      if (now - p.lastSeenAt > staleMsFor(p)) peers.delete(id);
     }
     if (selectedId && !peers.has(selectedId)) selectedId = null;
   }
@@ -29,7 +39,7 @@ export function createBlePeerSelector(opts: BlePeerSelectorOptions) {
   function strongestFresh(now: number): BleTaxiPeer | null {
     let best: BleTaxiPeer | null = null;
     for (const p of peers.values()) {
-      if (now - p.lastSeenAt > opts.staleMs) continue;
+      if (now - p.lastSeenAt > staleMsFor(p)) continue;
       if (p.rssi < opts.minRssi) continue;
       if (!best || p.rssi > best.rssi) best = p;
     }
@@ -43,7 +53,9 @@ export function createBlePeerSelector(opts: BlePeerSelectorOptions) {
     const current =
       selectedId != null ? (peers.get(selectedId) ?? null) : null;
     const currentFresh =
-      current && now - current.lastSeenAt <= opts.staleMs ? current : null;
+      current && now - current.lastSeenAt <= staleMsFor(current)
+        ? current
+        : null;
 
     if (!top) {
       selectedId = null;
@@ -79,9 +91,11 @@ export function createBlePeerSelector(opts: BlePeerSelectorOptions) {
       if (peer.rssi < opts.minRssi) return resolve(Date.now());
       const prev = peers.get(peer.accountId);
       /** 1ère vue = RSSI brut (captage immédiat) ; ensuite EMA réactif. */
+      /** Signal faible : moins de lissage → on garde le dernier pic utile à distance. */
+      const blend = peer.rssi < -82 ? 0.45 : 0.8;
       const rssi =
         prev != null
-          ? Math.round(prev.rssi * 0.2 + peer.rssi * 0.8)
+          ? Math.round(prev.rssi * (1 - blend) + peer.rssi * blend)
           : peer.rssi;
       peers.set(peer.accountId, { ...peer, rssi });
       return resolve(Date.now());

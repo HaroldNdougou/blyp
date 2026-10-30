@@ -256,6 +256,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* best effort */
     }
+    try {
+      const { clearTaxiBroadcastOnSignOut } = await import(
+        "@/lib/ble/taxiBroadcastController"
+      );
+      await clearTaxiBroadcastOnSignOut();
+    } catch {
+      /* best effort */
+    }
+    try {
+      const { clearQuickPayNotifPref } = await import(
+        "@/lib/pay/quickPayNotifPref"
+      );
+      const { clearQuickPayRecipient } = await import(
+        "@/lib/pay/quickPayRecipient"
+      );
+      const { stopQuickPayNotifNative } = await import(
+        "@/lib/pay/quickPayNotifNative"
+      );
+      await clearQuickPayNotifPref();
+      await clearQuickPayRecipient();
+      await stopQuickPayNotifNative();
+      const { clearQuickPayNativeRuntime } = await import(
+        "@/lib/pay/syncQuickPayNativeSecrets"
+      );
+      await clearQuickPayNativeRuntime();
+    } catch {
+      /* best effort */
+    }
     await clearAuthSession();
     const { clearTransactionPinVault } = await import(
       "@/lib/security/transactionPinVault"
@@ -269,6 +297,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUser(null);
   }, []);
+
+  const cancelRegistration = useCallback(async () => {
+    const access = getAccessToken();
+    if (access && user?.needsOnboarding) {
+      const api = await import("@/lib/api/client");
+      await api.cancelRegistration(access);
+    }
+    await signOut();
+  }, [user?.needsOnboarding, signOut]);
 
   const seenPaymentTx = useRef(new Set<string>());
 
@@ -465,6 +502,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       verifyAndSignIn,
       refreshUser,
       signOut,
+      cancelRegistration,
       updateBalance,
       applyIncomingPayment,
       setActiveContext,
@@ -479,6 +517,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       verifyAndSignIn,
       refreshUser,
       signOut,
+      cancelRegistration,
       updateBalance,
       applyIncomingPayment,
       setActiveContext,

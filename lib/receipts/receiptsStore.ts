@@ -1,5 +1,5 @@
 import type { MerchantReceipt, MerchantReceiptCategory } from "@/lib/receipts/types";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { bumpReceiptsUnread } from "@/lib/receipts/receiptsUnread";
 import FS from "@/lib/voice/fileSystemLegacy";
 
@@ -77,36 +77,36 @@ export function setReceiptsSnapshot(
 export async function hydrateReceiptsCache(accountId: string): Promise<void> {
   const id = String(accountId ?? "").trim();
   if (!id || byAccount.has(id)) return;
-  const db = await getDb();
-  if (!db) return;
-  const rows = await db.getAllAsync<{
-    id: string;
-    accountId: string;
-    name: string;
-    merchantName: string | null;
-    category: string;
-    localUri: string;
-    contentType: string;
-    sizeBytes: number;
-    createdAt: string;
-  }>(
-    `SELECT id, accountId, name, merchantName, category, localUri, contentType, sizeBytes, createdAt
+  await runDbRead(async (db) => {
+    const rows = await db.getAllAsync<{
+      id: string;
+      accountId: string;
+      name: string;
+      merchantName: string | null;
+      category: string;
+      localUri: string;
+      contentType: string;
+      sizeBytes: number;
+      createdAt: string;
+    }>(
+      `SELECT id, accountId, name, merchantName, category, localUri, contentType, sizeBytes, createdAt
      FROM merchant_receipts WHERE accountId = ? ORDER BY createdAt DESC LIMIT ?`,
-    id,
-    MAX_ITEMS,
-  );
-  const items = rows.map((r) => ({
-    id: r.id,
-    accountId: r.accountId,
-    name: r.name,
-    merchantName: r.merchantName,
-    category: (r.category as MerchantReceiptCategory) || "manual",
-    localUri: r.localUri,
-    contentType: r.contentType,
-    sizeBytes: r.sizeBytes,
-    createdAt: r.createdAt,
-  }));
-  byAccount.set(id, items);
+      id,
+      MAX_ITEMS,
+    );
+    const items = rows.map((r) => ({
+      id: r.id,
+      accountId: r.accountId,
+      name: r.name,
+      merchantName: r.merchantName,
+      category: (r.category as MerchantReceiptCategory) || "manual",
+      localUri: r.localUri,
+      contentType: r.contentType,
+      sizeBytes: r.sizeBytes,
+      createdAt: r.createdAt,
+    }));
+    if (!byAccount.has(id)) byAccount.set(id, items);
+  });
 }
 
 function blypMoneyReceiptId(transferId: string): string {

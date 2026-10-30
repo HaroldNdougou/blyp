@@ -1,4 +1,4 @@
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 
 const KV_KEY = "chat:recentEmojis";
 const MAX = 40;
@@ -53,26 +53,23 @@ export async function hydrateRecentChatEmojis(phone: string): Promise<void> {
   const p = String(phone ?? "").trim();
   if (!p || (hydrated && ownerPhone === p)) return;
   ownerPhone = p;
-  const db = await getDb();
-  if (!db) {
-    hydrated = true;
-    return;
-  }
   try {
-    const row = await db.getFirstAsync<{ json: string }>(
-      `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
-      p,
-      KV_KEY,
-    );
-    if (row?.json) {
-      const parsed = JSON.parse(row.json) as unknown;
-      if (Array.isArray(parsed)) {
-        recent = parsed
-          .map((e) => String(e ?? "").trim())
-          .filter(Boolean)
-          .slice(0, MAX);
+    await runDbRead(async (db) => {
+      const row = await db.getFirstAsync<{ json: string }>(
+        `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
+        p,
+        KV_KEY,
+      );
+      if (row?.json) {
+        const parsed = JSON.parse(row.json) as unknown;
+        if (Array.isArray(parsed)) {
+          recent = parsed
+            .map((e) => String(e ?? "").trim())
+            .filter(Boolean)
+            .slice(0, MAX);
+        }
       }
-    }
+    });
   } catch {
     /* garde RAM */
   }

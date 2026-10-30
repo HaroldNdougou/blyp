@@ -1,6 +1,10 @@
 /** Disque d’abord — réseau seulement si le vocal n’est pas déjà là. */
 
 import { getVoiceFileSystem } from "@/lib/voice/fileSystem";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 const inflight = new Map<string, Promise<string>>();
 
@@ -21,7 +25,11 @@ export async function peekVoiceCache(key: string): Promise<string | null> {
   const dest = await destFor(key);
   if (!dest) return null;
   const info = await FS.getInfoAsync(dest);
-  return info.exists ? dest : null;
+  if (info.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
+  return null;
 }
 
 export async function voiceUriExists(uri: string): Promise<boolean> {
@@ -52,6 +60,7 @@ export async function copyVoiceIntoCache(
     await FS.makeDirectoryAsync(dir, { intermediates: true });
   }
   await FS.copyAsync({ from: src, to: dest });
+  await noteMediaCacheWrite(dest, "voice");
   return dest;
 }
 

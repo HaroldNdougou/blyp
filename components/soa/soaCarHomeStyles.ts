@@ -273,20 +273,49 @@ export function createSoaSeatSheetStyles(c: ThemeColors) {
 export function createSoaReportStyles(c: ThemeColors) {
   return StyleSheet.create({
     root: { flex: 1, backgroundColor: c.background },
+    periodTabs: {
+      flexDirection: "row",
+      alignSelf: "center",
+      gap: 6,
+      marginBottom: 4,
+      paddingHorizontal: 16,
+    },
+    periodTab: {
+      paddingVertical: 6,
+      paddingHorizontal: 14,
+      borderRadius: 999,
+      backgroundColor: c.surface,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: c.borderLight,
+    },
+    periodTabActive: {
+      backgroundColor: c.depositHighlightBackground,
+      borderColor: c.accent,
+    },
+    periodTabText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: c.textMuted,
+    },
+    periodTabTextActive: {
+      color: c.accentDark,
+    },
     daySelectHost: {
       width: "100%",
-      alignItems: "center",
+      alignSelf: "stretch",
       zIndex: 50,
       elevation: 50,
       overflow: "visible",
       paddingTop: 8,
       paddingBottom: 4,
+      paddingHorizontal: 16,
     },
     daySelectWrap: {
       position: "relative",
-      alignSelf: "center",
-      minWidth: 260,
-      maxWidth: "92%",
+      alignSelf: "stretch",
+      width: "100%",
+      maxWidth: "100%",
+      alignItems: "center",
       overflow: "visible",
     },
     daySelect: {
@@ -294,23 +323,20 @@ export function createSoaReportStyles(c: ThemeColors) {
       alignItems: "center",
       justifyContent: "center",
       gap: 4,
+      alignSelf: "center",
       paddingVertical: 8,
-      paddingHorizontal: 12,
-      borderRadius: 8,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: c.borderLight,
-      backgroundColor: c.surface,
+      paddingHorizontal: 4,
     },
     daySelectText: {
       fontSize: 16,
       fontWeight: "500",
       color: c.text,
+      textAlign: "center",
     },
     dayDropdown: {
       position: "absolute",
       left: 0,
       right: 0,
-      width: "100%",
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: c.borderLight,
       borderRadius: 10,
@@ -324,7 +350,10 @@ export function createSoaReportStyles(c: ThemeColors) {
       shadowRadius: 10,
     },
     dayDropdownScroll: {
-      maxHeight: 220,
+      flexGrow: 0,
+    },
+    dayDropdownScrollContent: {
+      paddingBottom: 4,
     },
     dayPickerRow: {
       paddingVertical: 12,
@@ -332,6 +361,16 @@ export function createSoaReportStyles(c: ThemeColors) {
     },
     dayPickerRowActive: {
       backgroundColor: c.background,
+    },
+    dayPickerRowLine: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      flexWrap: "wrap",
+      alignSelf: "flex-start",
+      maxWidth: "100%",
+    },
+    dayPickerRowDate: {
+      flexShrink: 1,
     },
     dayPickerRowText: {
       fontSize: 15,
@@ -341,6 +380,22 @@ export function createSoaReportStyles(c: ThemeColors) {
     dayPickerRowTextActive: {
       fontWeight: "600",
       color: c.accentDark,
+    },
+    dayPickerRowAmount: {
+      fontSize: 11,
+      fontWeight: "500",
+      color: c.textFaint,
+      fontVariant: ["tabular-nums"],
+      flexShrink: 0,
+    },
+    dayPickerRowAmountCurrency: {
+      fontSize: 9,
+      fontWeight: "500",
+      color: c.textFaint,
+    },
+    dayPickerRowAmountActive: {
+      color: c.textFaint,
+      fontWeight: "500",
     },
     summaryBlock: {
       paddingHorizontal: 16,
@@ -420,6 +475,10 @@ export function createSoaReportStyles(c: ThemeColors) {
     trendDismissScrim: {
       ...StyleSheet.absoluteFillObject,
       zIndex: 40,
+    },
+    dayPickerDismissScrim: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 48,
     },
     summaryAmountRowWrapElevated: {
       zIndex: 45,
@@ -541,14 +600,106 @@ export function createSoaReportStyles(c: ThemeColors) {
       color: c.textMuted,
       textAlign: "center",
     },
+    reportScreenRoot: {
+      flex: 1,
+    },
+    reportHeaderShell: {
+      zIndex: 30,
+      elevation: 30,
+      position: "relative",
+    },
+    reportHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      width: "100%",
+    },
+    reportHeaderTitle: {
+      flex: 1,
+      flexShrink: 1,
+    },
+    reportMenuAnchor: {
+      marginLeft: 8,
+      marginRight: -12,
+      zIndex: 31,
+      elevation: 31,
+    },
+    reportExportBtn: {
+      minWidth: 40,
+      minHeight: 40,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 8,
+    },
+    reportExportBtnActive: {
+      backgroundColor: c.surfaceMuted,
+      borderRadius: 20,
+    },
+    shareMenuOverlay: {
+      zIndex: 20,
+      elevation: 20,
+    },
+    shareMenuBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: "transparent",
+    },
+    shareMenuCard: {
+      position: "absolute",
+      backgroundColor: c.modal,
+      borderRadius: 12,
+      paddingVertical: 4,
+      borderWidth: 1,
+      borderColor: c.borderLight,
+      overflow: "hidden",
+      opacity: 1,
+      elevation: 16,
+      shadowColor: c.shadow,
+      shadowOffset: { width: 0, height: 4 },
+      shadowOpacity: 0.35,
+      shadowRadius: 8,
+    },
+    shareMenuItem: {
+      paddingVertical: 14,
+      paddingHorizontal: 18,
+      backgroundColor: c.modal,
+    },
+    shareMenuItemPressed: {
+      backgroundColor: c.surfaceMuted,
+    },
+    shareMenuItemText: {
+      fontSize: 16,
+      fontWeight: "500",
+      color: c.text,
+    },
+    shareMenuBusy: {
+      position: "absolute",
+      right: 12,
+      top: 12,
+    },
   });
 }
 
 export function createSoaTripDetailSheetStyles(c: ThemeColors) {
   const base = createSoaSeatSheetStyles(c);
   const extra = StyleSheet.create({
+    modalRoot: {
+      flex: 1,
+      justifyContent: "flex-end",
+      backgroundColor: c.overlay,
+    },
+    modalBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: c.overlay,
+    },
     sheetTall: {
-      maxHeight: "85%",
+      alignSelf: "stretch",
+      width: "100%",
+      flexDirection: "column",
+      paddingBottom: 0,
+      borderBottomLeftRadius: 0,
+      borderBottomRightRadius: 0,
+    },
+    detailSheetTop: {
+      flexShrink: 0,
     },
     detailSheetHeader: {
       flexDirection: "row",
@@ -575,6 +726,11 @@ export function createSoaTripDetailSheetStyles(c: ThemeColors) {
     seatMapSection: {
       marginBottom: 10,
     },
+    detailSheetPayments: {
+      flex: 1,
+      minHeight: 0,
+      alignSelf: "stretch",
+    },
     paymentsListTitle: {
       fontSize: 11,
       fontWeight: "800",
@@ -582,12 +738,19 @@ export function createSoaTripDetailSheetStyles(c: ThemeColors) {
       textTransform: "uppercase",
       letterSpacing: 0.4,
       marginBottom: 6,
+      flexShrink: 0,
     },
     scroll: {
-      maxHeight: 260,
+      flex: 1,
+      minHeight: 0,
+      backgroundColor: c.modal,
     },
     scrollContent: {
       paddingBottom: 4,
+    },
+    detailSheetFooter: {
+      flexShrink: 0,
+      backgroundColor: c.modal,
     },
     paymentRow: {
       paddingVertical: 8,

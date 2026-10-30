@@ -1,4 +1,8 @@
 import FS from "@/lib/voice/fileSystemLegacy";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 const DIR = `${FS.cacheDirectory}blyp-doc-thumb-remote/`;
 
@@ -9,7 +13,11 @@ function safeKey(key: string): string {
 export async function peekRemoteDocumentThumb(key: string): Promise<string | null> {
   const dest = `${DIR}${safeKey(key)}.jpg`;
   const info = await FS.getInfoAsync(dest);
-  return info.exists ? dest : null;
+  if (info.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
+  return null;
 }
 
 /** Télécharge la vignette S3 (léger) — pas le PDF entier. */
@@ -23,8 +31,12 @@ export async function cacheRemoteDocumentThumb(
   }
   const dest = `${DIR}${safeKey(key)}.jpg`;
   const existing = await FS.getInfoAsync(dest);
-  if (existing.exists) return dest;
+  if (existing.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
   const dl = await FS.downloadAsync(remoteUrl, dest);
+  await noteMediaCacheWrite(dl.uri, "doc_thumb_remote");
   return dl.uri;
 }
 

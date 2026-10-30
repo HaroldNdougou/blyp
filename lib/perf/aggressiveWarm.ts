@@ -22,8 +22,8 @@ function warmJsModules(token: string | null): void {
     void m.Ionicons.loadFont().catch(() => {});
   });
   prefetchModule(() => import("@/components/pay/PayRegisterOverlay"));
-  prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/app/(tabs)/pay"));
+  prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/components/messages/ConversationsScreen"));
   prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
   prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));
@@ -58,6 +58,9 @@ export function runAggressiveWarm(opts: {
   floodAllTabs(token);
 
   if (token && phone) {
+    void import("@/lib/media/lruDiskCache").then((m) =>
+      m.trimMediaDiskCacheIfNeeded(),
+    );
     void (async () => {
       try {
         const { hydrateTransactionsCache, getTransactionsSnapshot } =
@@ -130,6 +133,13 @@ export function runAggressiveWarm(opts: {
             "@/lib/messages/threadPullGate"
           );
           markThreadMessagesPulled(c.id);
+          const snap = cache.getMessagesSnapshot(token, c.id);
+          if (snap?.length) {
+            const { prefetchRecentChatMedia } = await import(
+              "@/lib/media/prefetchChatMedia"
+            );
+            prefetchRecentChatMedia(token, c.id, snap);
+          }
         }
       } catch {
         /* best effort */

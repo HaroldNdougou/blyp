@@ -16,16 +16,23 @@ import {
   hydrateReceiptsUnread,
   subscribeReceiptsUnread,
 } from "@/lib/receipts/receiptsUnread";
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { CountBadge } from "@/components/ui/CountBadge";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+/** Connecté → Pay ; déconnecté → welcome (pas de tab bar). */
+export const unstable_settings = {
+  initialRouteName: "pay",
+};
+
 export default function TabLayout() {
   const insets = useSafeAreaInsets();
-  const { token, user } = useAuth();
+  const router = useRouter();
+  const { token, user, isLoading } = useAuth();
   const { colors } = useTheme();
+  const signedIn = Boolean(token);
   const isPro = user?.activeContext?.type === "commerce";
   const [unreadTick, setUnreadTick] = useState(0);
   const [receiptsUnreadTick, setReceiptsUnreadTick] = useState(0);
@@ -48,60 +55,62 @@ export default function TabLayout() {
   }, [accountId]);
 
   useEffect(() => {
+    if (isLoading) return;
+    if (!signedIn) {
+      router.replace("/(tabs)/welcome");
+      return;
+    }
+    if (user?.needsOnboarding) {
+      router.replace("/(tabs)/welcome");
+    }
+  }, [isLoading, signedIn, user?.needsOnboarding, router]);
+
+  useEffect(() => {
     if (__DEV__) return;
     floodAllTabs(token);
   }, [token]);
 
+  const tabBarHeight = 52 + (insets.bottom > 0 ? insets.bottom : 8);
+
   return (
     <Tabs
-      initialRouteName="index"
+      initialRouteName={
+        !signedIn || user?.needsOnboarding ? "welcome" : "pay"
+      }
       detachInactiveScreens={false}
       sceneContainerStyle={{ backgroundColor: colors.background }}
       screenOptions={{
         headerShown: false,
         tabBarShowLabel: false,
-        /** Dev USB : ne pas monter Historique/Profil/Pay au cold start (rafale Metro). */
         lazy: __DEV__,
         freezeOnBlur: false,
         tabBarActiveTintColor: colors.accent,
         tabBarInactiveTintColor: colors.tabInactive,
-        tabBarStyle: {
-          backgroundColor: colors.tabBar,
-          borderTopWidth: 0.5,
-          borderTopColor: colors.tabBarBorder,
-          height: 52 + (insets.bottom > 0 ? insets.bottom : 8),
-          paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
-          paddingTop: 8,
-        },
+        tabBarStyle:
+          signedIn && !user?.needsOnboarding
+            ? {
+              backgroundColor: colors.tabBar,
+              borderTopWidth: 1,
+              borderTopColor: colors.tabBarBorder,
+              height: tabBarHeight,
+              paddingBottom: insets.bottom > 0 ? insets.bottom : 8,
+              paddingTop: 8,
+            }
+            : { display: "none", height: 0 },
+        tabBarItemStyle: signedIn ? { flex: 1 } : undefined,
       }}
     >
       <Tabs.Screen
-        name="index"
+        name="welcome"
         options={{
-          tabBarButton: (props) => (
-            <AnimatedTabBarButton {...props} routeName="index" />
-          ),
-          tabBarIcon: ({ color }) =>
-            token ? (
-              <View>
-                <CommentDollarTabIcon color={color} />
-                <CountBadge
-                  count={tabUnread}
-                  style={{ position: "absolute", top: -5, right: -8 }}
-                />
-              </View>
-            ) : isPro ? (
-              <CashTabIcon color={color} />
-            ) : (
-              <NineDotKeypadIcon color={color} />
-            ),
+          href: null,
         }}
       />
       <Tabs.Screen
         name="pay"
         options={{
           tabBarButton: (props) =>
-            token ? (
+            signedIn ? (
               <AnimatedTabBarButton {...props} routeName="pay" />
             ) : null,
           tabBarIcon: ({ color }) =>
@@ -113,11 +122,30 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="index"
+        options={{
+          tabBarButton: (props) =>
+            signedIn ? (
+              <AnimatedTabBarButton {...props} routeName="index" />
+            ) : null,
+          tabBarIcon: ({ color }) => (
+            <View>
+              <CommentDollarTabIcon color={color} />
+              <CountBadge
+                count={tabUnread}
+                style={{ position: "absolute", top: -5, right: -8 }}
+              />
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="history"
         options={{
-          tabBarButton: (props) => (
-            <AnimatedTabBarButton {...props} routeName="history" />
-          ),
+          tabBarButton: (props) =>
+            signedIn ? (
+              <AnimatedTabBarButton {...props} routeName="history" />
+            ) : null,
           tabBarIcon: ({ color }) => <SwapTabIcon color={color} />,
         }}
       />
@@ -125,7 +153,7 @@ export default function TabLayout() {
         name="profile"
         options={{
           tabBarButton: (props) =>
-            token ? (
+            signedIn ? (
               <AnimatedTabBarButton {...props} routeName="profile" />
             ) : null,
           tabBarIcon: ({ color }) => (

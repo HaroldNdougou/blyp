@@ -139,7 +139,47 @@ export function planForwardToConversations(
   senderUserId: string,
   draft: ForwardDraft,
   targetConversationIds: string[],
+  opts?: { caption?: string | null },
 ): ForwardTargetPlan[] {
+  const caption = String(opts?.caption ?? "").trim() || null;
+  if (draft.outboundDocument) {
+    const doc = draft.outboundDocument;
+    const baseMs = Date.now();
+    return targetConversationIds.map((targetId, targetIdx) => {
+      const clientId = newClientId();
+      const createdAt = new Date(baseMs + targetIdx).toISOString();
+      const optimistic: ChatMessage = {
+        id: clientId,
+        conversationId: targetId,
+        senderUserId,
+        type: "document",
+        body: caption,
+        moneyTransfer: null,
+        voice: null,
+        image: null,
+        document: {
+          key: "",
+          fileName: doc.fileName,
+          sizeBytes: doc.sizeBytes,
+          contentType: doc.contentType,
+          localUri: doc.localUri,
+          thumbKey: null,
+          pageCount: doc.pageCount ?? null,
+        },
+        reactions: [],
+        replyTo: null,
+        createdAt,
+        clientId,
+        forwarded: true,
+      };
+      return {
+        targetConversationId: targetId,
+        clientIdsBySourceId: { __outbound_doc__: clientId },
+        optimistic: [optimistic],
+      };
+    });
+  }
+
   const ordered = draft.messages;
   const baseMs = Date.now();
   return targetConversationIds.map((targetId, targetIdx) => {
@@ -244,12 +284,92 @@ export function applyForwardOptimistic(
   void import("@/lib/messages/chatSounds").then((m) => m.playChatSound("sent"));
 }
 
+async function completeOutboundDocumentPlans(
+  token: string,
+  draft: ForwardDraft,
+  plans: ForwardTargetPlan[],
+): Promise<void> {
+  const doc = draft.outboundDocument;
+  if (!doc) throw new Error("FORWARD_FAILED");
+  const api = await import("@/lib/api/client");
+  const { uploadDocumentFile } = await import("@/lib/document/upload");
+  let anySuccess = false;
+  let lastError: unknown = null;
+
+  for (const plan of plans) {
+    const optimistic = plan.optimistic[0];
+    const clientId = String(optimistic?.clientId ?? "").trim();
+    const pendingIds = clientId ? [clientId] : [];
+    if (!optimistic?.document || !clientId) continue;
+    const caption = optimistic.body;
+    try {
+      const signed = await api.presignDocumentUpload(
+        token,
+        plan.targetConversationId,
+        doc.contentType,
+        doc.fileName,
+      );
+      await uploadDocumentFile(
+        signed.uploadUrl,
+        doc.localUri,
+        signed.contentType,
+      );
+      let thumbKey: string | null = null;
+      if (doc.thumbLocalUri) {
+        const thumbSigned = await api.presignDocumentThumbUpload(
+          token,
+          plan.targetConversationId,
+        );
+        await uploadDocumentFile(
+          thumbSigned.uploadUrl,
+          doc.thumbLocalUri,
+          thumbSigned.contentType,
+        );
+        thumbKey = thumbSigned.key;
+      }
+      const { message } = await api.sendDocumentMessage(
+        token,
+        plan.targetConversationId,
+        signed.key,
+        doc.fileName,
+        doc.sizeBytes,
+        doc.contentType,
+        clientId,
+        null,
+        thumbKey,
+        doc.pageCount ?? null,
+        caption,
+      );
+      commitOptimisticVoice(token, plan.targetConversationId, clientId, message);
+      bumpConversationPreview(token, plan.targetConversationId, message);
+      notifyIncomingMessage(plan.targetConversationId, undefined, {
+        silent: true,
+      });
+      anySuccess = true;
+    } catch (e) {
+      lastError = e;
+      rollbackForwardPending(token, plan.targetConversationId, pendingIds);
+    }
+  }
+
+  if (!anySuccess) {
+    throw lastError instanceof ApiError
+      ? lastError
+      : new Error("FORWARD_FAILED");
+  }
+}
+
 /** Réseau : remplace les bulles optimistes par les messages serveur (coches). */
 export async function completeForwardPlans(
   token: string,
   draft: ForwardDraft,
   plans: ForwardTargetPlan[],
+  opts?: { caption?: string | null },
 ): Promise<void> {
+  if (draft.outboundDocument) {
+    await completeOutboundDocumentPlans(token, draft, plans);
+    return;
+  }
   const { forwardChatMessages } = await import("@/lib/api/client");
   const sourceConversationId = draft.sourceConversationId;
   const ordered = draft.messages;

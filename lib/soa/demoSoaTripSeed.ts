@@ -2,8 +2,14 @@ import {
   buildDemoTripSeats,
   demoPaymentsCountForTrip,
 } from "@/lib/soa/buildDemoTripSeats";
+import { dedupeSoaReportTripsByTripId } from "@/lib/soa/dedupeSoaReportTrips";
 import type { SoaCarTripReportRow } from "@/lib/soa/soaCar";
 import { soaCommerceDayKey, soaRecentDayKeys } from "@/lib/soa/soaDayKey";
+
+/** Midi (Douala) pour une clé jour — stable entre re-seeds. */
+export function demoSoaDayNoonMs(dayKey: string): number {
+  return Date.parse(`${dayKey}T12:00:00+01:00`);
+}
 
 /** Courses fictives sur les 14 derniers jours (compte rendu Soa). */
 export function buildDemoSoaArchivedTrips(): SoaCarTripReportRow[] {
@@ -12,7 +18,8 @@ export function buildDemoSoaArchivedTrips(): SoaCarTripReportRow[] {
   for (let dayIndex = 0; dayIndex < dayKeys.length; dayIndex++) {
     const tripCount = dayIndex % 4 === 0 ? 3 : dayIndex % 2 === 0 ? 2 : 1;
     for (let t = 0; t < tripCount; t++) {
-      const baseMs = Date.now() - dayIndex * 24 * 60 * 60 * 1000 - t * 52 * 60 * 1000;
+      const baseMs =
+        demoSoaDayNoonMs(dayKeys[dayIndex]) - t * 52 * 60 * 1000;
       const endedAt = new Date(baseMs).toISOString();
       const startedAt = new Date(baseMs - 38 * 60 * 1000).toISOString();
       const paymentCount = demoPaymentsCountForTrip(dayIndex, t);
@@ -37,8 +44,10 @@ export function demoSoaDayReportFromArchives(
   activeToday: SoaCarTripReportRow | null,
 ): import("@/lib/soa/soaCar").SoaCarDayReport {
   const dk = String(dayKey ?? "").trim();
-  const trips = archives.filter(
-    (t) => t.endedAt && soaCommerceDayKey(new Date(t.endedAt)) === dk,
+  const trips = dedupeSoaReportTripsByTripId(
+    archives.filter(
+      (t) => t.endedAt && soaCommerceDayKey(new Date(t.endedAt)) === dk,
+    ),
   );
   const out = [...trips];
   const today = soaCommerceDayKey();

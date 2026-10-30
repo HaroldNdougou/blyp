@@ -12,19 +12,8 @@ import type { ThemeColors } from "@/lib/theme/colors";
 import { router, Stack } from "expo-router";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 /** Part de la hauteur d’écran occupée par la feuille modale (depuis le bas). */
@@ -159,7 +148,7 @@ export default function DepositScreen() {
   const submitDeposit = async () => {
     if (!Number.isFinite(n) || n <= 0 || !token) {
       if (!token) {
-        Alert.alert(
+        blypAlert(
           t("deposit.signInRequiredTitle"),
           t("deposit.signInRequiredMessage"),
         );
@@ -194,7 +183,7 @@ export default function DepositScreen() {
       router.back();
     } catch (e) {
       setSubmitPhase("idle");
-      Alert.alert(
+      blypAlert(
         t("deposit.topUpTitle"),
         e instanceof ApiError ? e.message : t("deposit.creditFailed"),
       );

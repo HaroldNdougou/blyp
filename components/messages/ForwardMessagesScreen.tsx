@@ -7,6 +7,7 @@ import { demoAvatarUrlForPhone } from "@/lib/dev/demoProfiles";
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
 import {
   consumeForwardDraft,
+  isSyntheticForwardSource,
   peekForwardDraft,
 } from "@/lib/messages/forwardDraft";
 import { setForwardLandChat } from "@/lib/messages/forwardLand";
@@ -31,17 +32,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  SectionList,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, SectionList, Text, TextInput, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -144,18 +136,28 @@ export default function ForwardMessagesScreen() {
 
   const send = useCallback(() => {
     if (!token || !draft || selected.size === 0 || sending) return;
-    if (isDemoConversationId(draft.sourceConversationId)) {
-      Alert.alert(t("messages.forwardFailed"));
+    const hasPayload =
+      draft.messages.length > 0 || Boolean(draft.outboundDocument);
+    if (!hasPayload) return;
+    if (
+      !isSyntheticForwardSource(draft.sourceConversationId) &&
+      isDemoConversationId(draft.sourceConversationId)
+    ) {
+      blypAlert(t("messages.forwardFailed"));
       return;
     }
     const targets = [...selected].filter((id) => !isDemoConversationId(id));
     if (!targets.length) return;
     setSending(true);
+    const cap = caption.trim() || null;
     const snapshot = {
       sourceConversationId: draft.sourceConversationId,
       messages: draft.messages,
+      outboundDocument: draft.outboundDocument,
     };
-    const plans = planForwardToConversations(myId, snapshot, targets);
+    const plans = planForwardToConversations(myId, snapshot, targets, {
+      caption: cap,
+    });
     applyForwardOptimistic(token, plans);
     consumeForwardDraft();
     const landChatId = targets[targets.length - 1]!;
@@ -164,14 +166,13 @@ export default function ForwardMessagesScreen() {
       pathname: "/chat/[id]",
       params: { id: landChatId },
     });
-    void completeForwardPlans(token, snapshot, plans)
+    void completeForwardPlans(token, snapshot, plans, { caption: cap })
       .catch((e) => {
         const detail =
           e instanceof ApiError && e.message ? `\n\n${e.message}` : "";
-        Alert.alert(t("messages.forwardFailed"), detail || undefined);
+        blypAlert(t("messages.forwardFailed"), detail || undefined);
       })
       .finally(() => setSending(false));
-    void caption;
   }, [token, draft, selected, sending, myId, t, caption]);
 
   const close = useCallback(() => {
@@ -225,7 +226,9 @@ export default function ForwardMessagesScreen() {
 
   const canSend = selected.size > 0 && !sending;
   const firstMsg = draft.messages[0];
-  const previewIcon = previewIconForMessage(firstMsg);
+  const previewIcon = draft.outboundDocument
+    ? "document-outline"
+    : previewIconForMessage(firstMsg);
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>

@@ -20,7 +20,8 @@ import { syncStatusFeedFromNetwork } from "@/lib/status/statusSync";
 import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { Pressable, ScrollView, Text, View } from "react-native";
 
 export function StatusStrip() {
   const { t } = useTranslation();
@@ -79,7 +80,7 @@ export function StatusStrip() {
 
   const confirmDeleteMine = useCallback(() => {
     if (!token || myPosts.length === 0) return;
-    Alert.alert(t("status.deleteMineTitle"), t("status.deleteMineMessage"), [
+    blypAlert(t("status.deleteMineTitle"), t("status.deleteMineMessage"), [
       { text: t("common.cancel"), style: "cancel" },
       {
         text: t("status.deleteMineConfirm"),

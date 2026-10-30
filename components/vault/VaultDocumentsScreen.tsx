@@ -24,17 +24,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  InteractionManager,
-  Modal,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, FlatList, InteractionManager, Modal, Pressable, Text, TextInput, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -92,7 +83,7 @@ export function VaultDocumentsScreen() {
         applySnap(snap);
       } catch {
         if (!background && items.length === 0) {
-          Alert.alert(t("vault.title"), t("common.genericError"));
+          blypAlert(t("vault.title"), t("common.genericError"));
         }
       } finally {
         if (!background) setSyncing(false);
@@ -133,7 +124,7 @@ export function VaultDocumentsScreen() {
   const onCamera = async () => {
     const ok = await ensureCameraPermission();
     if (!ok) {
-      Alert.alert(t("vault.title"), t("messages.cameraPermissionDenied"));
+      blypAlert(t("vault.title"), t("messages.cameraPermissionDenied"));
       return;
     }
     const shot = await pickImageFromCamera();
@@ -170,10 +161,10 @@ export function VaultDocumentsScreen() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (msg === "DOCUMENT_SIZE") {
-        Alert.alert(t("vault.title"), t("vault.fileTooLarge"));
+        blypAlert(t("vault.title"), t("vault.fileTooLarge"));
         return;
       }
-      Alert.alert(t("vault.title"), t("common.genericError"));
+      blypAlert(t("vault.title"), t("common.genericError"));
     }
   };
 
@@ -211,7 +202,7 @@ export function VaultDocumentsScreen() {
         e instanceof Error && e.message.trim()
           ? e.message.trim()
           : t("common.genericError");
-      Alert.alert(t("vault.title"), msg);
+      blypAlert(t("vault.title"), msg);
     } finally {
       setSaving(false);
     }
@@ -234,7 +225,7 @@ export function VaultDocumentsScreen() {
       }
       await openDocumentWithViewer(local, doc.name, doc.contentType);
     } catch {
-      Alert.alert(t("vault.title"), t("vault.openFailed"));
+      blypAlert(t("vault.title"), t("vault.openFailed"));
     }
   };
 
@@ -247,7 +238,7 @@ export function VaultDocumentsScreen() {
   };
 
   const removeDoc = (doc: VaultDocument) => {
-    Alert.alert(t("vault.deleteTitle"), t("vault.deleteMessage", { name: doc.name }), [
+    blypAlert(t("vault.deleteTitle"), t("vault.deleteMessage", { name: doc.name }), [
       { text: t("common.cancel"), style: "cancel" },
       {
         text: t("vault.deleteConfirm"),
@@ -272,7 +263,7 @@ export function VaultDocumentsScreen() {
                 return next;
               });
             } catch {
-              Alert.alert(t("vault.title"), t("common.genericError"));
+              blypAlert(t("vault.title"), t("common.genericError"));
             }
           })();
         },

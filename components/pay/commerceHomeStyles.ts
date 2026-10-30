@@ -47,23 +47,6 @@ export function createCommerceHomeStyles(c: ThemeColors) {
       paddingHorizontal: 28,
       paddingBottom: 0,
     },
-    soaEnableBanner: {
-      marginTop: 64,
-      marginBottom: 8,
-      paddingVertical: 12,
-      paddingHorizontal: 14,
-      borderRadius: 12,
-      borderWidth: 1,
-    },
-    soaEnableBannerText: {
-      fontSize: 13,
-      fontWeight: "600",
-      marginBottom: 6,
-    },
-    soaEnableBannerCta: {
-      fontSize: 14,
-      fontWeight: "800",
-    },
     center: {
       flex: 1,
       justifyContent: "center",

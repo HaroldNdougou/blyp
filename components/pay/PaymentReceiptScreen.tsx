@@ -132,13 +132,12 @@ function PaymentReceiptScreenInner({
               </View>
             ) : null}
             {receipt.reference ? (
-              <View style={styles.successRow}>
+              <View style={[styles.successRow, styles.successRowRef]}>
                 <Text style={styles.successRowLabel}>
                   {t("pay.receiptRef")}
                 </Text>
                 <Text
-                  style={[styles.successRowValue, styles.successRowValueMuted]}
-                  numberOfLines={1}
+                  style={styles.successRowRefValue}
                   selectable
                 >
                   {receipt.reference}
@@ -157,9 +156,9 @@ function PaymentReceiptScreenInner({
           ]}
           onPress={onClose}
           accessibilityRole="button"
-          accessibilityLabel={t("common.close")}
+          accessibilityLabel={t("common.ok")}
         >
-          <Text style={styles.successPrimaryBtnText}>{t("common.close")}</Text>
+          <Text style={styles.successPrimaryBtnText}>{t("common.ok")}</Text>
         </Pressable>
       </View>
     </SafeAreaView>

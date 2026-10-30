@@ -10,9 +10,11 @@ import {
   serviceUnavailable,
   tooManyRequests,
   unauthorized,
+  forbidden,
 } from "../../lib/http.mjs";
 import { verifyAccessToken } from "../../lib/jwt.mjs";
 import {
+  generateOtpCode,
   hashOtp,
   otpVerifyCacheKey,
   TEMP_DEV_OTP_CODE,
@@ -26,7 +28,7 @@ import {
   issueAuthSession,
   rotateAuthSession,
 } from "../../lib/refreshTokens.mjs";
-import { deliverOtpSms } from "../../lib/sms.mjs";
+import { deliverOtpSms, isOtpWhatsAppConfigured } from "../../lib/sms.mjs";
 import {
   deleteOtpChallenge,
   enableMerchant,
@@ -43,7 +45,12 @@ import {
   setTransactionPin,
   updateProfileNames,
   touchAvatarUpdated,
+  deleteIncompleteUserAccount,
 } from "../../lib/user.mjs";
+import {
+  isAllowedProfileNamePart,
+  parseRegistrationFullName,
+} from "../../lib/profileNames.mjs";
 import {
   presignAvatarUpload,
   isAvatarKeyForPhone,
@@ -115,18 +122,20 @@ async function handleRequestOtp(body) {
     );
   }
 
-  /** TEMP : challenge toujours sur 1234 pour pouvoir se connecter sans SMS. */
-  const code = TEMP_DEV_OTP_CODE;
+  const code = isOtpWhatsAppConfigured()
+    ? generateOtpCode()
+    : TEMP_DEV_OTP_CODE;
   const codeHash = hashOtp(phone, code);
   await putOtpChallenge(phone, codeHash);
   await setOtpCooldown(phone);
 
-  /** SMS hors chemin critique — ne pas bloquer la réponse HTTP (Obit/Orange lent). */
+  /** WhatsApp hors chemin critique — ne pas bloquer la réponse HTTP. */
   void deliverOtpSms(phone, code).then((sent) => {
     if (!sent.ok) {
       console.warn(
-        "[auth/request-otp] SMS échoué — TEMP_DEV_OTP_CODE actif, challenge conservé",
+        "[auth/request-otp] OTP échoué — challenge conservé",
         sent.reason,
+        !isOtpWhatsAppConfigured() ? `(secours ${TEMP_DEV_OTP_CODE})` : "",
       );
     }
   });
@@ -224,27 +233,42 @@ async function handleSetPin(userId, body) {
   return ok({ user });
 }
 
+async function handleUpdateMeProfile(userId, body) {
+  const fullName = String(body?.fullName ?? "").trim();
+  const parsed = parseRegistrationFullName(fullName);
+  if (!parsed) {
+    return badRequest("Nom invalide (1 à 80 caractères)");
+  }
+  const profile = await getUserProfile(userId);
+  if (!profile) return unauthorized("Utilisateur introuvable");
+  const fn = String(profile.firstName ?? "").trim();
+  const ln = String(profile.lastName ?? "").trim();
+  if (!fn || !ln || !profile.transactionPinHash) {
+    return badRequest("Terminez l’inscription avant de modifier le profil");
+  }
+  const phoneDigits = String(body?.phone ?? "")
+    .replace(/\D/g, "")
+    .slice(-9);
+  if (phoneDigits && phoneDigits !== String(profile.phone ?? "").replace(/\D/g, "").slice(-9)) {
+    return badRequest("Changement de numéro bientôt disponible");
+  }
+  await updateProfileNames(userId, parsed.firstName, parsed.lastName);
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
+}
+
 async function handleSetProfile(userId, body) {
   const firstName = String(body?.firstName ?? "").trim();
   const lastName = String(body?.lastName ?? "").trim();
-  if (firstName.length < 2 || firstName.length > 80) {
-    return badRequest("Prénom invalide (2 à 80 caractères)");
+  if (!isAllowedProfileNamePart(firstName)) {
+    return badRequest("Prénom invalide (1 à 80 caractères)");
   }
-  if (lastName.length < 2 || lastName.length > 80) {
-    return badRequest("Nom invalide (2 à 80 caractères)");
-  }
-  const nameRe = /^[a-zA-ZÀ-ÿ\s'-]+$/;
-  if (!nameRe.test(firstName) || !nameRe.test(lastName)) {
-    return badRequest(
-      "Prénom ou nom : lettres, espaces, tirets et apostrophes uniquement",
-    );
+  if (!isAllowedProfileNamePart(lastName)) {
+    return badRequest("Nom invalide (1 à 80 caractères)");
   }
 
   const profile = await getUserProfile(userId);
   if (!profile) return unauthorized("Utilisateur introuvable");
-  if (!profile.transactionPinHash) {
-    return badRequest("Définissez d’abord votre code PIN de transaction");
-  }
 
   await updateProfileNames(userId, firstName, lastName);
   const user = await getUserApiPayload(userId);
@@ -577,6 +601,20 @@ export async function handler(event, context) {
       return await handleSetProfile(auth.userId, body);
     }
 
+    if (method === "DELETE" && path === "/auth/registration") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      try {
+        await deleteIncompleteUserAccount(auth.userId);
+      } catch (e) {
+        if (e?.code === "REGISTRATION_COMPLETE") {
+          return forbidden("Inscription déjà terminée");
+        }
+        throw e;
+      }
+      return ok({ cancelled: true });
+    }
+
     if (method === "GET" && path === "/me") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
@@ -677,6 +715,14 @@ export async function handler(event, context) {
       const id = decodeURIComponent(vaultDoc[1]);
       if (method === "GET") return await handleVaultDownload(auth.userId, id);
       if (method === "DELETE") return await handleVaultDelete(auth.userId, id);
+    }
+
+    if (method === "PUT" && path === "/me/profile") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleUpdateMeProfile(auth.userId, body);
     }
 
     if (method === "PUT" && path === "/me/context") {

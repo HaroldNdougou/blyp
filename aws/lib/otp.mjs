@@ -5,8 +5,7 @@ export const OTP_TTL_MS = 10 * 60 * 1000;
 export const OTP_VERIFY_IDEMPOTENCY_MS = 120_000;
 
 /**
- * TEMP — contournement Obit/Orange. À retirer dès que les SMS sont fiables.
- * Vérifier avec ce code après « Continuer » (même si le SMS n’arrive pas).
+ * Secours 1234 tant que Meta WhatsApp (WHATSAPP_*) n’est pas configuré.
  */
 export const TEMP_DEV_OTP_CODE = "1234";
 

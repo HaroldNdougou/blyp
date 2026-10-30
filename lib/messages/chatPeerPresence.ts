@@ -51,10 +51,8 @@ export function chatPeerHeaderStatus(opts: {
   peerLastDeliveredAt: string | null;
 }): ChatPeerHeaderStatus {
   if (opts.peerTyping) {
-    const name =
-      String(opts.peerFirstName ?? "").trim() || i18n.t("messages.someone");
     return {
-      text: i18n.t("messages.typing", { name }),
+      text: i18n.t("messages.typingHeader"),
       mode: "typing",
     };
   }

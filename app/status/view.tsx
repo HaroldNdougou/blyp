@@ -43,15 +43,8 @@ import { Image } from "expo-image";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Linking,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { Linking, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -305,7 +298,7 @@ export default function StatusViewScreen() {
       if (!post || !myId) return;
       if (action === "forward") {
         const ok = forwardStatusPost(post, myId);
-        if (!ok) Alert.alert(t("status.forwardUnavailable"));
+        if (!ok) blypAlert(t("status.forwardUnavailable"));
         return;
       }
       if (action === "edit") {
@@ -335,7 +328,7 @@ export default function StatusViewScreen() {
           e instanceof ApiError && e.message
             ? e.message
             : t("common.genericError");
-        Alert.alert(t("status.deleteOneTitle"), msg);
+        blypAlert(t("status.deleteOneTitle"), msg);
       });
   }, [deleteTarget, token, myId, t, closeViewer]);
 
@@ -348,11 +341,11 @@ export default function StatusViewScreen() {
     (action: StatusViewerPeerMenuAction) => {
       if (!viewRow) return;
       const showComingSoon = () => {
-        Alert.alert(t("status.comingSoonTitle"), t("status.comingSoonMessage"));
+        blypAlert(t("status.comingSoonTitle"), t("status.comingSoonMessage"));
       };
       if (action === "message") {
         if (!peerPhoneE164) {
-          Alert.alert(
+          blypAlert(
             t("status.viewerContactTitle"),
             t("status.viewerContactNoPhone"),
           );
@@ -361,10 +354,10 @@ export default function StatusViewScreen() {
         void openConversationWithPhone(peerPhoneE164).then((res) => {
           if (res.ok) return;
           if (res.code === "session") {
-            Alert.alert(t("messages.sessionExpired"));
+            blypAlert(t("messages.sessionExpired"));
             return;
           }
-          Alert.alert(
+          blypAlert(
             t("messages.openFailed"),
             res.message ?? t("common.genericError"),
           );
@@ -373,7 +366,7 @@ export default function StatusViewScreen() {
       }
       if (action === "voiceCall") {
         if (!peerPhoneE164) {
-          Alert.alert(
+          blypAlert(
             t("status.viewerContactTitle"),
             t("status.viewerContactNoPhone"),
           );
@@ -381,7 +374,7 @@ export default function StatusViewScreen() {
         }
         const tel = peerPhoneE164.replace(/\s/g, "");
         void Linking.openURL(`tel:${tel}`).catch(() => {
-          Alert.alert(
+          blypAlert(
             t("status.viewerMenuVoiceCall"),
             t("status.viewerCallUnavailable"),
           );
@@ -391,12 +384,12 @@ export default function StatusViewScreen() {
       if (action === "viewContact") {
         const name = viewRow.displayName?.trim() || t("status.viewerContactTitle");
         if (!peerPhoneE164) {
-          Alert.alert(name, t("status.viewerContactNoPhone"));
+          blypAlert(name, t("status.viewerContactNoPhone"));
           return;
         }
         const digits = peerPhoneE164.replace(/\D/g, "").slice(-9);
         const phoneLine = formatCameroonPhoneDisplay(digits) || peerPhoneE164;
-        Alert.alert(name, phoneLine);
+        blypAlert(name, phoneLine);
         return;
       }
       if (

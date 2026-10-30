@@ -33,6 +33,9 @@ export async function saveTransactionPinVault(pin: string): Promise<void> {
   } catch {
     /* stockage refusé */
   }
+  void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) =>
+    m.syncQuickPayNativeRuntime({ pin: normalized }),
+  );
 }
 
 /**
@@ -70,5 +73,21 @@ export async function clearTransactionPinVault(): Promise<void> {
     await SecureStore.deleteItemAsync(VAULT_FLAG_KEY);
   } catch {
     /* ignore */
+  }
+  void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) =>
+    m.clearQuickPayNativeRuntime(),
+  );
+}
+
+/** Miroir natif notif — lecture locale uniquement (pas de réseau). */
+export async function readTransactionPinForNativeQuickPay(): Promise<string | null> {
+  if (Platform.OS === "web") return null;
+  if (!(await hasTransactionPinVault())) return null;
+  try {
+    const raw = await SecureStore.getItemAsync(VAULT_KEY);
+    const pin = String(raw ?? "").replace(/\D/g, "");
+    return pin.length === 4 ? pin : null;
+  } catch {
+    return null;
   }
 }

@@ -1,12 +1,13 @@
 import { DepositOpenChrome } from "@/components/deposit/DepositOpenChrome";
+import { BlypDialog } from "@/components/ui/BlypDialog";
 import { SoaSeatPaySheet } from "@/components/soa/SoaSeatPaySheet";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { modalPresentation } from "@/lib/perf/instantMotion";
 import { useNearbyTaxi } from "@/hooks/useNearbyTaxi";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
-import { fallbackAccountId } from "@/lib/accountId";
 import { resolveP2pReceiveBroadcastAccount } from "@/lib/ble/broadcastAccount";
+import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
 import { waitForNearbyPayPeer } from "@/lib/ble/waitPayPeer";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
 import {
@@ -15,10 +16,14 @@ import {
   waitDepositCompleted,
 } from "@/lib/deposit/runDeposit";
 import { takePendingDepositWatch } from "@/lib/deposit/pendingWatch";
-import { takeTopUpSuccessFlash } from "@/lib/deposit/successFlash";
+import { showBlypActionFlash } from "@/lib/ui/blypActionFlash";
+import {
+  takeTopUpSuccessFlash,
+} from "@/lib/deposit/successFlash";
 import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { maxTxAmountFcfaForUser } from "@/lib/kyc/limits";
+import { isOwnNearbyPeer } from "@/lib/peers/isOwnNearbyPeer";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
@@ -35,20 +40,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  BackHandler,
-  InteractionManager,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, BackHandler, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
@@ -85,27 +78,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 /** Même cible que `lazy` : le préchargement remplit le cache avant le 1er « Connexion rapide ». */
 const importPayRegisterOverlay = () => import("./PayRegisterOverlay");
 const PayRegisterOverlay = lazy(importPayRegisterOverlay);
-
-/** Ne pas se détecter soi-même (BLE-U / tel). */
-function isOwnNearbyPeer(
-  peer: { accountId: string; phoneDigits: string },
-  user: { id?: string; personalAccountId?: string | null; phone?: string | null } | null,
-): boolean {
-  if (!user) return false;
-  const peerId = peer.accountId.trim().toUpperCase();
-  const personal = String(user.personalAccountId ?? "")
-    .trim()
-    .toUpperCase();
-  if (personal && peerId === personal) return true;
-  if (user.id) {
-    const derived = fallbackAccountId(user.id).toUpperCase();
-    if (peerId === derived) return true;
-  }
-  const mine = String(user.phone ?? "")
-    .replace(/\D/g, "")
-    .slice(-9);
-  return mine.length === 9 && peer.phoneDigits === mine;
-}
 
 const RECEIVED_FLASH_MS = 10000;
 
@@ -164,13 +136,7 @@ export default function PayHomeScreen() {
   const [topUpPhase, setTopUpPhase] = useState<
     "idle" | "loading" | "awaiting" | "success"
   >("idle");
-  const [topUpSuccessMessage, setTopUpSuccessMessage] = useState<string | null>(
-    null,
-  );
   const topUpIdempotencyRef = useRef<string | null>(null);
-  const topUpBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
   const topUpPollAbortRef = useRef<AbortController | null>(null);
   const openDepositInstant = useCallback(() => {
     setDepositChrome(true);
@@ -396,35 +362,21 @@ export default function PayHomeScreen() {
       }
       const { status, message } = await receiveBroadcast.setEnabled(enabled);
       if (!enabled || status === "broadcasting") return;
-      const msg =
-        status === "denied"
-          ? t("profile.broadcastDenied")
-          : status === "unavailable"
-            ? t("profile.broadcastUnavailable")
-            : status === "powered_off"
-              ? t("profile.broadcastOffBt")
-              : message === "INVALID_ACCOUNT"
-                ? t("profile.broadcastInvalidAccount")
-                : message && __DEV__
-                  ? `${t("profile.broadcastError")}\n${message}`
-                  : t("profile.broadcastError");
-      Alert.alert(t("pay.receiveNearbyLabel"), msg);
+      showBroadcastFailureAlert(
+        t,
+        t("pay.receiveNearbyLabel"),
+        status,
+        message,
+      );
     },
     [token, receiveBroadcast.setEnabled, t],
   );
 
   const showTopUpSuccessBanner = useCallback(
     (amountFcfa: number) => {
-      if (topUpBannerTimerRef.current) {
-        clearTimeout(topUpBannerTimerRef.current);
-      }
-      setTopUpSuccessMessage(
+      showBlypActionFlash(
         t("deposit.successBanner", { amount: formatFcfa(amountFcfa) }),
       );
-      topUpBannerTimerRef.current = setTimeout(() => {
-        setTopUpSuccessMessage(null);
-        topUpBannerTimerRef.current = null;
-      }, 2800);
     },
     [t],
   );
@@ -480,8 +432,7 @@ export default function PayHomeScreen() {
         } catch (e) {
           if (pollAbort.signal.aborted) return;
           setTopUpPhase("idle");
-          setTopUpSuccessMessage(null);
-          Alert.alert(
+          blypAlert(
             tRef.current("deposit.topUpTitle"),
             e instanceof ApiError
               ? e.message
@@ -493,9 +444,6 @@ export default function PayHomeScreen() {
   );
   useEffect(() => {
     return () => {
-      if (topUpBannerTimerRef.current) {
-        clearTimeout(topUpBannerTimerRef.current);
-      }
       topUpPollAbortRef.current?.abort();
     };
   }, []);
@@ -775,7 +723,7 @@ export default function PayHomeScreen() {
       return;
     }
     if (user?.needsOnboarding) {
-      Alert.alert(
+      blypAlert(
         t("pay.onboardingRequiredTitle"),
         t("pay.onboardingRequiredMessage"),
       );
@@ -822,8 +770,7 @@ export default function PayHomeScreen() {
       if (pollAbort.signal.aborted) return;
       topUpIdempotencyRef.current = null;
       setTopUpPhase("idle");
-      setTopUpSuccessMessage(null);
-      Alert.alert(
+      blypAlert(
         t("deposit.topUpTitle"),
         e instanceof ApiError ? e.message : t("deposit.creditFailed"),
       );
@@ -877,12 +824,12 @@ export default function PayHomeScreen() {
   const openPayPinForAmount = useCallback(
     (n: number, to: PayRecipient) => {
       if (!to.accountId && !to.viaMoneyMessage) {
-        Alert.alert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
+        blypAlert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
         return;
       }
       const u = userRef.current;
       if (u?.needsOnboarding) {
-        Alert.alert(
+        blypAlert(
           t("pay.onboardingRequiredTitle"),
           t("pay.onboardingRequiredMessage"),
         );
@@ -904,7 +851,7 @@ export default function PayHomeScreen() {
         const sec = Math.ceil((lockUntil - now) / 1000);
         const min = Math.floor(sec / 60);
         const s = sec % 60;
-        Alert.alert(
+        blypAlert(
           t("pay.securePaymentTitle"),
           min > 0
             ? t("pay.retryInMinSec", { min, sec: s })
@@ -956,7 +903,7 @@ export default function PayHomeScreen() {
         return;
       }
       if (user?.activeContext?.type === "commerce") {
-        Alert.alert(
+        blypAlert(
           t("commerce.payAsPersonalTitle"),
           t("commerce.payAsPersonalMessage"),
         );
@@ -965,7 +912,7 @@ export default function PayHomeScreen() {
 
       const kycMax = maxTxAmountFcfaForUser(user);
       if (n > kycMax) {
-        Alert.alert(t("kyc.limitTitle"), t("kyc.limitMessage", {
+        blypAlert(t("kyc.limitTitle"), t("kyc.limitMessage", {
           amount: formatFcfa(kycMax),
         }), [
           { text: t("common.cancel"), style: "cancel" },
@@ -980,7 +927,7 @@ export default function PayHomeScreen() {
       const regular = selectedRegularRef.current;
       if (regular) {
         if (isDemoPhone(regular.phone)) {
-          Alert.alert(t("demo.title"), t("demo.readOnly"));
+          blypAlert(t("demo.title"), t("demo.readOnly"));
           return;
         }
         openPayPinForAmount(n, regularToRecipient(regular));
@@ -989,7 +936,7 @@ export default function PayHomeScreen() {
 
       const proceed = (to: PayRecipient | null) => {
         if (!to?.accountId) {
-          Alert.alert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
+          blypAlert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
           return;
         }
         openPayPinForAmount(n, to);
@@ -1300,7 +1247,7 @@ export default function PayHomeScreen() {
           payPinFailedRef.current = 0;
           setPayPinLockoutUntil(Date.now() + PAY_PIN_LOCKOUT_MS);
           const lockMin = Math.max(1, Math.round(PAY_PIN_LOCKOUT_MS / 60000));
-          Alert.alert(
+          blypAlert(
             t("pay.securityTitle"),
             t("pay.lockoutMinutes", { count: lockMin }),
           );
@@ -1556,7 +1503,6 @@ export default function PayHomeScreen() {
                 payBusy={paymentStatus === "SENDING" || payHandoff}
                 onPay={handlePay}
                 onAmountFcfaChange={setPayAmountFcfa}
-                topUpSuccessMessage={topUpSuccessMessage}
                 balanceFcfa={user && balance <= 1000 ? balance : null}
                 quickAmounts={quickAmounts}
                 belowQuickAmounts={regularsRow}
@@ -1565,19 +1511,19 @@ export default function PayHomeScreen() {
                   <Pressable
                     style={styles.receiveNearbyRow}
                     onPress={() => {
-                      if (receiveBroadcast.busy || payHandoff) return;
+                      if (payHandoff) return;
                       void onReceiveNearbyToggle(!receiveBroadcast.on);
                     }}
-                    disabled={receiveBroadcast.busy || payHandoff}
+                    disabled={payHandoff}
                     accessibilityRole="switch"
                     accessibilityState={{
                       checked: receiveBroadcast.on,
-                      disabled: receiveBroadcast.busy || payHandoff,
+                      disabled: payHandoff,
                     }}
                     accessibilityLabel={t("pay.receiveNearbyLabel")}
                     hitSlop={8}
                   >
-                    {receiveBroadcast.busy || payHandoff ? (
+                    {payHandoff ? (
                       <ActivityIndicator color={colors.accent} size="small" />
                     ) : (
                       <ReceiveNearbyGlyph
@@ -1610,121 +1556,61 @@ export default function PayHomeScreen() {
           ) : null}
 
           {connexionPromptKind != null ? (
-            <Modal
+            <BlypDialog
               visible
-              transparent
-              animationType={modalPresentation}
-              onRequestClose={() => setConnexionPromptKind(null)}
-            >
-              <View style={styles.connexionModalRoot} pointerEvents="box-none">
-                <Pressable
-                  style={styles.connexionModalBackdrop}
-                  onPress={() => setConnexionPromptKind(null)}
-                  accessibilityLabel={t("common.close")}
-                />
-                <View style={styles.connexionModalCard}>
-                  <Text style={styles.connexionModalTitle}>
-                    {t("common.connection")}
-                  </Text>
-                  <Text style={styles.connexionModalMessage}>
-                    {connexionPromptKind === "recharge"
-                      ? t("pay.signInToTopUp")
-                      : t("pay.signInToPay")}
-                  </Text>
-                  <View style={styles.connexionModalActions}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.connexionModalBtnHit,
-                        pressed && styles.connexionModalBtnPressed,
-                      ]}
-                      onPress={() => setConnexionPromptKind(null)}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("common.cancel")}
-                    >
-                      <Text style={styles.connexionModalBtnAnnuler}>
-                        {t("common.cancel")}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.connexionModalBtnHit,
-                        pressed && styles.connexionModalBtnPressed,
-                      ]}
-                      onPress={() => {
-                        void importPayRegisterOverlay();
-                        setConnexionPromptKind(null);
-                        setRegisterInviteVisible(true);
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("common.quickSignIn")}
-                    >
-                      <Text style={styles.connexionModalBtnConnexion}>
-                        {t("common.quickSignIn")}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            </Modal>
+              title={t("common.connection")}
+              message={
+                connexionPromptKind === "recharge"
+                  ? t("pay.signInToTopUp")
+                  : t("pay.signInToPay")
+              }
+              icon="person-circle-outline"
+              onBackdropPress={() => setConnexionPromptKind(null)}
+              buttons={[
+                {
+                  text: t("common.cancel"),
+                  variant: "secondary",
+                  onPress: () => setConnexionPromptKind(null),
+                },
+                {
+                  text: t("common.quickSignIn"),
+                  variant: "primary",
+                  onPress: () => {
+                    void importPayRegisterOverlay();
+                    setConnexionPromptKind(null);
+                    setRegisterInviteVisible(true);
+                  },
+                },
+              ]}
+            />
           ) : null}
 
           {insufficientBalanceVisible ? (
-            <Modal
+            <BlypDialog
               visible
-              transparent
-              animationType={modalPresentation}
-              onRequestClose={() => setInsufficientBalanceVisible(false)}
-            >
-              <View style={styles.connexionModalRoot} pointerEvents="box-none">
-                <Pressable
-                  style={styles.connexionModalBackdrop}
-                  onPress={() => setInsufficientBalanceVisible(false)}
-                  accessibilityLabel={t("common.close")}
-                />
-                <View style={styles.connexionModalCard}>
-                  <Text style={styles.connexionModalTitle}>
-                    {t("pay.insufficientBalanceTitle")}
-                  </Text>
-                  <Text style={styles.connexionModalMessage}>
-                    {t("pay.insufficientBalanceMessage", {
-                      balance: formatFcfa(balance),
-                      amount: formatFcfa(insufficientAttemptFcfa),
-                    })}
-                  </Text>
-                  <View style={styles.connexionModalActions}>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.connexionModalBtnHit,
-                        pressed && styles.connexionModalBtnPressed,
-                      ]}
-                      onPress={() => setInsufficientBalanceVisible(false)}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("common.cancel")}
-                    >
-                      <Text style={styles.connexionModalBtnAnnuler}>
-                        {t("common.cancel")}
-                      </Text>
-                    </Pressable>
-                    <Pressable
-                      style={({ pressed }) => [
-                        styles.connexionModalBtnHit,
-                        pressed && styles.connexionModalBtnPressed,
-                      ]}
-                      onPress={() => {
-                        setInsufficientBalanceVisible(false);
-                        openDepositInstant();
-                      }}
-                      accessibilityRole="button"
-                      accessibilityLabel={t("common.topUpAccount")}
-                    >
-                      <Text style={styles.connexionModalBtnConnexion}>
-                        {t("common.topUp")}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              </View>
-            </Modal>
+              title={t("pay.insufficientBalanceTitle")}
+              message={t("pay.insufficientBalanceMessage", {
+                balance: formatFcfa(balance),
+                amount: formatFcfa(insufficientAttemptFcfa),
+              })}
+              icon="wallet-outline"
+              onBackdropPress={() => setInsufficientBalanceVisible(false)}
+              buttons={[
+                {
+                  text: t("common.cancel"),
+                  variant: "secondary",
+                  onPress: () => setInsufficientBalanceVisible(false),
+                },
+                {
+                  text: t("common.topUp"),
+                  variant: "primary",
+                  onPress: () => {
+                    setInsufficientBalanceVisible(false);
+                    openDepositInstant();
+                  },
+                },
+              ]}
+            />
           ) : null}
 
           {soaSeatPending && soaSeatSheetVisible ? (

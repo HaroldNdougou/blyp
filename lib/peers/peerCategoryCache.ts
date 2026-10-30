@@ -4,7 +4,7 @@
  */
 import type { SpendCategory } from "@/lib/pay/spendCategory";
 import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { Platform } from "react-native";
 
 const byAccount = new Map<string, SpendCategory>();
@@ -25,9 +25,7 @@ function normPhone(phone: string): string {
 async function ensureTable(): Promise<void> {
   if (Platform.OS === "web") return;
   if (!tableReady) {
-    tableReady = (async () => {
-      const db = await getDb();
-      if (!db) return;
+    tableReady = runDbWrite(async (db) => {
       await db.execAsync(`
         CREATE TABLE IF NOT EXISTS spend_categories (
           key TEXT PRIMARY KEY NOT NULL,
@@ -35,9 +33,11 @@ async function ensureTable(): Promise<void> {
           updatedAt TEXT NOT NULL
         );
       `);
-    })().catch(() => {
-      tableReady = null;
-    });
+    })
+      .then(() => undefined)
+      .catch(() => {
+        tableReady = null;
+      }) as Promise<void>;
   }
   await tableReady;
 }
@@ -69,19 +69,19 @@ export async function hydrateSpendCategories(): Promise<void> {
   if (hydratedAll || Platform.OS === "web") return;
   try {
     await ensureTable();
-    const db = await getDb();
-    if (!db) return;
-    const rows = await db.getAllAsync<{ key: string; category: string }>(
-      `SELECT key, category FROM spend_categories`,
-    );
-    for (const row of rows ?? []) {
-      const cat = normalizeSpendCategory(row.category);
-      if (!cat) continue;
-      const k = String(row.key ?? "");
-      if (k.startsWith("a:")) byAccount.set(k.slice(2), cat);
-      else if (k.startsWith("p:")) byPhone.set(k.slice(2), cat);
-    }
-    hydratedAll = true;
+    await runDbRead(async (db) => {
+      const rows = await db.getAllAsync<{ key: string; category: string }>(
+        `SELECT key, category FROM spend_categories`,
+      );
+      for (const row of rows ?? []) {
+        const cat = normalizeSpendCategory(row.category);
+        if (!cat) continue;
+        const k = String(row.key ?? "");
+        if (k.startsWith("a:")) byAccount.set(k.slice(2), cat);
+        else if (k.startsWith("p:")) byPhone.set(k.slice(2), cat);
+      }
+      hydratedAll = true;
+    });
   } catch {
     /* best effort */
   }

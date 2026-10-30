@@ -33,7 +33,7 @@ Parameters:
   SmsProvider:
     Type: String
     Default: ""
-    Description: obitsms | africastalking | webhook | twilio (optionnel)
+    Description: obitsms | africastalking | webhook (optionnel)
 
   ObitSmsKeyApi:
     Type: String
@@ -48,6 +48,26 @@ Parameters:
     Type: String
     Default: ""
     Description: Hash SMS Retriever Android (11 car.)
+
+  WhatsappCloudToken:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Jeton permanent Meta WhatsApp Cloud API
+
+  WhatsappPhoneNumberId:
+    Type: String
+    Default: ""
+    Description: Phone number ID (Meta Business)
+
+  WhatsappOtpTemplateName:
+    Type: String
+    Default: "blyp_otp"
+    Description: Nom du template authentication Meta
+
+  WhatsappOtpTemplateLang:
+    Type: String
+    Default: "fr"
 
   BlypInviteUrl:
     Type: String
@@ -190,6 +210,10 @@ Resources:
           SMS_PROVIDER: !Ref SmsProvider
           OBIT_SMS_KEY_API: !Ref ObitSmsKeyApi
           OBIT_SMS_SENDER: !Ref ObitSmsSender
+          WHATSAPP_CLOUD_TOKEN: !Ref WhatsappCloudToken
+          WHATSAPP_PHONE_NUMBER_ID: !Ref WhatsappPhoneNumberId
+          WHATSAPP_OTP_TEMPLATE_NAME: !Ref WhatsappOtpTemplateName
+          WHATSAPP_OTP_TEMPLATE_LANG: !Ref WhatsappOtpTemplateLang
           ANDROID_SMS_OTP_APP_HASH: !Ref AndroidSmsOtpAppHash
           ASSETS_BUCKET: !Sub "blyp-assets-${Stage}-${AWS::AccountId}"
           ASSETS_CDN_URL: !Sub "https://${AssetsDistribution.DomainName}"
@@ -233,6 +257,12 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /auth/onboarding/profile
             Method: POST
+        CancelRegistration:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /auth/registration
+            Method: DELETE
         EnableMerchant:
           Type: HttpApi
           Properties:
@@ -304,6 +334,12 @@ Resources:
           Properties:
             ApiId: !Ref BlypApi
             Path: /me/context
+            Method: PUT
+        MeProfilePut:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/profile
             Method: PUT
         MeDeviceTokenPut:
           Type: HttpApi
@@ -592,6 +628,8 @@ Resources:
           SMS_PROVIDER: !Ref SmsProvider
           OBIT_SMS_KEY_API: !Ref ObitSmsKeyApi
           OBIT_SMS_SENDER: !Ref ObitSmsSender
+          WHATSAPP_CLOUD_TOKEN: !Ref WhatsappCloudToken
+          WHATSAPP_PHONE_NUMBER_ID: !Ref WhatsappPhoneNumberId
           BLYP_INVITE_URL: !Ref BlypInviteUrl
           MEDIA_BUCKET: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
           TRANSLATE_REGION: eu-west-1

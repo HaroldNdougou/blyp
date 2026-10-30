@@ -2,10 +2,28 @@ import type { ChatMessage } from "@/lib/api/types";
 import { isOutboundMessagePending } from "@/lib/messages/outboundPending";
 import { isReactionSyncMessage } from "@/lib/messages/reactionSync";
 
+export const FORWARD_SOURCE_STATUS = "__status__";
+export const FORWARD_SOURCE_SOA_REPORT = "__soa_report__";
+
+export type OutboundDocumentForward = {
+  localUri: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  pageCount?: number | null;
+  thumbLocalUri?: string | null;
+};
+
 export type ForwardDraft = {
   sourceConversationId: string;
   messages: ChatMessage[];
+  outboundDocument?: OutboundDocumentForward;
 };
+
+export function isSyntheticForwardSource(sourceConversationId: string): boolean {
+  const id = String(sourceConversationId ?? "").trim();
+  return id === FORWARD_SOURCE_STATUS || id === FORWARD_SOURCE_SOA_REPORT;
+}
 
 let pending: ForwardDraft | null = null;
 

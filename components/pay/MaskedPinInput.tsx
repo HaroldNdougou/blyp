@@ -1,6 +1,7 @@
 /**
  * Code PIN / OTP sans flash : TextInput invisible + masque React.
- * Défaut `circles` : ronds style iPhone (anneau accent vide → point plein).
+ * `circles` : ronds style iPhone.
+ * `lines` : traits + chiffres visibles (type WhatsApp).
  * `text` : • classiques (legacy).
  */
 import { useTheme } from "@/contexts/ThemeContext";
@@ -26,14 +27,17 @@ type Props = Omit<
   maxLength: number;
   maskChar?: string;
   /** Défaut : cercles accent Blyp. */
-  variant?: "text" | "circles";
-  /** Bordure / anneau en erreur (variant circles). */
+  variant?: "text" | "circles" | "lines";
+  /** Bordure / anneau en erreur (circles / lines). */
   error?: boolean;
   style?: StyleProp<ViewStyle | TextStyle>;
 };
 
 const CIRCLE = 16;
 const CIRCLE_GAP = 18;
+const LINE_CELL_W = 48;
+const LINE_CELL_GAP = 20;
+const LINE_STROKE = 2;
 
 export const MaskedPinInput = forwardRef<TextInputType, Props>(
   function MaskedPinInput(
@@ -63,13 +67,20 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
     /** Accent Blyp : lisible en clair et en sombre (évite blanc sur fond clair). */
     const ringColor = error ? colors.destructive : colors.accent;
     const fillColor = error ? colors.destructive : colors.accent;
+    const lineIdle = error ? colors.destructive : colors.inputBorder;
+    const lineActive = error ? colors.destructive : colors.accent;
+    const lineFilled = error ? colors.destructive : colors.text;
+
+    const boxStyle =
+      variant === "circles"
+        ? styles.circlesBox
+        : variant === "lines"
+          ? styles.linesBox
+          : styles.box;
 
     return (
       <View
-        style={[
-          variant === "circles" ? styles.circlesBox : styles.box,
-          style as StyleProp<ViewStyle>,
-        ]}
+        style={[boxStyle, style as StyleProp<ViewStyle>]}
         onTouchStart={onTouchStart}
       >
         <TextInput
@@ -110,6 +121,38 @@ export const MaskedPinInput = forwardRef<TextInputType, Props>(
               );
             })}
           </View>
+        ) : variant === "lines" ? (
+          <View style={styles.linesRow} pointerEvents="none">
+            {Array.from({ length: maxLength }, (_, i) => {
+              const filled = i < filledCount;
+              const active =
+                editable && i === filledCount && filledCount < maxLength;
+              const stroke = active ? lineActive : filled ? lineFilled : lineIdle;
+              return (
+                <View key={i} style={styles.lineCell}>
+                  <Text
+                    style={[
+                      styles.lineDigit,
+                      {
+                        color: filled ? colors.text : colors.placeholder,
+                      },
+                    ]}
+                  >
+                    {filled ? safeDigits[i] : " "}
+                  </Text>
+                  <View
+                    style={[
+                      styles.lineStroke,
+                      {
+                        backgroundColor: stroke,
+                        height: active ? LINE_STROKE + 1 : LINE_STROKE,
+                      },
+                    ]}
+                  />
+                </View>
+              );
+            })}
+          </View>
         ) : (
           <Text
             style={[
@@ -144,6 +187,12 @@ const styles = StyleSheet.create({
     minHeight: 52,
     overflow: "visible",
   },
+  linesBox: {
+    justifyContent: "center",
+    alignItems: "center",
+    minHeight: 64,
+    overflow: "visible",
+  },
   circle: {
     width: CIRCLE,
     height: CIRCLE,
@@ -170,5 +219,29 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     zIndex: 2,
     elevation: 2,
+  },
+  linesRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    justifyContent: "center",
+    zIndex: 2,
+    elevation: 2,
+  },
+  lineCell: {
+    width: LINE_CELL_W,
+    marginHorizontal: LINE_CELL_GAP / 2,
+    alignItems: "center",
+  },
+  lineDigit: {
+    fontSize: 28,
+    fontWeight: "600",
+    lineHeight: 34,
+    textAlign: "center",
+    fontVariant: ["tabular-nums"],
+    marginBottom: 8,
+  },
+  lineStroke: {
+    width: "100%",
+    borderRadius: 1,
   },
 });

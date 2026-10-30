@@ -24,17 +24,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  InteractionManager,
-  Modal,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, FlatList, InteractionManager, Modal, Pressable, Text, TextInput, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -128,7 +119,7 @@ export function ReceiptsScreen() {
   const onCamera = async () => {
     const ok = await ensureCameraPermission();
     if (!ok) {
-      Alert.alert(t("receipts.title"), t("messages.cameraPermissionDenied"));
+      blypAlert(t("receipts.title"), t("messages.cameraPermissionDenied"));
       return;
     }
     const shot = await pickImageFromCamera();
@@ -165,10 +156,10 @@ export function ReceiptsScreen() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (msg === "DOCUMENT_SIZE") {
-        Alert.alert(t("receipts.title"), t("receipts.fileTooLarge"));
+        blypAlert(t("receipts.title"), t("receipts.fileTooLarge"));
         return;
       }
-      Alert.alert(t("receipts.title"), t("common.genericError"));
+      blypAlert(t("receipts.title"), t("common.genericError"));
     }
   };
 
@@ -200,7 +191,7 @@ export function ReceiptsScreen() {
         e instanceof Error && e.message.trim()
           ? e.message.trim()
           : t("common.genericError");
-      Alert.alert(t("receipts.title"), msg);
+      blypAlert(t("receipts.title"), msg);
     } finally {
       setSaving(false);
     }
@@ -220,12 +211,12 @@ export function ReceiptsScreen() {
         receipt.contentType,
       );
     } catch {
-      Alert.alert(t("receipts.title"), t("receipts.openFailed"));
+      blypAlert(t("receipts.title"), t("receipts.openFailed"));
     }
   };
 
   const removeReceipt = (receipt: MerchantReceipt) => {
-    Alert.alert(
+    blypAlert(
       t("receipts.deleteTitle"),
       t("receipts.deleteMessage", { name: receipt.name }),
       [
@@ -244,7 +235,7 @@ export function ReceiptsScreen() {
                   return next;
                 });
               } catch {
-                Alert.alert(t("receipts.title"), t("common.genericError"));
+                blypAlert(t("receipts.title"), t("common.genericError"));
               }
             })();
           },

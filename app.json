@@ -55,6 +55,7 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
         "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.RECORD_AUDIO",
         "android.permission.READ_CONTACTS",
         "android.permission.READ_MEDIA_IMAGES",
@@ -148,6 +149,7 @@
       ],
       "./plugins/withBleBroadcastForeground.js",
       "./plugins/withPaymentAnnounceBackground.js",
+      "./plugins/withQuickPayNotif.js",
       "./plugins/withReadContacts.js",
       "./plugins/withGalleryMediaPermissions.js"
     ],

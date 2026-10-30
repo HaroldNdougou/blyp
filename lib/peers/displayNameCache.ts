@@ -2,7 +2,7 @@
  * Noms d’affichage peers BLE (commerce / taxi) — cache RAM + SQLite.
  * Sync = instantané ; réseau en fond via resolvePeerDisplayName.
  */
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { Platform } from "react-native";
 
 const ram = new Map<string, string>();
@@ -24,9 +24,7 @@ function normName(name: string): string {
 async function ensurePeerLabelsTable(): Promise<void> {
   if (Platform.OS === "web") return;
   if (!tableReady) {
-    tableReady = (async () => {
-      const db = await getDb();
-      if (!db) return;
+    tableReady = runDbWrite(async (db) => {
       await db.execAsync(`
         CREATE TABLE IF NOT EXISTS peer_labels (
           accountId TEXT PRIMARY KEY NOT NULL,
@@ -34,9 +32,11 @@ async function ensurePeerLabelsTable(): Promise<void> {
           updatedAt TEXT NOT NULL
         );
       `);
-    })().catch(() => {
-      tableReady = null;
-    });
+    })
+      .then(() => undefined)
+      .catch(() => {
+        tableReady = null;
+      }) as Promise<void>;
   }
   await tableReady;
 }
@@ -90,16 +90,17 @@ export async function hydratePeerDisplayName(
   if (Platform.OS === "web") return null;
   try {
     await ensurePeerLabelsTable();
-    const db = await getDb();
-    if (!db) return null;
-    const row = await db.getFirstAsync<{ displayName: string }>(
-      `SELECT displayName FROM peer_labels WHERE accountId = ? LIMIT 1`,
-      id,
-    );
-    const name = row?.displayName ? normName(row.displayName) : "";
-    if (name.length < 2) return null;
-    ram.set(id, name);
-    return name;
+    const res = await runDbRead(async (db) => {
+      const row = await db.getFirstAsync<{ displayName: string }>(
+        `SELECT displayName FROM peer_labels WHERE accountId = ? LIMIT 1`,
+        id,
+      );
+      const name = row?.displayName ? normName(row.displayName) : "";
+      if (name.length < 2) return null;
+      ram.set(id, name);
+      return name;
+    });
+    return res ?? null;
   } catch {
     return null;
   }

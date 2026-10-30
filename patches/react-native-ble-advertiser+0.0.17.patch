@@ -26,7 +26,7 @@ index 2526548..62cd0e2 100644
  }
 -
 diff --git a/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java b/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
-index 036de18..54ca8af 100644
+index 036de18..fe7f9d7 100644
 --- a/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
 +++ b/node_modules/react-native-ble-advertiser/android/src/main/java/com/vitorpamplona/bleadvertiser/BLEAdvertiserModule.java
 @@ -49,8 +49,16 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
@@ -58,7 +58,55 @@ index 036de18..54ca8af 100644
          BluetoothManager bluetoothManager = (BluetoothManager) reactContext.getApplicationContext()
                  .getSystemService(Context.BLUETOOTH_SERVICE);
          if (bluetoothManager != null) {
-@@ -187,28 +192,29 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+@@ -139,19 +144,23 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+             return;
+         }
+ 
+-        BluetoothLeAdvertiser tempAdvertiser;
+-        AdvertiseCallback tempCallback;
++        BluetoothLeAdvertiser tempAdvertiser = mBluetoothAdapter.getBluetoothLeAdvertiser();
+ 
+         if (mAdvertiserList.containsKey(uid)) {
+-            tempAdvertiser = mAdvertiserList.remove(uid);
+-            tempCallback = mAdvertiserCallbackList.remove(uid);
+-
+-            tempAdvertiser.stopAdvertising(tempCallback);
+-        } else {
+-            tempAdvertiser = mBluetoothAdapter.getBluetoothLeAdvertiser();
+-            tempCallback = new BLEAdvertiserModule.SimpleAdvertiseCallback(promise);
++            BluetoothLeAdvertiser oldAdvertiser = mAdvertiserList.remove(uid);
++            AdvertiseCallback oldCallback = mAdvertiserCallbackList.remove(uid);
++            if (oldAdvertiser != null && oldCallback != null) {
++                try {
++                    oldAdvertiser.stopAdvertising(oldCallback);
++                } catch (Exception e) {
++                    Log.w("BLEAdvertiserModule", "stop before restart: " + e.getMessage());
++                }
++            }
+         }
+ 
++        /** Toujours un callback neuf — sinon la Promise JS ne se résout jamais (MIUI / relance). */
++        AdvertiseCallback tempCallback = new BLEAdvertiserModule.SimpleAdvertiseCallback(promise);
++
+         if (tempAdvertiser == null) {
+             Log.w("BLEAdvertiserModule", "Advertiser Not Available unavailable");
+             promise.reject("Advertiser unavailable on this device");
+@@ -159,9 +168,12 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+         }
+         
+         AdvertiseSettings settings = buildAdvertiseSettings(options);
+-        AdvertiseData data = buildAdvertiseData(ParcelUuid.fromString(uid), toByteArray(payload), options);
++        byte[] manufPayload = toByteArray(payload);
++        AdvertiseData data = buildAdvertiseData(ParcelUuid.fromString(uid), manufPayload, options);
++        /** 2ᵉ trame = plus de chances de décoder à distance (salon / rue). */
++        AdvertiseData scanResponse = buildScanResponseData(manufPayload);
+ 
+-        tempAdvertiser.startAdvertising(settings, data, tempCallback);
++        tempAdvertiser.startAdvertising(settings, data, scanResponse, tempCallback);
+ 
+         mAdvertiserList.put(uid, tempAdvertiser);
+         mAdvertiserCallbackList.put(uid, tempCallback);
+@@ -187,28 +199,29 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
      public void stopBroadcast(final Promise promise) {
          Log.w("BLEAdvertiserModule", "Stop Broadcast call");
  
@@ -109,7 +157,27 @@ index 036de18..54ca8af 100644
          }
  
          promise.resolve(promiseArray);
-@@ -467,7 +473,13 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+@@ -454,9 +467,19 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
+             settingsBuilder.setConnectable(options.getBoolean("connectable"));
+         }
+ 
++        settingsBuilder.setTimeout(0);
++
+         return settingsBuilder.build();
+     }
+ 
++    private AdvertiseData buildScanResponseData(byte[] payload) {
++        AdvertiseData.Builder dataBuilder = new AdvertiseData.Builder();
++        dataBuilder.setIncludeDeviceName(false);
++        dataBuilder.setIncludeTxPowerLevel(false);
++        dataBuilder.addManufacturerData(companyId, payload);
++        return dataBuilder.build();
++    }
++
+     private AdvertiseData buildAdvertiseData(ParcelUuid uuid, byte[] payload, ReadableMap options) {
+         AdvertiseData.Builder dataBuilder = new AdvertiseData.Builder();
+ 
+@@ -467,7 +490,13 @@ public class BLEAdvertiserModule extends ReactContextBaseJavaModule {
              dataBuilder.setIncludeTxPowerLevel(options.getBoolean("includeTxPowerLevel"));
          
          dataBuilder.addManufacturerData(companyId, payload);

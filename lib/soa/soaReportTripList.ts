@@ -1,3 +1,4 @@
+import { dedupeSoaReportTripsByTripId } from "@/lib/soa/dedupeSoaReportTrips";
 import type { SoaCarTripReportRow } from "@/lib/soa/soaCar";
 
 export type SoaReportTripListItem = SoaCarTripReportRow & {
@@ -15,8 +16,9 @@ function tripChronologyMs(trip: SoaCarTripReportRow): number {
 export function orderSoaReportTripsForList(
   trips: SoaCarTripReportRow[],
 ): SoaReportTripListItem[] {
-  const completed = trips.filter((t) => !t.isActive);
-  const active = trips.filter((t) => t.isActive);
+  const unique = dedupeSoaReportTripsByTripId(trips);
+  const completed = unique.filter((t) => !t.isActive);
+  const active = unique.filter((t) => t.isActive);
   completed.sort((a, b) => tripChronologyMs(a) - tripChronologyMs(b));
   const numbered = completed.map((trip, i) => ({
     ...trip,

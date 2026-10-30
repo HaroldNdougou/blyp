@@ -70,6 +70,15 @@ export function formatSoaReportDayLabelForKey(
   return formatSoaReportDayLabel(dayKey, index, t);
 }
 
+/** Libellé liste dépliant (Aujourd’hui / Hier / jour semaine 7j / date longue). */
+export function formatSoaReportDayPickerLabel(
+  dayKey: string,
+  dayIndex: number,
+  t: (key: string) => string,
+): string {
+  return formatSoaReportDayLabel(dayKey, dayIndex, t);
+}
+
 /** Date calendaire longue (ex. 15 octobre 2025) — sous-titre discret. */
 export function formatSoaReportDayConcrete(dayKey: string): string {
   const lang: AppLanguage = i18n.language === "fr" ? "fr" : "en";

@@ -1,41 +1,54 @@
 import { MessageBubbleMetaRow } from "@/components/messages/MessageBubbleMeta";
+import { SwipeToReplyWrap } from "@/components/messages/SwipeToReplyWrap";
+import { peekVoiceCache } from "@/lib/voice/cache";
 import { formatVoiceClock } from "@/lib/voice/formatVoiceClock";
+import {
+  ensureVoiceWaveformPeaks,
+  flatVoiceWaveformHeights,
+  getCachedVoiceWaveformHeights,
+  subscribeVoiceWaveform,
+  voiceWaveformCacheKey,
+} from "@/lib/voice/waveformPeaks";
 import type { ChatMessage } from "@/lib/api/types";
 import {
+  beginVoiceScrub,
+  commitVoiceScrub,
   cycleVoiceRate,
+  getVoiceRate,
   getVoiceStatus,
-  seekVoice,
   subscribeVoiceStatus,
   type VoicePlayStatus,
 } from "@/lib/voice/play";
 import { Ionicons } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  Pressable,
+  InteractionManager,
   StyleSheet,
   Text,
   View,
-  type GestureResponderEvent,
   type StyleProp,
   type TextStyle,
   type ViewStyle,
 } from "react-native";
+import { Gesture, GestureDetector, Pressable } from "react-native-gesture-handler";
+import { runOnJS, useSharedValue } from "react-native-reanimated";
+
+/** Glisser horizontal sur la piste : un peu plus réactif qu’1:1 strict. */
+const SCRUB_DRAG_GAIN = 1.1;
 
 type Styles = {
   voiceRow: StyleProp<ViewStyle>;
-  voicePlayCol: StyleProp<ViewStyle>;
-  voicePlayBtn: StyleProp<ViewStyle>;
-  voiceDurMeta: StyleProp<TextStyle>;
-  voiceBubbleStack: StyleProp<ViewStyle>;
-  voiceSeek: StyleProp<ViewStyle>;
-  voiceTrackWrap: StyleProp<ViewStyle>;
-  voiceTrack: StyleProp<ViewStyle>;
-  voiceFill: StyleProp<ViewStyle>;
-  voiceThumb: StyleProp<ViewStyle>;
-  voiceMeta: StyleProp<ViewStyle>;
-  voiceSpeed: StyleProp<ViewStyle>;
+  voiceSpeedPill: StyleProp<ViewStyle>;
   voiceSpeedText: StyleProp<TextStyle>;
+  voicePlayBtn: StyleProp<ViewStyle>;
+  voiceMetaRow: StyleProp<ViewStyle>;
+  voiceBubbleStack: StyleProp<ViewStyle>;
+  voiceWaveArea: StyleProp<ViewStyle>;
+  voiceWaveBars: StyleProp<ViewStyle>;
+  voiceWaveBar: StyleProp<ViewStyle>;
+  voiceScrubber: StyleProp<ViewStyle>;
+  voiceDurMeta: StyleProp<TextStyle>;
 };
 
 type MetaProps = React.ComponentProps<typeof MessageBubbleMetaRow>;
@@ -44,9 +57,13 @@ type Props = {
   message: ChatMessage;
   durationMs: number;
   ink: string;
+  /** Contour de la boule scrub (couleur fond bulle) pour contraste sur la piste. */
+  scrubRingColor: string;
   styles: Styles;
   onToggle: (msg: ChatMessage) => void;
   metaTextProps: MetaProps;
+  swipeReplyEnabled?: boolean;
+  onSwipeReply?: () => void;
 };
 
 function rateLabel(rate: number, t: (key: string) => string): string {
@@ -59,21 +76,72 @@ export const VoiceBubble = React.memo(function VoiceBubble({
   message,
   durationMs,
   ink,
+  scrubRingColor,
   styles,
   onToggle,
   metaTextProps,
+  swipeReplyEnabled = false,
+  onSwipeReply,
 }: Props) {
   const { t } = useTranslation();
   const [st, setSt] = useState<VoicePlayStatus>(getVoiceStatus);
+  const [globalRate, setGlobalRate] = useState(getVoiceRate);
   const [scrubMs, setScrubMs] = useState<number | null>(null);
   const [resolvedDurMs, setResolvedDurMs] = useState(durationMs);
   const trackW = useRef(0);
+  const [trackLayoutW, setTrackLayoutW] = useState(0);
+  const swipeRootRef = useRef<View>(null);
+  const waveTrackRef = useRef<View>(null);
+  const trackExX = useSharedValue(0);
+  const trackExY = useSharedValue(0);
+  const trackExW = useSharedValue(0);
+  const trackExH = useSharedValue(0);
   const knownDur = useRef(durationMs);
+  const scrubMsRef = useRef(0);
   const dragging = useRef(false);
   const wasActive = useRef(false);
   const activeRef = useRef(false);
-  const toggleRef = useRef(onToggle);
-  toggleRef.current = onToggle;
+
+  const waveCacheKey = voiceWaveformCacheKey(
+    message.voice?.key,
+    message.id,
+  );
+  const [barHeights, setBarHeights] = useState(() =>
+    getCachedVoiceWaveformHeights(waveCacheKey) ?? flatVoiceWaveformHeights(),
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const apply = (heights: number[]) => {
+      if (!cancelled) setBarHeights(heights);
+    };
+    const cached = getCachedVoiceWaveformHeights(waveCacheKey);
+    if (cached) {
+      apply(cached);
+      return;
+    }
+    apply(flatVoiceWaveformHeights());
+    const unsub = subscribeVoiceWaveform(waveCacheKey, () => {
+      const next = getCachedVoiceWaveformHeights(waveCacheKey);
+      if (next) apply(next);
+    });
+    void (async () => {
+      let uri = message.voice?.localUri?.trim() || "";
+      if (!uri && message.voice?.key) {
+        uri = (await peekVoiceCache(message.voice.key)) || "";
+      }
+      if (!uri || cancelled) return;
+      InteractionManager.runAfterInteractions(() => {
+        void ensureVoiceWaveformPeaks(waveCacheKey, uri).then((h) => {
+          if (!cancelled) apply(h);
+        });
+      });
+    })();
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [waveCacheKey, message.voice?.key, message.voice?.localUri]);
 
   useEffect(() => {
     knownDur.current = durationMs;
@@ -91,9 +159,14 @@ export const VoiceBubble = React.memo(function VoiceBubble({
       activeRef.current = true;
       setSt(first);
     } else {
-      setSt(first.messageId ? { ...first, messageId: null, playing: false, paused: false, positionMs: 0 } : first);
+      setSt(
+        first.messageId
+          ? { ...first, messageId: null, playing: false, paused: false, positionMs: 0 }
+          : first,
+      );
     }
     return subscribeVoiceStatus((next) => {
+      setGlobalRate(next.rate);
       const mine = next.messageId === message.id;
       if (!mine && !wasActive.current) return;
       wasActive.current = mine;
@@ -102,40 +175,97 @@ export const VoiceBubble = React.memo(function VoiceBubble({
         knownDur.current = next.durationMs;
         setResolvedDurMs(next.durationMs);
       }
+      if (dragging.current) return;
       setSt(mine ? next : getVoiceStatus());
     });
   }, [message.id]);
 
-  const seekFromX = useCallback((x: number) => {
+  const scrubAnchorMs = useRef(0);
+
+  const msFromLocalX = useCallback((localX: number) => {
     const w = trackW.current;
     const dur = knownDur.current;
-    if (w <= 0 || dur <= 0) return;
-    const ms = Math.max(0, Math.min(dur, (x / w) * dur));
-    setScrubMs(ms);
-    void seekVoice(ms);
+    if (w <= 0 || dur <= 0) return 0;
+    const x = Math.max(0, Math.min(w, localX));
+    return (x / w) * dur;
   }, []);
 
-  const onSeekGrant = (e: GestureResponderEvent) => {
-    if (!activeRef.current) {
-      toggleRef.current(message);
-      return;
-    }
-    dragging.current = true;
-    seekFromX(e.nativeEvent.locationX);
-  };
+  const clampMs = useCallback((ms: number) => {
+    const dur = knownDur.current;
+    if (dur <= 0) return 0;
+    return Math.max(0, Math.min(dur, ms));
+  }, []);
 
-  const onSeekMove = (e: GestureResponderEvent) => {
+  const applyScrubUi = useCallback((ms: number) => {
+    const next = clampMs(ms);
+    scrubMsRef.current = Math.round(next);
+    setScrubMs(next);
+  }, [clampMs]);
+
+  const scrubBeginAt = useCallback(
+    (localX: number) => {
+      if (!activeRef.current) return;
+      dragging.current = true;
+      void beginVoiceScrub();
+      const ms = msFromLocalX(localX);
+      scrubAnchorMs.current = ms;
+      applyScrubUi(ms);
+    },
+    [applyScrubUi, msFromLocalX],
+  );
+
+  const scrubDragBy = useCallback(
+    (translationX: number) => {
+      if (!dragging.current) return;
+      const w = trackW.current;
+      const dur = knownDur.current;
+      if (w <= 0 || dur <= 0) return;
+      const ms =
+        scrubAnchorMs.current + (translationX / w) * dur * SCRUB_DRAG_GAIN;
+      applyScrubUi(ms);
+    },
+    [applyScrubUi],
+  );
+
+  const finishScrub = useCallback(async () => {
     if (!dragging.current) return;
-    seekFromX(e.nativeEvent.locationX);
-  };
-
-  const onSeekEnd = () => {
     dragging.current = false;
+    const ms = scrubMsRef.current;
+    await commitVoiceScrub(ms);
     setScrubMs(null);
-  };
+    setSt(getVoiceStatus());
+  }, []);
 
   const active = st.messageId === message.id;
+
+  const syncTrackExclusion = useCallback(() => {
+    const root = swipeRootRef.current;
+    const wave = waveTrackRef.current;
+    if (!root || !wave) return;
+    wave.measureLayout(
+      root,
+      (x, y, width, height) => {
+        trackExX.value = x;
+        trackExY.value = y;
+        trackExW.value = width;
+        trackExH.value = height;
+      },
+      () => {},
+    );
+  }, [trackExH, trackExW, trackExX, trackExY]);
+
+  const trackExclusion = useMemo(
+    () => ({
+      x: trackExX,
+      y: trackExY,
+      w: trackExW,
+      h: trackExH,
+    }),
+    [trackExH, trackExW, trackExX, trackExY],
+  );
+
   const playing = active && st.playing;
+  const rate = active ? st.rate : globalRate;
   const total =
     resolvedDurMs > 0
       ? resolvedDurMs
@@ -147,91 +277,146 @@ export const VoiceBubble = React.memo(function VoiceBubble({
     playing || (active && st.paused) ? Math.max(0, total - pos) : total;
   const pct = total > 0 ? Math.max(0, Math.min(1, pos / total)) : 0;
   const durLabel = total > 0 ? formatVoiceClock(shownMs) : "0:00";
-  const durStyle = [styles.voiceDurMeta, { color: ink, opacity: 0.58 }];
+  const durStyle = [styles.voiceDurMeta, { color: ink, opacity: 0.62 }];
+  const playedIndex = pct * barHeights.length;
+  const trackPx = trackLayoutW > 0 ? trackLayoutW : trackW.current;
+  const scrubberLeft =
+    trackPx > 0 ? Math.max(0, Math.min(trackPx, pct * trackPx)) - 8.5 : 0;
+
+  const scrubGesture = React.useMemo(() => {
+    return Gesture.Pan()
+      .enabled(active)
+      .maxPointers(1)
+      .blocksExternalGesture(active)
+      .failOffsetY([-26, 26])
+      .onBegin((e) => {
+        "worklet";
+        runOnJS(scrubBeginAt)(e.x);
+      })
+      .onUpdate((e) => {
+        "worklet";
+        runOnJS(scrubDragBy)(e.translationX);
+      })
+      .onEnd(() => {
+        "worklet";
+        runOnJS(finishScrub)();
+      })
+      .onFinalize((_e, success) => {
+        "worklet";
+        if (!success) {
+          runOnJS(finishScrub)();
+        }
+      });
+  }, [active, finishScrub, scrubBeginAt, scrubDragBy]);
+
+  const onReply = onSwipeReply ?? (() => {});
 
   return (
-    <View style={styles.voiceBubbleStack}>
-      <View style={styles.voiceRow}>
-      <View style={styles.voicePlayCol}>
-        <Pressable
-          style={styles.voicePlayBtn}
-          onPress={() => onToggle(message)}
-          accessibilityRole="button"
-          accessibilityLabel={
-            playing ? t("messages.voicePause") : t("messages.voicePlay")
-          }
-          hitSlop={6}
-        >
-          <View
-            pointerEvents="none"
-            style={[
-              StyleSheet.absoluteFillObject,
-              { backgroundColor: ink, opacity: 0.16, borderRadius: 18 },
-            ]}
-          />
-          <Ionicons
-            name={playing ? "pause" : "play"}
-            size={16}
-            color={ink}
-            style={playing ? undefined : { marginLeft: 2 }}
-          />
-        </Pressable>
-      </View>
+    <SwipeToReplyWrap
+      enabled={swipeReplyEnabled}
+      onReply={onReply}
+      trackExclusion={trackExclusion}
+    >
       <View
-        style={styles.voiceSeek}
-        onLayout={(e) => {
-          trackW.current = e.nativeEvent.layout.width;
-        }}
-        onStartShouldSetResponder={() => true}
-        onMoveShouldSetResponder={() => dragging.current}
-        onResponderGrant={onSeekGrant}
-        onResponderMove={onSeekMove}
-        onResponderRelease={onSeekEnd}
-        onResponderTerminate={onSeekEnd}
+        ref={swipeRootRef}
+        style={styles.voiceBubbleStack}
+        onLayout={syncTrackExclusion}
       >
-        <View style={styles.voiceTrackWrap}>
-          <View
-            style={[styles.voiceTrack, { backgroundColor: ink, opacity: 0.22 }]}
-          />
-          <View
-            style={[
-              styles.voiceFill,
-              { width: `${pct * 100}%`, backgroundColor: ink },
-            ]}
-          />
-          {active ? (
-            <View
-              style={[
-                styles.voiceThumb,
-                { left: `${pct * 100}%`, backgroundColor: ink },
-              ]}
-            />
-          ) : null}
-        </View>
-      </View>
-      {active ? (
-        <View style={styles.voiceMeta}>
+        <View style={styles.voiceRow}>
           <Pressable
+            style={styles.voiceSpeedPill}
             onPress={() => cycleVoiceRate()}
             accessibilityRole="button"
             accessibilityLabel={t("messages.voiceSpeedA11y", {
-              rate: rateLabel(st.rate, t),
+              rate: rateLabel(rate, t),
             })}
-            hitSlop={8}
-            style={[styles.voiceSpeed, { borderColor: ink }]}
+            hitSlop={4}
           >
+            <View
+              pointerEvents="none"
+              style={[
+                StyleSheet.absoluteFillObject,
+                styles.voiceSpeedPillBg,
+                { backgroundColor: ink },
+              ]}
+            />
             <Text style={[styles.voiceSpeedText, { color: ink }]}>
-              {rateLabel(st.rate, t)}
+              {rateLabel(rate, t)}
             </Text>
           </Pressable>
+
+          <Pressable
+            style={styles.voicePlayBtn}
+            onPress={() => onToggle(message)}
+            accessibilityRole="button"
+            accessibilityLabel={
+              playing ? t("messages.voicePause") : t("messages.voicePlay")
+            }
+            hitSlop={8}
+          >
+            <Ionicons
+              name={playing ? "pause" : "play"}
+              size={22}
+              color={ink}
+              style={playing ? undefined : { marginLeft: 3 }}
+            />
+          </Pressable>
+
+          <GestureDetector gesture={scrubGesture}>
+            <View
+              ref={waveTrackRef}
+              style={styles.voiceWaveArea}
+              pointerEvents={active ? "auto" : "none"}
+              onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                trackW.current = w;
+                if (w !== trackLayoutW) setTrackLayoutW(w);
+                syncTrackExclusion();
+              }}
+            >
+              <View style={styles.voiceWaveBars} pointerEvents="none">
+                {barHeights.map((h, i) => {
+                  const played = i + 0.5 <= playedIndex;
+                  return (
+                    <View
+                      key={i}
+                      style={[
+                        styles.voiceWaveBar,
+                        {
+                          height: h,
+                          backgroundColor: ink,
+                          opacity: played ? 0.95 : 0.32,
+                        },
+                      ]}
+                    />
+                  );
+                })}
+              </View>
+              {active ? (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.voiceScrubber,
+                    {
+                      left: scrubberLeft,
+                      backgroundColor: ink,
+                      borderColor: scrubRingColor,
+                    },
+                  ]}
+                />
+              ) : null}
+            </View>
+          </GestureDetector>
         </View>
-      ) : null}
+        <View style={styles.voiceMetaRow}>
+          <MessageBubbleMetaRow
+            {...metaTextProps}
+            trailingText={durLabel}
+            trailingTextStyle={durStyle}
+            trailingTextAtStart
+          />
+        </View>
       </View>
-      <MessageBubbleMetaRow
-        {...metaTextProps}
-        trailingText={durLabel}
-        trailingTextStyle={durStyle}
-      />
-    </View>
+    </SwipeToReplyWrap>
   );
 });

@@ -38,6 +38,7 @@
     "@shopify/flash-list": "2.0.2",
     "blurhash": "^2.0.5",
     "expo": "~54.0.33",
+    "expo-audio-waveform": "^0.1.0",
     "expo-av": "~16.0.8",
     "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.13",

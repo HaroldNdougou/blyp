@@ -10,7 +10,7 @@ import { soaCommerceDayKey } from "@/lib/soa/soaDayKey";
 const trips = new Map<string, SoaCarTrip>();
 const archives = new Map<string, SoaCarTripReportRow[]>();
 const demoSeedVersionByCommerce = new Map<string, number>();
-const DEMO_MOCK_SEED_VERSION = 2;
+const DEMO_MOCK_SEED_VERSION = 3;
 
 function ensureDemoSoaArchives(commerceId: string): void {
   const id = String(commerceId ?? "").trim();

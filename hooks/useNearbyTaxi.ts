@@ -4,10 +4,12 @@ import {
   isBleAutoPromptDeclined,
   subscribeBleConsent,
 } from "@/lib/ble/consent";
+import { BLYP_BLE_SCAN_KICK_MS } from "@/lib/ble/constants";
 import {
   getBleScanStatus,
   getBleTaxiPeerSnapshot,
   isTaxiScanFresh,
+  kickTaxiScanIfActive,
   refreshTaxiScan,
   startTaxiScan,
   stopTaxiScan,
@@ -26,6 +28,7 @@ import {
   resolvePeerDisplayName,
 } from "@/lib/peers/resolveDisplayName";
 import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
+import { isQuickPayBleScanActive } from "@/lib/pay/quickPayBleScanGate";
 import { setPayScanFocused } from "@/lib/ble/payScanGate";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -116,13 +119,20 @@ export function useNearbyTaxi(enabled: boolean) {
           setStatus("unavailable");
         });
       } else if (s === "background") {
+        if (isQuickPayBleScanActive()) return;
         if (isBleAutoPromptDeclined() || getBlePrepareInFlight()) return;
         void stopTaxiScan();
       }
     };
     const sub = AppState.addEventListener("change", onAppState);
 
+    const kickTimer = setInterval(() => {
+      if (!scanOn || broadcasting) return;
+      kickTaxiScanIfActive();
+    }, BLYP_BLE_SCAN_KICK_MS);
+
     return () => {
+      clearInterval(kickTimer);
       unsubPeer();
       unsubStatus();
       sub.remove();

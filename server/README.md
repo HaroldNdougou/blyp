@@ -14,7 +14,7 @@
    - **Obit SMS** : [obitsms.com](https://obitsms.com) — API v2 `GET …/api/v2/bulksms` avec `key_api`, `sender`, `destination` (`237` + 9 chiffres), `message`. Sur Railway : `OBIT_SMS_KEY_API`, `OBIT_SMS_SENDER` (expéditeur enregistré chez Obit, ex. `TESTAPI`). Optionnel : `OBIT_SMS_BASE_URL`. `SMS_PROVIDER=obitsms` pour forcer.
    - **Africa’s Talking** : `AFRICASTALKING_USERNAME`, `AFRICASTALKING_API_KEY` ; optionnel `AFRICASTALKING_SENDER_ID`, `AFRICASTALKING_API_HOST` (sandbox).
    - **Webhook** : `SMS_WEBHOOK_URL` — `POST` JSON `{ "to": "+237…", "message": "…" }` ; optionnel `SMS_WEBHOOK_BEARER_TOKEN`.
-   - **Twilio** (optionnel) : `TWILIO_*` comme dans `.env.example`.  
+   - **WhatsApp Meta Cloud** (OTP) : `WHATSAPP_*` dans `.env.example`.  
    En **local** sans aucune de ces variables, le code OTP reste dans le **terminal** (`[OTP dev]`).
 7. **Settings** → **Deploy** : région **Europe** si proposée (mieux pour utilisateurs au Cameroun qu’un seul DC US).
 8. **Settings** → **Networking** → génère un **domaine public** (HTTPS). L’URL ressemble à `https://xxx.up.railway.app`.

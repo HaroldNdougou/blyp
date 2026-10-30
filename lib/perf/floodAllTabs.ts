@@ -7,8 +7,8 @@ import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
 
 export function floodAllTabs(_token: string | null): void {
   if (DEV_METRO_LITE) return;
-  prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/app/(tabs)/pay"));
+  prefetchModule(() => import("@/app/(tabs)/index"));
   prefetchModule(() => import("@/components/pay/PayHomeScreen"));
   prefetchModule(() => import("@/components/pay/CommerceHomeScreen"));
   prefetchModule(() => import("@/app/(tabs)/history"));

@@ -34,13 +34,8 @@ import { router } from "expo-router";
 import { Image } from "expo-image";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { Pressable, ScrollView, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -215,7 +210,7 @@ export default function MyStatusListScreen() {
   );
 
   const onArchivePress = useCallback(() => {
-    Alert.alert(
+    blypAlert(
       t("status.comingSoonTitle"),
       t("status.archiveComingSoonMessage"),
     );
@@ -235,7 +230,7 @@ export default function MyStatusListScreen() {
     (post: StatusPost) => {
       if (!myId) return;
       const ok = forwardStatusPost(post, myId);
-      if (!ok) Alert.alert(t("status.forwardUnavailable"));
+      if (!ok) blypAlert(t("status.forwardUnavailable"));
     },
     [myId, t],
   );
@@ -246,7 +241,7 @@ export default function MyStatusListScreen() {
 
   const onMenuShare = useCallback((post: StatusPost) => {
     void shareStatusPost(post).catch(() => {
-      Alert.alert(t("status.shareUnavailable"));
+      blypAlert(t("status.shareUnavailable"));
     });
   }, [t]);
 
@@ -265,7 +260,7 @@ export default function MyStatusListScreen() {
         e instanceof ApiError && e.message
           ? e.message
           : t("common.genericError");
-      Alert.alert(t("status.deleteOneTitle"), msg);
+      blypAlert(t("status.deleteOneTitle"), msg);
     });
   }, [deleteTarget, token, myId, t]);
 

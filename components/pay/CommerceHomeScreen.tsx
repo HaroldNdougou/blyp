@@ -1,12 +1,13 @@
 import { IncomingPaymentFlashSheet } from "@/components/pay/IncomingPaymentFlashSheet";
 import { createCommerceHomeStyles } from "@/components/pay/commerceHomeStyles";
 import { SoaCarCommerceHome } from "@/components/soa/SoaCarCommerceHome";
-import { SOA_CAR_CATEGORY } from "@/lib/soa/constants";
 import { isSoaCarCategory } from "@/lib/soa/soaCar";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
+import { warmBleBroadcastRadio } from "@/lib/ble/warmBroadcast";
 import { resolveBleBroadcastAccount } from "@/lib/ble/broadcastAccount";
+import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
 import type { TransactionItem } from "@/lib/api/types";
 import {
   formatTransactionDate,
@@ -19,6 +20,10 @@ import {
   type IncomingPaymentFlash,
 } from "@/lib/pay/incomingFlash";
 import {
+  soaCommerceDayKey,
+  soaCommerceDayKeyFromIso,
+} from "@/lib/soa/soaDayKey";
+import {
   getTransactionsSnapshot,
   subscribeTransactionsCache,
 } from "@/lib/transactionsCache";
@@ -26,8 +31,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
-  Alert,
+  InteractionManager,
   Pressable,
   ScrollView,
   Switch,
@@ -39,21 +43,35 @@ import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context"
 const RECENT_RECEIVED_MAX = 5;
 const RECEIVED_FLASH_MS = 10000;
 
-function pickRecentReceived(
+function pickRecentReceivedToday(
   items: TransactionItem[] | null,
 ): TransactionItem[] {
   if (!items?.length) return [];
+  const todayKey = soaCommerceDayKey();
   const out: TransactionItem[] = [];
   for (const tx of items) {
     if (tx.type !== "received") continue;
+    if (soaCommerceDayKeyFromIso(tx.createdAt) !== todayKey) continue;
     out.push(tx);
     if (out.length >= RECENT_RECEIVED_MAX) break;
   }
   return out;
 }
 
+function sumReceivedTodayFcfa(items: TransactionItem[] | null): number {
+  if (!items?.length) return 0;
+  const todayKey = soaCommerceDayKey();
+  let sum = 0;
+  for (const tx of items) {
+    if (tx.type !== "received") continue;
+    if (soaCommerceDayKeyFromIso(tx.createdAt) !== todayKey) continue;
+    sum += tx.amountFcfa;
+  }
+  return sum;
+}
+
 /**
- * Accueil mode pro : solde encaissé centré.
+ * Accueil mode pro : recette du jour (Douala) centrée.
  * MAJ au focus (cache RAM) ; push « paiement reçu » hydrate via PushBootstrap.
  */
 export function CommerceHomeScreen() {
@@ -61,18 +79,26 @@ export function CommerceHomeScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createCommerceHomeStyles(colors), [colors]);
-  const { user, token, refreshUser, updateCommerceCategory } = useAuth();
-  const [enablingSoa, setEnablingSoa] = useState(false);
+  const { user, token, refreshUser } = useAuth();
   const phone = user?.phone ?? "";
   const bleBroadcastAccount = useMemo(
     () => resolveBleBroadcastAccount(user),
     [user],
   );
   const broadcast = useTaxiBroadcast(bleBroadcastAccount);
+  const [onlineActivating, setOnlineActivating] = useState(false);
 
   const [recentReceived, setRecentReceived] = useState<TransactionItem[]>(() =>
-    phone ? pickRecentReceived(getTransactionsSnapshot(phone)) : [],
+    phone ? pickRecentReceivedToday(getTransactionsSnapshot(phone)) : [],
   );
+  const [todayReceivedFcfa, setTodayReceivedFcfa] = useState(() =>
+    phone ? sumReceivedTodayFcfa(getTransactionsSnapshot(phone)) : 0,
+  );
+
+  const applyTxSnapshot = useCallback((items: TransactionItem[] | null) => {
+    setRecentReceived(pickRecentReceivedToday(items));
+    setTodayReceivedFcfa(sumReceivedTodayFcfa(items));
+  }, []);
   /** Bump léger pour quitter « Maintenant » sans poll. */
   const [justNowEpoch, setJustNowEpoch] = useState(0);
   const [receivedFlash, setReceivedFlash] =
@@ -115,8 +141,6 @@ export function CommerceHomeScreen() {
     user?.activeContext?.type === "commerce"
       ? user.activeContext.name
       : user?.firstName?.trim() || t("common.account");
-  const balance = user?.balanceFcfa ?? 0;
-
   const activeCommerceCategory = useMemo(() => {
     if (user?.activeContext?.type !== "commerce") return null;
     const ctx = user.activeContext;
@@ -138,13 +162,14 @@ export function CommerceHomeScreen() {
   useEffect(() => {
     if (!phone) {
       setRecentReceived([]);
+      setTodayReceivedFcfa(0);
       return;
     }
-    setRecentReceived(pickRecentReceived(getTransactionsSnapshot(phone)));
+    applyTxSnapshot(getTransactionsSnapshot(phone));
     return subscribeTransactionsCache((p, items) => {
-      if (p === phone) setRecentReceived(pickRecentReceived(items));
+      if (p === phone) applyTxSnapshot(items);
     });
-  }, [phone]);
+  }, [phone, applyTxSnapshot]);
 
   // Un seul timeout jusqu’à expiration — zéro intervalle.
   useEffect(() => {
@@ -191,47 +216,37 @@ export function CommerceHomeScreen() {
           void m.syncTransactionsFromNetwork(token, phone);
         }
       });
+      const warm = InteractionManager.runAfterInteractions(() => {
+        warmBleBroadcastRadio();
+      });
       return () => {
         focusedRef.current = false;
+        warm.cancel?.();
       };
     }, [token, refreshUser, phone]),
   );
 
   const onBroadcastToggle = useCallback(
     async (enabled: boolean) => {
-      const { status, message } = await broadcast.setEnabled(enabled);
-      if (!enabled || status === "broadcasting") return;
-      const msg =
-        status === "denied"
-          ? t("profile.broadcastDenied")
-          : status === "unavailable"
-            ? t("profile.broadcastUnavailable")
-            : status === "powered_off"
-              ? t("profile.broadcastOffBt")
-              : message === "INVALID_ACCOUNT"
-                ? t("profile.broadcastInvalidAccount")
-                : message && __DEV__
-                  ? `${t("profile.broadcastError")}\n${message}`
-                  : t("profile.broadcastError");
-      Alert.alert(t("commerce.onlineLabel"), msg);
+      setOnlineActivating(true);
+      try {
+        void import("expo-haptics")
+          .then((H) => H.impactAsync(H.ImpactFeedbackStyle.Light))
+          .catch(() => {});
+        const { status, message } = await broadcast.setEnabled(enabled);
+        if (!enabled || status === "broadcasting") return;
+        showBroadcastFailureAlert(
+          t,
+          t("commerce.onlineLabel"),
+          status,
+          message,
+        );
+      } finally {
+        setOnlineActivating(false);
+      }
     },
     [broadcast.setEnabled, t],
   );
-
-  const showSoaEnableBanner =
-    viewingCommerceId &&
-    user?.activeContext?.type === "commerce" &&
-    !isSoaCarCategory(activeCommerceCategory);
-
-  const onEnableSoaCar = useCallback(() => {
-    if (!viewingCommerceId || enablingSoa) return;
-    setEnablingSoa(true);
-    void updateCommerceCategory(viewingCommerceId, SOA_CAR_CATEGORY)
-      .catch(() => {
-        Alert.alert(t("common.genericError"), t("commerce.categoryUpdateFailed"));
-      })
-      .finally(() => setEnablingSoa(false));
-  }, [viewingCommerceId, enablingSoa, updateCommerceCategory, t]);
 
   if (
     viewingCommerceId &&
@@ -258,12 +273,15 @@ export function CommerceHomeScreen() {
         <Pressable
           style={styles.onlineRow}
           onPress={() => {
-            if (broadcast.busy) return;
+            if (onlineActivating) return;
             void onBroadcastToggle(!broadcast.on);
           }}
-          disabled={broadcast.busy}
+          disabled={onlineActivating}
           accessibilityRole="switch"
-          accessibilityState={{ checked: broadcast.on, disabled: broadcast.busy }}
+          accessibilityState={{
+            checked: broadcast.on,
+            busy: onlineActivating,
+          }}
           accessibilityLabel={t("commerce.onlineLabel")}
           hitSlop={{ top: 8, bottom: 8, left: 12, right: 8 }}
         >
@@ -272,56 +290,27 @@ export function CommerceHomeScreen() {
           >
             {broadcast.on ? t("commerce.onlineOn") : t("commerce.onlineOff")}
           </Text>
-          {broadcast.busy ? (
-            <ActivityIndicator color={colors.accent} size="small" />
-          ) : (
-            <View style={styles.onlineSwitchWrap} pointerEvents="none">
-              <Switch
-                value={broadcast.on}
-                trackColor={{
-                  false: colors.switchTrackOff,
-                  true: colors.switchTrackOn,
-                }}
-                thumbColor={
-                  broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
-                }
-                ios_backgroundColor={colors.switchTrackOff}
-              />
-            </View>
-          )}
+          <View style={styles.onlineSwitchWrap} pointerEvents="none">
+            <Switch
+              value={broadcast.on}
+              trackColor={{
+                false: colors.switchTrackOff,
+                true: colors.switchTrackOn,
+              }}
+              thumbColor={
+                broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
+              }
+              ios_backgroundColor={colors.switchTrackOff}
+            />
+          </View>
         </Pressable>
       </View>
 
       <SafeAreaView style={styles.bodySafe} edges={["left", "right"]}>
         <View style={styles.body}>
-          {showSoaEnableBanner ? (
-            <Pressable
-              style={[
-                styles.soaEnableBanner,
-                { borderColor: colors.borderLight, backgroundColor: colors.surface },
-              ]}
-              onPress={onEnableSoaCar}
-              disabled={enablingSoa}
-              accessibilityRole="button"
-              accessibilityLabel={t("soaCar.enableBannerCta")}
-            >
-              <Text style={[styles.soaEnableBannerText, { color: colors.text }]}>
-                {t("soaCar.enableBannerTitle")}
-              </Text>
-              {enablingSoa ? (
-                <ActivityIndicator color={colors.accent} size="small" />
-              ) : (
-                <Text style={[styles.soaEnableBannerCta, { color: colors.accent }]}>
-                  {t("soaCar.enableBannerCta")}
-                </Text>
-              )}
-            </Pressable>
-          ) : null}
           <View style={styles.center}>
             <View style={styles.balanceBlock}>
-              <Text style={styles.balanceLabel}>
-                {t("commerce.homeBalanceLabel")}
-              </Text>
+              <Text style={styles.balanceLabel}>{t("dates.today")}</Text>
               <View style={styles.balanceCircle}>
                 <View style={styles.balanceValueWrap}>
                   <Text
@@ -331,7 +320,7 @@ export function CommerceHomeScreen() {
                     minimumFontScale={0.28}
                     allowFontScaling={false}
                   >
-                    {formatFcfa(balance)}
+                    {formatFcfa(todayReceivedFcfa)}
                   </Text>
                 </View>
                 <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>

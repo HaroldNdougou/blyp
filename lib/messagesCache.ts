@@ -5,7 +5,7 @@ import type {
   MoneyTransfer,
 } from "@/lib/api/types";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { isOutboundMessagePending } from "@/lib/messages/outboundPending";
 import { applyMoneyReceiptOverride } from "@/lib/messages/moneyReceiptOverride";
 import {
@@ -161,7 +161,7 @@ function persistConversations(phone: string, items: Conversation[]) {
         );
       }
     });
-  });
+  }).catch(() => {});
 }
 
 function persistMessages(
@@ -176,7 +176,7 @@ function persistMessages(
       conversationId,
       JSON.stringify(items.slice(-MSG_CAP)),
     );
-  });
+  }).catch(() => {});
 }
 
 function persistReceipts(
@@ -195,7 +195,7 @@ function persistReceipts(
       snap.peerLastReadAt,
       snap.peerLastDeliveredAt,
     );
-  });
+  }).catch(() => {});
 }
 
 export function conversationsEqual(
@@ -585,13 +585,8 @@ export function hydrateMessagesCache(
   const existing = hydratePromises.get(p);
   if (existing) return existing;
 
-  const job = (async () => {
+  const job = runDbRead(async (db) => {
     if (hydratedPhones.has(p)) return;
-    const db = await getDb();
-    if (!db) {
-      hydratedPhones.add(p);
-      return;
-    }
     if (!conversationsByOwner.has(p)) {
       const convRows = await db.getAllAsync<{ json: string }>(
         `SELECT json FROM conversations WHERE phone = ? ORDER BY updatedAt DESC`,
@@ -645,13 +640,16 @@ export function hydrateMessagesCache(
       });
     }
     hydratedPhones.add(p);
-  })()
+  })
+    .then((res) => {
+      if (res === null) hydratedPhones.add(p);
+    })
     .catch(() => {
       /* SQLite indispo / verrou : le réseau remplit la RAM, retry au prochain hydrate */
     })
     .finally(() => {
       hydratePromises.delete(p);
-    });
+    }) as Promise<void>;
 
   hydratePromises.set(p, job);
   return job;
@@ -670,9 +668,7 @@ export function ensureMessagesSnapshotFromDb(
   const ram = getMessagesSnapshot(token, cid);
   if (ram && ram.length > 0) return Promise.resolve(ram);
 
-  return (async () => {
-    const db = await getDb();
-    if (!db) return null;
+  return runDbRead(async (db) => {
     const row = await db.getFirstAsync<{ json: string }>(
       `SELECT json FROM chat_messages WHERE phone = ? AND conversationId = ?`,
       p,
@@ -719,7 +715,7 @@ export function ensureMessagesSnapshotFromDb(
     } catch {
       return null;
     }
-  })();
+  }).then((res) => (res === null ? null : res));
 }
 
 export function getConversationsSnapshot(

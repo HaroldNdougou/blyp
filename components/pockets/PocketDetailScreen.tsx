@@ -27,14 +27,8 @@ import { router, useLocalSearchParams } from "expo-router";
 import type { TFunction } from "i18next";
 import React, { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  InteractionManager,
-  Modal,
-  Pressable,
-  Text,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { InteractionManager, Modal, Pressable, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -114,7 +108,7 @@ export default function PocketDetailScreen() {
     if (!pocket || !token) return;
     setSheet(null);
     const name = pocketDisplayName(pocket, t);
-    Alert.alert(
+    blypAlert(
       t("pockets.deleteTitle", { name }),
       pocket.balanceFcfa > 0
         ? t("pockets.deleteBody", { amount: formatFcfa(pocket.balanceFcfa) })

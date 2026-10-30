@@ -89,6 +89,7 @@ export function createPaymentReceiptStyles(c: ThemeColors) {
     },
     successRowValue: {
       flex: 1,
+      minWidth: 0,
       fontSize: 12,
       fontWeight: "700",
       color: c.text,
@@ -100,6 +101,18 @@ export function createPaymentReceiptStyles(c: ThemeColors) {
     },
     successStatusOk: {
       color: c.accent,
+    },
+    successRowRef: {
+      flexDirection: "column",
+      alignItems: "stretch",
+      gap: 4,
+    },
+    successRowRefValue: {
+      fontSize: 11,
+      fontWeight: "600",
+      color: c.textSecondary,
+      lineHeight: 16,
+      fontVariant: ["tabular-nums"],
     },
     successHistoryInScroll: {
       width: "100%",

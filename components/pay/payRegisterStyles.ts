@@ -8,6 +8,14 @@ export function createPayRegisterStyles(c: ThemeColors) {
       flex: 1,
       backgroundColor: "transparent",
     },
+    regFullScreenRoot: {
+      flex: 1,
+    },
+    regFullScreenSheet: {
+      flex: 1,
+      backgroundColor: c.modal,
+      overflow: "hidden",
+    },
     regModalBackdrop: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: c.overlay,
@@ -36,6 +44,7 @@ export function createPayRegisterStyles(c: ThemeColors) {
       paddingVertical: 12,
       borderBottomWidth: 1,
       borderBottomColor: c.borderLight,
+      backgroundColor: c.modal,
     },
     /** Espace réservé (même largeur que la flèche retour) pour garder le titre centré. */
     regModalHeaderLeading: {
@@ -65,6 +74,14 @@ export function createPayRegisterStyles(c: ThemeColors) {
       paddingBottom: 28,
       flexGrow: 1,
     },
+    regModalScrollCentered: {
+      justifyContent: "center",
+    },
+    /** Étapes avec header (OTP, PIN…) — contenu sous la barre, pas centré plein écran. */
+    regModalScrollBelowHeader: {
+      flexGrow: 0,
+      paddingTop: 16,
+    },
     /** Espace sous le dernier lien (ex. Modifier le numéro) quand le clavier est ouvert. */
     regModalScrollKeyboardPad: {
       paddingBottom: 56,
@@ -78,6 +95,7 @@ export function createPayRegisterStyles(c: ThemeColors) {
     },
     regModalSlideRow: {
       flexDirection: "row",
+      alignItems: "flex-start",
     },
     regModalSlidePage: {
       flexShrink: 0,
@@ -88,6 +106,9 @@ export function createPayRegisterStyles(c: ThemeColors) {
       lineHeight: 19,
       marginBottom: 22,
     },
+    regModalLeadCentered: {
+      textAlign: "center",
+    },
     regModalLabel: {
       fontSize: 12,
       fontWeight: "600",
@@ -96,29 +117,37 @@ export function createPayRegisterStyles(c: ThemeColors) {
       letterSpacing: 0.8,
       textAlign: "center",
     },
+    regModalLabelInputAlign: {
+      textAlign: "left",
+      alignSelf: "stretch",
+    },
     regModalPhoneWrap: {
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: c.inputBackground,
       borderRadius: 20,
-      paddingLeft: 12,
+      paddingLeft: 10,
       paddingRight: 6,
       borderWidth: 1,
       borderColor: c.inputBorder,
-      marginBottom: 20,
+      marginBottom: 12,
       minHeight: 56,
     },
+    regModalPhoneContinueBtn: {
+      marginTop: 0,
+    },
     regModalFlag: {
-      fontSize: 15,
-      lineHeight: 19,
-      marginRight: 5,
+      fontSize: 11,
+      lineHeight: 14,
+      marginRight: 3,
+      opacity: 0.72,
     },
     regModalPrefix: {
-      fontSize: 13,
-      fontWeight: "700",
-      color: c.text,
-      marginRight: 6,
-      letterSpacing: -0.2,
+      fontSize: 11,
+      fontWeight: "500",
+      color: c.textMuted,
+      marginRight: 8,
+      letterSpacing: 0.2,
     },
     regModalPhoneInput: {
       flex: 1,
@@ -134,17 +163,19 @@ export function createPayRegisterStyles(c: ThemeColors) {
       flexShrink: 0,
       alignSelf: "center",
       resizeMode: "contain",
+      opacity: 0.42,
     },
     /** Boîte plus carrée : évite le vide latéral avec le logo Orange (fond noir / icône centrée). */
     regModalWalletLogoOrange: {
-      width: 26,
-      height: 26,
-      marginRight: 4,
+      width: 18,
+      height: 18,
+      marginRight: 6,
     },
     /** Logo MTN plus horizontal. */
     regModalWalletLogoMtn: {
-      width: 56,
-      height: 24,
+      width: 38,
+      height: 16,
+      marginRight: 4,
     },
     regModalPrimaryBtn: {
       backgroundColor: c.accent,
@@ -172,9 +203,9 @@ export function createPayRegisterStyles(c: ThemeColors) {
       textAlign: "center",
       marginBottom: 16,
     },
-    /** Zone tactile des ronds PIN/OTP (style iPhone) — pas de champ « boîte ». */
+    /** Zone tactile OTP (traits type WhatsApp). */
     regModalOtpInput: {
-      height: 56,
+      minHeight: 72,
       marginBottom: 20,
       marginTop: 4,
       backgroundColor: "transparent",
@@ -196,38 +227,100 @@ export function createPayRegisterStyles(c: ThemeColors) {
       paddingHorizontal: 16,
       paddingVertical: 12,
     },
-    regModalResendHint: {
-      fontSize: 14,
-      fontWeight: "600",
-      color: c.textSecondary,
-      textAlign: "center",
-      marginTop: 4,
-      marginBottom: 4,
-    },
-    regModalResendHintEm: {
-      color: c.text,
-      fontVariant: ["tabular-nums"],
-    },
-    regModalResendBtn: {
+    regModalAvatarTap: {
       alignSelf: "center",
-      marginTop: 4,
-      marginBottom: 4,
-      paddingVertical: 12,
+      marginBottom: 16,
+      position: "relative",
+    },
+    regModalAvatarTapPressed: {
+      opacity: 0.88,
+    },
+    regModalAvatarRing: {
+      width: 102,
+      height: 102,
+      borderRadius: 51,
+      borderWidth: 3,
+      borderColor: "transparent",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    regModalAvatarRingWrap: {
+      position: "relative",
+      width: 102,
+      height: 102,
+    },
+    regModalAvatarSpinnerOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      borderRadius: 51,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    regModalAvatar: {
+      alignSelf: "center",
+    },
+    regModalAvatarInitials: {
+      fontSize: 28,
+      fontWeight: "700",
+    },
+    regModalAvatarBadge: {
+      position: "absolute",
+      right: -2,
+      bottom: 2,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: c.borderLight,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    regModalSkipPhotoBtn: {
+      alignSelf: "center",
+      marginBottom: 14,
+      paddingVertical: 10,
       paddingHorizontal: 16,
       minHeight: 44,
       justifyContent: "center",
     },
+    regModalSkipPhotoBtnPressed: {
+      opacity: 0.55,
+    },
+    regModalSkipPhotoBtnText: {
+      fontSize: 15,
+      fontWeight: "600",
+      color: c.textSecondary,
+    },
+    regModalResendHint: {
+      fontSize: 12,
+      fontWeight: "500",
+      color: c.textMuted,
+      textAlign: "center",
+      marginTop: 8,
+      marginBottom: 2,
+    },
+    regModalResendHintEm: {
+      color: c.textSecondary,
+      fontVariant: ["tabular-nums"],
+    },
+    regModalResendBtn: {
+      alignSelf: "center",
+      marginTop: 8,
+      marginBottom: 2,
+      paddingVertical: 8,
+      paddingHorizontal: 12,
+      minHeight: 36,
+      justifyContent: "center",
+    },
     regModalResendBtnPressed: {
-      opacity: 0.65,
+      opacity: 0.55,
     },
     regModalResendBtnDisabled: {
-      opacity: 0.45,
+      opacity: 0.4,
     },
     regModalResendBtnText: {
-      fontSize: 15,
-      fontWeight: "700",
-      color: c.accent,
-      textDecorationLine: "underline",
+      fontSize: 12,
+      fontWeight: "500",
+      color: c.textMuted,
     },
     regModalResendLimit: {
       fontSize: 13,
@@ -237,18 +330,6 @@ export function createPayRegisterStyles(c: ThemeColors) {
       marginTop: 6,
       marginBottom: 4,
       lineHeight: 18,
-    },
-    regModalBackLink: {
-      alignSelf: "center",
-      marginTop: 8,
-      paddingVertical: 8,
-      paddingHorizontal: 12,
-    },
-    regModalBackLinkText: {
-      fontSize: 14,
-      fontWeight: "600",
-      color: c.accent,
-      textDecorationLine: "underline",
     },
   });
 }

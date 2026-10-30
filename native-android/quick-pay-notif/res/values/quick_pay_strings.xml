@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="quick_pay_auth_title">Blyp — Paiement rapide</string>
+    <string name="quick_pay_auth_subtitle">Confirmer %1$d FCFA</string>
+    <string name="quick_pay_success">Paiement envoyé</string>
+    <string name="quick_pay_failed">Paiement impossible</string>
+    <string name="quick_pay_insufficient">Solde insuffisant</string>
+    <string name="quick_pay_not_ready">Configure un paiement sur Pay d’abord</string>
+    <string name="quick_pay_blyp_pin_title">Code PIN Blyp</string>
+    <string name="quick_pay_blyp_pin_wrong">PIN incorrect</string>
+</resources>

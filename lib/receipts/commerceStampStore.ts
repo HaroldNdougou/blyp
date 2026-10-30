@@ -1,4 +1,4 @@
-import { getDb } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { getMessagesCacheOwnerPhone } from "@/lib/messagesCache";
 import type { CommerceStamp } from "@/lib/receipts/commerceStampTypes";
 import {
@@ -18,25 +18,25 @@ function kvKey(scope: string): string {
 }
 
 async function readKv(phone: string, key: string): Promise<string | null> {
-  const db = await getDb();
-  if (!db) return null;
-  const row = await db.getFirstAsync<{ json: string }>(
-    `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
-    phone,
-    key,
+  const row = await runDbRead(async (db) =>
+    db.getFirstAsync<{ json: string }>(
+      `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
+      phone,
+      key,
+    ),
   );
   return row?.json ?? null;
 }
 
 async function writeKv(phone: string, key: string, json: string): Promise<void> {
-  const db = await getDb();
-  if (!db) return;
-  await db.runAsync(
-    `INSERT OR REPLACE INTO kv_cache (phone, key, json) VALUES (?, ?, ?)`,
-    phone,
-    key,
-    json,
-  );
+  await runDbWrite(async (db) => {
+    await db.runAsync(
+      `INSERT OR REPLACE INTO kv_cache (phone, key, json) VALUES (?, ?, ?)`,
+      phone,
+      key,
+      json,
+    );
+  });
 }
 
 export function getCommerceStampCached(scope: string): CommerceStamp | null {

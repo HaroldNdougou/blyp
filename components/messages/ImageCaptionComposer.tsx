@@ -136,7 +136,11 @@ export function ImageCaptionComposer({
       <TextInput
         ref={inputRef}
         style={[styles.composerInput, local.captionInput]}
-        placeholder={t("messages.imageCaptionPlaceholder")}
+        placeholder={
+          moneyPreview
+            ? t("messages.moneySendCaptionPlaceholder")
+            : t("messages.imageCaptionPlaceholder")
+        }
         placeholderTextColor={colors.placeholder}
         value={caption}
         onChangeText={setCaption}

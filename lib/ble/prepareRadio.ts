@@ -11,6 +11,11 @@ import {
   checkBlePermissions,
   requestBlePermissions,
 } from "@/lib/ble/permissions";
+import {
+  openAndroidBluetoothSettings,
+  openAndroidLocationSettings,
+  openBleAppSettings,
+} from "@/lib/ble/openBleSettings";
 import type { BlePermissionStatus } from "@/lib/ble/types";
 import * as IntentLauncher from "expo-intent-launcher";
 import * as Location from "expo-location";
@@ -21,7 +26,7 @@ export type BleRadioPrepareStatus = BlePermissionStatus | "powered_off";
 
 const BT_REQUEST_ACTION = "android.bluetooth.adapter.action.REQUEST_ENABLE";
 /** Grâce courte si l’utilisateur vient d’accepter (l’adaptateur démarre). */
-const BT_SPIN_UP_MS = 450;
+const BT_SPIN_UP_MS = 2_500;
 const GPS_PROMPT_MS = 4_000;
 
 async function locationServicesOn(): Promise<boolean> {
@@ -118,16 +123,31 @@ async function prepareSilent(opts?: {
 async function prepareInteractive(opts?: {
   advertise?: boolean;
 }): Promise<BleRadioPrepareStatus> {
+  const invite = Boolean(opts?.advertise);
+  const permOk = (await checkBlePermissions(opts)) === "granted";
+  const locOk = permOk ? await locationServicesOn() : false;
+  const btState = permOk && locOk ? await readBtState() : null;
+  if (permOk && locOk && btState === "PoweredOn") {
+    allowBleAutoPromptAgain();
+    return "granted";
+  }
+
+  const permStarted = Date.now();
   const perm = await requestBlePermissions(opts);
   if (perm !== "granted") {
+    if (invite && Date.now() - permStarted < 450) {
+      await openBleAppSettings();
+    }
     markBleAutoPromptDeclined("denied");
     return perm;
   }
   if (!(await ensureLocationServicesOn())) {
+    if (invite) await openAndroidLocationSettings();
     markBleAutoPromptDeclined("denied");
     return "denied";
   }
   if (!(await promptEnableBluetooth())) {
+    if (invite) await openAndroidBluetoothSettings();
     markBleAutoPromptDeclined("powered_off");
     return "powered_off";
   }
@@ -153,6 +173,7 @@ export async function prepareBleRadio(opts?: {
   }
 
   const job = (async (): Promise<BleRadioPrepareStatus> => {
+    if (force) allowBleAutoPromptAgain();
     if (!force && (!isPayScanFocused() || isBleAutoPromptDeclined())) {
       return prepareSilent(opts);
     }

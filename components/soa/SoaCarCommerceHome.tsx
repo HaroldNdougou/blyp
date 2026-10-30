@@ -3,7 +3,9 @@ import { createSoaCarHomeStyles } from "@/components/soa/soaCarHomeStyles";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
+import { warmBleBroadcastRadio } from "@/lib/ble/warmBroadcast";
 import { resolveBleBroadcastAccount } from "@/lib/ble/broadcastAccount";
+import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
 import { formatFcfa } from "@/lib/formatFcfa";
 import type { IncomingPaymentFlash } from "@/lib/pay/incomingFlash";
 import { subscribeIncomingPaymentFlash } from "@/lib/pay/incomingFlash";
@@ -21,14 +23,8 @@ import {
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, InteractionManager, Pressable, Switch, Text, View } from "react-native";
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 
 const POLL_MS = 4000;
@@ -53,6 +49,7 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
     [user],
   );
   const broadcast = useTaxiBroadcast(bleBroadcastAccount);
+  const [onlineActivating, setOnlineActivating] = useState(false);
   const [trip, setTrip] = useState<SoaCarTrip | null>(null);
   const [resetting, setResetting] = useState(false);
   const [receivedFlash, setReceivedFlash] =
@@ -94,11 +91,15 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
     useCallback(() => {
       focusedRef.current = true;
       void refreshTrip();
+      const warm = InteractionManager.runAfterInteractions(() => {
+        warmBleBroadcastRadio();
+      });
       const id = setInterval(() => {
         if (focusedRef.current) void refreshTrip();
       }, POLL_MS);
       return () => {
         focusedRef.current = false;
+        warm.cancel?.();
         clearInterval(id);
       };
     }, [refreshTrip]),
@@ -118,24 +119,29 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
 
   const onBroadcastToggle = useCallback(
     async (enabled: boolean) => {
-      const { status, message } = await broadcast.setEnabled(enabled);
-      if (!enabled || status === "broadcasting") return;
-      const msg =
-        status === "denied"
-          ? t("profile.broadcastDenied")
-          : status === "unavailable"
-            ? t("profile.broadcastUnavailable")
-            : message && __DEV__
-              ? `${t("profile.broadcastError")}\n${message}`
-              : t("profile.broadcastError");
-      Alert.alert(t("commerce.onlineLabel"), msg);
+      setOnlineActivating(true);
+      try {
+        void import("expo-haptics")
+          .then((H) => H.impactAsync(H.ImpactFeedbackStyle.Light))
+          .catch(() => {});
+        const { status, message } = await broadcast.setEnabled(enabled);
+        if (!enabled || status === "broadcasting") return;
+        showBroadcastFailureAlert(
+          t,
+          t("commerce.onlineLabel"),
+          status,
+          message,
+        );
+      } finally {
+        setOnlineActivating(false);
+      }
     },
     [broadcast.setEnabled, t],
   );
 
   const onNewTrip = useCallback(() => {
     if (!token || resetting) return;
-    Alert.alert(t("soaCar.newTripTitle"), t("soaCar.newTripMessage"), [
+    blypAlert(t("soaCar.newTripTitle"), t("soaCar.newTripMessage"), [
       { text: t("common.cancel"), style: "cancel" },
       {
         text: t("soaCar.newTripConfirm"),
@@ -145,7 +151,7 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
           void resetSoaTripForCommerce(token, commerceId)
             .then((next) => setTrip(next))
             .catch(() => {
-              Alert.alert(t("common.genericError"), t("soaCar.newTripFailed"));
+              blypAlert(t("common.genericError"), t("soaCar.newTripFailed"));
             })
             .finally(() => setResetting(false));
         },
@@ -165,12 +171,15 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
         <Pressable
           style={styles.onlineRow}
           onPress={() => {
-            if (broadcast.busy) return;
+            if (onlineActivating) return;
             void onBroadcastToggle(!broadcast.on);
           }}
-          disabled={broadcast.busy}
+          disabled={onlineActivating}
           accessibilityRole="switch"
-          accessibilityState={{ checked: broadcast.on, disabled: broadcast.busy }}
+          accessibilityState={{
+            checked: broadcast.on,
+            busy: onlineActivating,
+          }}
           accessibilityLabel={t("commerce.onlineLabel")}
           hitSlop={{ top: 8, bottom: 8, left: 12, right: 8 }}
         >
@@ -179,23 +188,19 @@ export function SoaCarCommerceHome({ commerceId, commerceName }: Props) {
           >
             {broadcast.on ? t("commerce.onlineOn") : t("commerce.onlineOff")}
           </Text>
-          {broadcast.busy ? (
-            <ActivityIndicator color={colors.accent} size="small" />
-          ) : (
-            <View style={styles.onlineSwitchWrap} pointerEvents="none">
-              <Switch
-                value={broadcast.on}
-                trackColor={{
-                  false: colors.switchTrackOff,
-                  true: colors.switchTrackOn,
-                }}
-                thumbColor={
-                  broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
-                }
-                ios_backgroundColor={colors.switchTrackOff}
-              />
-            </View>
-          )}
+          <View style={styles.onlineSwitchWrap} pointerEvents="none">
+            <Switch
+              value={broadcast.on}
+              trackColor={{
+                false: colors.switchTrackOff,
+                true: colors.switchTrackOn,
+              }}
+              thumbColor={
+                broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
+              }
+              ios_backgroundColor={colors.switchTrackOff}
+            />
+          </View>
         </Pressable>
       </View>
 

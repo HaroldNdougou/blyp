@@ -1,4 +1,5 @@
 import FS from "@/lib/voice/fileSystemLegacy";
+import { noteMediaCacheHit, noteMediaCacheWrite } from "@/lib/media/lruDiskCache";
 
 const THUMB_DIR = `${FS.cacheDirectory}blyp-doc-thumb/`;
 
@@ -16,7 +17,11 @@ async function ensureThumbDir(): Promise<void> {
 export async function peekPdfThumbUri(cacheKey: string): Promise<string | null> {
   const dest = `${THUMB_DIR}${safeKey(cacheKey)}-p0.jpg`;
   const info = await FS.getInfoAsync(dest);
-  return info.exists ? dest : null;
+  if (info.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
+  return null;
 }
 
 /**
@@ -41,6 +46,7 @@ export async function generatePdfThumbUri(
     });
     const dest = `${THUMB_DIR}${safeKey(key)}-p0.jpg`;
     await FS.copyAsync({ from: result.uri, to: dest });
+    await noteMediaCacheWrite(dest, "doc_thumb_local");
     return dest;
   } catch {
     return null;

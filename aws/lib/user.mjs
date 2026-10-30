@@ -36,8 +36,8 @@ function trimStr(s) {
 }
 
 function getOnboardingStep(profile) {
-  if (!profile?.transactionPinHash) return "pin";
   if (!trimStr(profile.firstName) || !trimStr(profile.lastName)) return "profile";
+  if (!profile?.transactionPinHash) return "pin";
   return null;
 }
 
@@ -459,6 +459,57 @@ export async function updateProfileNames(userId, firstName, lastName) {
         ":ln": lastName,
         ":now": now,
       },
+    }),
+  );
+}
+
+/** Supprime un compte dont l’onboarding n’est pas terminé (annulation inscription). */
+export async function deleteIncompleteUserAccount(userId) {
+  const profile = await getUserProfile(userId);
+  if (!profile) return;
+  if (getOnboardingStep(profile) === null) {
+    const err = new Error("REGISTRATION_COMPLETE");
+    err.code = "REGISTRATION_COMPLETE";
+    throw err;
+  }
+  const phone = String(profile.phone ?? "").trim();
+  if (!phone) {
+    const err = new Error("PROFILE_PHONE_MISSING");
+    err.code = "PROFILE_PHONE_MISSING";
+    throw err;
+  }
+  const accountId = profile.accountId ? String(profile.accountId) : null;
+  const transactItems = [
+    {
+      Delete: {
+        TableName: getTableName(),
+        Key: { PK: phonePk(phone), SK: "META" },
+      },
+    },
+    {
+      Delete: {
+        TableName: getTableName(),
+        Key: { PK: userPk(userId), SK: "PROFILE" },
+      },
+    },
+    {
+      Delete: {
+        TableName: getTableName(),
+        Key: { PK: userPk(userId), SK: "BALANCE" },
+      },
+    },
+  ];
+  if (accountId) {
+    transactItems.push({
+      Delete: {
+        TableName: getTableName(),
+        Key: { PK: accountPk(accountId), SK: "META" },
+      },
+    });
+  }
+  await doc.send(
+    new TransactWriteCommand({
+      TransactItems: transactItems,
     }),
   );
 }

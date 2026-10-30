@@ -88,9 +88,9 @@ function PayOutcomeSheetInner({
             ]}
             onPress={onDismiss}
             accessibilityRole="button"
-            accessibilityLabel={t("common.confirm")}
+            accessibilityLabel={t("common.ok")}
           >
-            <Text style={styles.okBtnText}>{t("common.confirm")}</Text>
+            <Text style={styles.okBtnText}>{t("common.ok")}</Text>
           </Pressable>
         </View>
       </View>

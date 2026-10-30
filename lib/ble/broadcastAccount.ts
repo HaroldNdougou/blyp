@@ -1,16 +1,23 @@
-import { fallbackAccountId } from "@/lib/accountId";
+import { fallbackAccountId, fallbackCommerceAccountId } from "@/lib/accountId";
 import type { ApiUser } from "@/lib/api/types";
 import type { SpendCategory } from "@/lib/pay/spendCategory";
 import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
 
 const BLYP_PUBLIC_ID_RE = /^BLYP-[UC]-[0-9A-HJKMNP-TV-Z]{10}$/;
 
-function normalizeBleAccountId(raw: string | null | undefined): string | null {
+function normalizeBleAccountId(
+  raw: string | null | undefined,
+  kind: "user" | "commerce" = "user",
+): string | null {
   const id = String(raw ?? "").trim().toUpperCase();
   if (!id) return null;
   if (BLYP_PUBLIC_ID_RE.test(id)) return id;
-  /** Sessions anciennes : id = UUID interne → dériver le BLYP-U- stable (comme l’API). */
-  if (/^[0-9A-F-]{36}$/.test(id)) return fallbackAccountId(id);
+  /** Sessions anciennes : id = UUID interne → dériver le BLYP-U/C stable (comme l’API). */
+  if (/^[0-9A-F-]{36}$/.test(id)) {
+    return kind === "commerce"
+      ? fallbackCommerceAccountId(id)
+      : fallbackAccountId(id);
+  }
   return null;
 }
 
@@ -42,7 +49,7 @@ export function resolveBleBroadcastAccount(user: ApiUser | null | undefined): {
   }
 
   return {
-    accountId: normalizeBleAccountId(raw),
+    accountId: normalizeBleAccountId(raw, "commerce"),
     phone: user.phone,
     category,
   };

@@ -1,4 +1,4 @@
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 
 const KV_KEY = "receipts_unread";
 const unreadIdsByAccount = new Map<string, Set<string>>();
@@ -47,34 +47,34 @@ async function persistUnread(accountId: string): Promise<void> {
       KV_KEY,
       JSON.stringify({ ids }),
     );
-  });
+  }).catch(() => {});
 }
 
 export async function hydrateReceiptsUnread(accountId: string): Promise<void> {
   const id = accountKey(accountId);
   if (!id || hydrated.has(id)) return;
   hydrated.add(id);
-  const db = await getDb();
-  if (!db) return;
   try {
-    const row = await db.getFirstAsync<{ json: string }>(
-      `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
-      id,
-      KV_KEY,
-    );
-    if (!row?.json) return;
-    const parsed = JSON.parse(row.json) as { ids?: string[]; count?: number };
-    const set = new Set<string>();
-    if (Array.isArray(parsed.ids)) {
-      for (const rid of parsed.ids) {
-        const s = String(rid ?? "").trim();
-        if (s) set.add(s);
+    await runDbRead(async (db) => {
+      const row = await db.getFirstAsync<{ json: string }>(
+        `SELECT json FROM kv_cache WHERE phone = ? AND key = ?`,
+        id,
+        KV_KEY,
+      );
+      if (!row?.json) return;
+      const parsed = JSON.parse(row.json) as { ids?: string[]; count?: number };
+      const set = new Set<string>();
+      if (Array.isArray(parsed.ids)) {
+        for (const rid of parsed.ids) {
+          const s = String(rid ?? "").trim();
+          if (s) set.add(s);
+        }
       }
-    }
-    if (set.size === 0 && Number(parsed.count) > 0) {
-      /* ancien format count seul — pas d’ids à surligner */
-    }
-    if (set.size > 0) unreadIdsByAccount.set(id, set);
+      if (set.size === 0 && Number(parsed.count) > 0) {
+        /* ancien format count seul — pas d’ids à surligner */
+      }
+      if (set.size > 0) unreadIdsByAccount.set(id, set);
+    });
   } catch {
     /* ignore */
   }

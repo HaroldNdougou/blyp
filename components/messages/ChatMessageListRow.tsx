@@ -13,6 +13,10 @@ import type { ChatMessage } from "@/lib/api/types";
 import { formatMessageDayLabel } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import {
+  isLikelyMoneyAmountCaption,
+  messageTranslationStorageKey,
+} from "@/lib/messages/messageTranslation";
+import {
   moneyAmountColor,
   moneyExpiresLine,
   moneyStatusText,
@@ -124,8 +128,15 @@ function ChatMessageListRowInner({
   const amountLabel = tr
     ? `${formatFcfa(tr.amountFcfa)} ${t("common.fcfa")}`
     : "";
-  const moneyCaption = isMoney ? String(item.body ?? "").trim() : "";
-  const peerTranslation = peerTranslations?.[item.id];
+  const moneyCaptionRaw = isMoney ? String(item.body ?? "").trim() : "";
+  const moneyCaption =
+    isMoney &&
+    moneyCaptionRaw &&
+    !isLikelyMoneyAmountCaption(moneyCaptionRaw, tr?.amountFcfa)
+      ? moneyCaptionRaw
+      : "";
+  const peerTranslationKey = messageTranslationStorageKey(item);
+  const peerTranslation = peerTranslations?.[peerTranslationKey];
   const body = deleted
     ? mine
       ? t("messages.deletedForAllMine")
@@ -339,9 +350,12 @@ function ChatMessageListRowInner({
           message={item}
           durationMs={item.voice?.durationMs ?? 0}
           ink={mine ? colors.bubbleMineText : colors.bubbleTheirsText}
+          scrubRingColor={mine ? colors.bubbleMine : colors.bubbleTheirs}
           styles={styles}
           onToggle={handlersRef.current.playVoiceMsg}
           metaTextProps={metaTextProps}
+          swipeReplyEnabled={canReact && !selectionActive}
+          onSwipeReply={() => handlersRef.current.startReplyTo(item)}
         />
       ) : jumbo ? (
         <View
@@ -376,7 +390,7 @@ function ChatMessageListRowInner({
         />
       ) : (
         <View style={textStackStyle}>
-          {deleted || isMoney ? (
+          {deleted || isMoney || item.type === "money" ? (
             <Text
               style={[
                 deleted
@@ -556,7 +570,7 @@ function ChatMessageListRowInner({
           >
             <View style={styles.moneyBubbleWrap}>
               <SwipeToReplyWrap
-                enabled={canReact && !selectionActive}
+                enabled={canReact && !selectionActive && !isVoice}
                 onReply={() => h.startReplyTo(item)}
               >
                 {detachMoneyReceiptMeta ? (
@@ -650,8 +664,8 @@ function rowPropsEqual(
   if (a.registerReactAnchor !== b.registerReactAnchor) return false;
   if (a.mine && a.receiptGeneration !== b.receiptGeneration) return false;
   if (
-    (a.peerTranslations?.[a.item.id] ?? "") !==
-    (b.peerTranslations?.[b.item.id] ?? "")
+    (a.peerTranslations?.[messageTranslationStorageKey(a.item)] ?? "") !==
+    (b.peerTranslations?.[messageTranslationStorageKey(b.item)] ?? "")
   ) {
     return false;
   }

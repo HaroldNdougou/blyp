@@ -110,7 +110,11 @@ function AnimatedTabBarButtonInner({
   }));
 
   return (
-    <PlatformPressable {...rest} pressOpacity={1}>
+    <PlatformPressable
+      {...rest}
+      pressOpacity={1}
+      style={[rest.style, styles.tabButton]}
+    >
       <View style={styles.slot}>
         <Animated.View
           pointerEvents="none"
@@ -131,8 +135,12 @@ function AnimatedTabBarButtonInner({
 export const AnimatedTabBarButton = memo(AnimatedTabBarButtonInner);
 
 const styles = StyleSheet.create({
+  tabButton: {
+    flex: 1,
+  },
   slot: {
     flex: 1,
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
   },

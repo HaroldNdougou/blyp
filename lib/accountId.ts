@@ -38,3 +38,7 @@ export function fallbackAccountId(userId: string): string {
   }
   return `BLYP-U-${out}`;
 }
+
+export function fallbackCommerceAccountId(userId: string): string {
+  return fallbackAccountId(userId).replace(/^BLYP-U-/, "BLYP-C-");
+}

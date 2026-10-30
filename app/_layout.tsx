@@ -4,7 +4,11 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { useAuth } from "@/contexts/authContextBase";
 import { NetworkProvider } from "@/contexts/NetworkContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
+import { BlypActionFlashHost } from "@/components/ui/BlypActionFlashHost";
+import { BlypAlertHost } from "@/components/ui/BlypAlertHost";
 import { BleBroadcastBootstrap } from "@/components/network/BleBroadcastBootstrap";
+import { QuickPayBootstrap } from "@/components/network/QuickPayBootstrap";
+import { QuickPayHost } from "@/components/pay/QuickPayHost";
 import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { PushBootstrap } from "@/components/network/PushBootstrap";
 import { ChatRealtimeBootstrap } from "@/components/network/ChatRealtimeBootstrap";
@@ -194,8 +198,12 @@ export default function RootLayout() {
               <ChatRealtimeBootstrap />
               <PushBootstrap />
               <BleBroadcastBootstrap />
+              <QuickPayBootstrap />
               <SplashGate>
                 <RootShell />
+                <QuickPayHost />
+                <BlypAlertHost />
+                <BlypActionFlashHost />
               </SplashGate>
             </AuthProvider>
           </NetworkProvider>

@@ -12,7 +12,7 @@ import {
   ReactionBadge,
   ReactionPicker,
 } from "@/components/messages/MessageReactions";
-import { ComposerReplyBar } from "@/components/messages/MessageReplyQuote";
+import { TypingDotsBubble } from "@/components/messages/TypingDotsBubble";
 import {
   ChatMessageListRow,
   type ChatMessageRowHandlers,
@@ -72,6 +72,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { useTheme } from "@/contexts/ThemeContext";
 import { parseAmountFcfa } from "@/lib/amountLimits";
+import { parseComposerMoneyDraft } from "@/lib/messages/parseComposerMoneyDraft";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
 import type { ChatMessage, Conversation, MoneyTransfer } from "@/lib/api/types";
 import { formatFcfa } from "@/lib/formatFcfa";
@@ -140,6 +141,7 @@ import { resolveTranslateTargetLanguage } from "@/lib/i18n/translateLocale";
 import {
   ensureThreadTranslations,
   getCachedMessageTranslation,
+  messageTranslationStorageKey,
   translatablePeerText,
   warmMessageTranslationsFromSqlite,
 } from "@/lib/messages/messageTranslation";
@@ -168,27 +170,8 @@ import React, {
   useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  BackHandler,
-  Dimensions,
-  InteractionManager,
-  type ViewToken,
-  Keyboard,
-  type KeyboardEvent,
-  type NativeScrollEvent,
-  type NativeSyntheticEvent,
-  Linking,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, AppState, BackHandler, Dimensions, InteractionManager, type ViewToken, Keyboard, type KeyboardEvent, type NativeScrollEvent, type NativeSyntheticEvent, Linking, Modal, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -209,8 +192,21 @@ type ChatEmojiPickerProps = {
   borderColor: string;
 };
 
-/** FlashList inversée : offset ~0 = bas du fil (messages récents). */
-const CHAT_AT_BOTTOM_Y = 56;
+/** FlashList ancré en bas : seuil « en bas » serré (éviter faux positifs en remontant). */
+const CHAT_AT_BOTTOM_Y = 14;
+
+const THREAD_LIST_MAINTAIN_VISIBLE = {
+  startRenderingFromBottom: true,
+} as const;
+
+function maxMessageCreatedAt(messages: ChatMessage[]): string {
+  let max = "";
+  for (const m of messages) {
+    const at = String(m.createdAt ?? "").trim();
+    if (at && at > max) max = at;
+  }
+  return max;
+}
 
 function newClientId() {
   return `c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -322,6 +318,7 @@ export default function ChatThreadScreenBody() {
   const [loading, setLoading] = useState(false);
   const threadRemoteHasMoreRef = useRef(true);
   const olderPullInFlightRef = useRef(false);
+  const startReachedCooldownRef = useRef(0);
   const [peerPhotoLightbox, setPeerPhotoLightbox] =
     useState<PeerAvatarLightboxTarget | null>(null);
   const [text, setText] = useState("");
@@ -478,11 +475,12 @@ export default function ChatThreadScreenBody() {
     null,
   );
   const [presenceClock, setPresenceClock] = useState(0);
-  const [peerTypingName, setPeerTypingName] = useState(
-    () => getTypingSnapshot(conversationId)?.fromName ?? "",
-  );
+  const [typingUiTick, setTypingUiTick] = useState(0);
   const typingPulseAtRef = useRef(0);
-  const typingIdleRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const typingSentActiveRef = useRef(false);
+  const typingStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Délai sans frappe avant « écrit… » off (texte composer conservé). */
+  const TYPING_IDLE_MS = 3500;
   /** Étape PIN : garde la dernière hauteur clavier (pas de chute si l’IME clignote). */
   const pinLiftRef = useRef(0);
   const listRef = useRef<FlashListRef<ChatMessage>>(null);
@@ -495,6 +493,8 @@ export default function ChatThreadScreenBody() {
   const atLatestRef = useRef(true);
   const threadIdsHydratedRef = useRef(false);
   const knownMsgIdsRef = useRef(new Set<string>());
+  /** Horodatage du message le plus récent déjà connu — ignore l’historique paginé. */
+  const newestMsgCreatedAtRef = useRef("");
   const pendingNewMsgIdsRef = useRef(new Set<string>());
   const newArrivalHighlightTimerRef = useRef<ReturnType<
     typeof setTimeout
@@ -624,6 +624,11 @@ export default function ChatThreadScreenBody() {
   );
 
   const loadOlderThreadPage = useCallback(() => {
+    const now = Date.now();
+    if (now - startReachedCooldownRef.current < 280) return;
+    startReachedCooldownRef.current = now;
+    atLatestRef.current = false;
+    setPinListOnInsert(true);
     const nextCount = nextThreadWindowCount(
       threadWindowCount > 0
         ? threadWindowCount
@@ -725,20 +730,11 @@ export default function ChatThreadScreenBody() {
   }).current;
 
   const scrollToLatest = useCallback(
-    (animated = false) => {
-      const run = () => {
-        const list = listRef.current;
-        if (!list) return;
-        if (threadListDisplayData.length === 0) return;
-        list.scrollToEnd({ animated });
-      };
-      run();
-      requestAnimationFrame(run);
-      requestAnimationFrame(() => requestAnimationFrame(run));
-      if (animated) {
-        setTimeout(run, 120);
-        setTimeout(run, 320);
-      }
+    (animated = false, force = false) => {
+      if (!force && !atLatestRef.current) return;
+      const list = listRef.current;
+      if (!list || threadListDisplayData.length === 0) return;
+      list.scrollToEnd({ animated });
     },
     [threadListDisplayData.length],
   );
@@ -776,31 +772,15 @@ export default function ChatThreadScreenBody() {
     if (pendingForwardLandRef.current) {
       pendingForwardLandRef.current = false;
       scrollAnchoredConvRef.current = conversationId;
-      scrollToLatest(false);
-      requestAnimationFrame(() => scrollToLatest(false));
-      const t1 = setTimeout(() => scrollToLatest(true), 80);
-      const t2 = setTimeout(() => scrollToLatest(true), 200);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-      };
+      scrollToLatest(false, true);
+      requestAnimationFrame(() => scrollToLatest(false, true));
+      return;
     }
     if (scrollAnchoredConvRef.current === conversationId) return;
     scrollAnchoredConvRef.current = conversationId;
-    scrollToLatest(false);
-    const t = setTimeout(() => scrollToLatest(false), 80);
-    return () => clearTimeout(t);
+    scrollToLatest(false, true);
+    requestAnimationFrame(() => scrollToLatest(false, true));
   }, [conversationId, loading, newestFirst.length, scrollToLatest]);
-
-  const onThreadListContentSizeChange = useCallback(() => {
-    if (atLatestRef.current) {
-      scrollToLatest(false);
-      return;
-    }
-    if (scrollAnchoredConvRef.current !== conversationId) {
-      scrollToLatest(false);
-    }
-  }, [conversationId, scrollToLatest]);
 
   const onListScroll = useCallback(
     (e: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -827,12 +807,14 @@ export default function ChatThreadScreenBody() {
     atLatestRef.current = true;
     threadIdsHydratedRef.current = false;
     knownMsgIdsRef.current = new Set();
+    newestMsgCreatedAtRef.current = "";
     pendingNewMsgIdsRef.current.clear();
     setNewBelowCount(0);
     setPinListOnInsert(false);
     setNewArrivalHighlightIds(new Set());
     setSelectedMessageIds([]);
     setReactPickerPos(null);
+    startReachedCooldownRef.current = 0;
     if (newArrivalHighlightTimerRef.current) {
       clearTimeout(newArrivalHighlightTimerRef.current);
       newArrivalHighlightTimerRef.current = null;
@@ -900,7 +882,7 @@ export default function ChatThreadScreenBody() {
       setEmojiOpen(false);
       setEmojiPanelVisible(false);
       setKeyboardHeight(imeLiftPx(e));
-      scrollToLatest(true);
+      scrollToLatest(false);
     };
     const onHide = () => {
       if (emojiOpenRef.current) {
@@ -1067,16 +1049,23 @@ export default function ChatThreadScreenBody() {
 
   useEffect(() => {
     if (!token || !conversationId || messages.length === 0) return;
-    const ids = messages.map((m) => m.id);
     const task = runAfterPaint(() => {
-    void warmMessageTranslationsFromSqlite(token, ids, translateTargetLang).then(
+    void warmMessageTranslationsFromSqlite(
+      token,
+      messages,
+      translateTargetLang,
+    ).then(
       () => {
         const patch: Record<string, string> = {};
         for (const msg of messages) {
           const source = translatablePeerText(msg, myId);
           if (!source) continue;
-          const tr = getCachedMessageTranslation(msg.id, translateTargetLang);
-          if (tr && tr.trim() !== source.trim()) patch[msg.id] = tr;
+          const storageKey = messageTranslationStorageKey(msg);
+          const tr = getCachedMessageTranslation(
+            storageKey,
+            translateTargetLang,
+          );
+          if (tr && tr.trim() !== source.trim()) patch[storageKey] = tr;
         }
         if (Object.keys(patch).length === 0) return;
         setPeerTranslations((prev) => {
@@ -1218,8 +1207,14 @@ export default function ChatThreadScreenBody() {
     if (!conversationId) return;
     return subscribeConversationTyping((patch) => {
       if (patch.conversationId !== conversationId) return;
-      setPeerTypingName(patch.on ? patch.fromName : "");
+      setTypingUiTick((n) => n + 1);
     });
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+    const id = setInterval(() => setTypingUiTick((n) => n + 1), 2000);
+    return () => clearInterval(id);
   }, [conversationId]);
 
   useEffect(() => {
@@ -1500,27 +1495,40 @@ export default function ChatThreadScreenBody() {
   useEffect(() => {
     const folded = foldReactionSyncMessages(messages);
     const ids = new Set(folded.map((m) => m.id));
+    const maxAt = maxMessageCreatedAt(folded);
     if (!threadIdsHydratedRef.current) {
       threadIdsHydratedRef.current = true;
       knownMsgIdsRef.current = ids;
+      newestMsgCreatedAtRef.current = maxAt;
       return;
     }
+    const watermark = newestMsgCreatedAtRef.current;
     let peerAdded = 0;
+    let playInboundSound = false;
     for (const m of folded) {
       if (knownMsgIdsRef.current.has(m.id)) continue;
       if (!isMine(m)) {
-        peerAdded += 1;
-        if (!atLatestRef.current) {
-          pendingNewMsgIdsRef.current.add(m.id);
+        const at = String(m.createdAt ?? "").trim();
+        if (at > watermark) {
+          peerAdded += 1;
+          if (m.type !== "voice") playInboundSound = true;
+          if (!atLatestRef.current) {
+            pendingNewMsgIdsRef.current.add(m.id);
+          }
         }
       }
     }
     knownMsgIdsRef.current = ids;
+    if (maxAt > newestMsgCreatedAtRef.current) {
+      newestMsgCreatedAtRef.current = maxAt;
+    }
     if (peerAdded <= 0) return;
 
-    void import("@/lib/messages/chatSounds").then((mod) => {
-      mod.playChatSound("incomingInChat");
-    });
+    if (playInboundSound) {
+      void import("@/lib/messages/chatSounds").then((mod) => {
+        mod.playChatSound("incomingInChat");
+      });
+    }
 
     if (atLatestRef.current) {
       return;
@@ -1575,45 +1583,58 @@ export default function ChatThreadScreenBody() {
   };
 
   const stopTyping = useCallback(() => {
-    if (typingIdleRef.current) {
-      clearInterval(typingIdleRef.current);
-      typingIdleRef.current = null;
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+      typingStopTimerRef.current = null;
     }
-    if (!token || !conversationId || typingPulseAtRef.current === 0) return;
+    if (!token || !conversationId || !typingSentActiveRef.current) return;
+    typingSentActiveRef.current = false;
     typingPulseAtRef.current = 0;
     void import("@/lib/messages/chatRealtimeLink").then((m) =>
       m.sendChatTyping(conversationId, false),
     );
-  }, [conversationId]);
+  }, [conversationId, token]);
 
   const sendTypingOn = useCallback(() => {
     if (!token || !conversationId) return;
     const now = Date.now();
-    if (now - typingPulseAtRef.current < 2000 && typingPulseAtRef.current !== 0) {
+    if (
+      typingSentActiveRef.current &&
+      now - typingPulseAtRef.current < 2000 &&
+      typingPulseAtRef.current !== 0
+    ) {
       return;
     }
     typingPulseAtRef.current = now;
+    typingSentActiveRef.current = true;
     void import("@/lib/messages/chatRealtimeLink").then((m) =>
       m.sendChatTyping(conversationId, true),
     );
   }, [token, conversationId]);
 
-  /** « écrit... » : à la frappe, puis tant que le champ contient du texte. */
+  const scheduleTypingIdleStop = useCallback(() => {
+    if (typingStopTimerRef.current) {
+      clearTimeout(typingStopTimerRef.current);
+    }
+    typingStopTimerRef.current = setTimeout(() => {
+      typingStopTimerRef.current = null;
+      stopTyping();
+    }, TYPING_IDLE_MS);
+  }, [stopTyping]);
+
+  /** « écrit… » : à chaque frappe ; arrêt après silence clavier (texte composer OK). */
   const onComposerChange = useCallback(
     (next: string) => {
       composerTextRef.current = next;
       setText(next);
       if (next.trim()) {
         sendTypingOn();
-        if (!typingIdleRef.current) {
-          typingIdleRef.current = setInterval(sendTypingOn, 2500);
-        }
-      } else if (typingIdleRef.current) {
-        clearInterval(typingIdleRef.current);
-        typingIdleRef.current = null;
+        scheduleTypingIdleStop();
+      } else {
+        stopTyping();
       }
     },
-    [sendTypingOn],
+    [sendTypingOn, scheduleTypingIdleStop, stopTyping],
   );
 
   const onEmojiPick = useCallback(
@@ -1712,6 +1733,22 @@ export default function ChatThreadScreenBody() {
     const body = composerTextRef.current.trim();
     if (!token || !body || sendingRef.current) return;
 
+    const moneyDraft = parseComposerMoneyDraft(body);
+    if (moneyDraft) {
+      if (!peerOnBlyp || sending) return;
+      composerTextRef.current = "";
+      setText("");
+      stopTyping();
+      clearMoneyReceiptRequired();
+      pendingMoneyFruitRef.current = null;
+      fruitMoneySendRef.current = false;
+      pendingMoneyAmountRef.current = moneyDraft.amountFcfa;
+      pendingMoneyCaptionRef.current = moneyDraft.caption;
+      setAmount(String(moneyDraft.amountFcfa));
+      void beginMoneyPinOrBio();
+      return;
+    }
+
     const replyMsg = replyDraft;
     const replyTo =
       replyMsg != null
@@ -1748,9 +1785,6 @@ export default function ChatThreadScreenBody() {
       return next;
     });
     bumpConversationPreview(body, "text", createdAt);
-    atLatestRef.current = true;
-    scrollToLatest(false);
-    requestAnimationFrame(() => scrollToLatest(false));
     void import("@/lib/messages/chatSounds").then((m) => m.playChatSound("sent"));
 
     sendingRef.current = true;
@@ -1797,7 +1831,7 @@ export default function ChatThreadScreenBody() {
         e instanceof ApiError && e.status > 0 && e.status < 500 && e.message.trim()
           ? e.message.trim()
           : t("messages.sendFailed");
-      Alert.alert(t("messages.send"), msg);
+      blypAlert(t("messages.send"), msg);
     } finally {
       sendingRef.current = false;
     }
@@ -1838,7 +1872,7 @@ export default function ChatThreadScreenBody() {
     try {
       await draft.toggleRecDraftPreview(uri, recMs);
     } catch {
-      Alert.alert(t("messages.title"), t("messages.voicePlayFailed"));
+      blypAlert(t("messages.title"), t("messages.voicePlayFailed"));
     }
   };
 
@@ -1849,7 +1883,7 @@ export default function ChatThreadScreenBody() {
       const voice = await import("@/lib/voice/record");
       const ok = await voice.requestMicPermission();
       if (!ok) {
-        Alert.alert(t("messages.title"), t("messages.voiceMicDenied"));
+        blypAlert(t("messages.title"), t("messages.voiceMicDenied"));
         return;
       }
       void import("@/lib/voice/play").then((m) => m.stopVoice());
@@ -1861,9 +1895,6 @@ export default function ChatThreadScreenBody() {
       setRecPreviewPlaying(false);
       await rec.start();
       setRecUi("recording");
-      void import("@/lib/messages/chatSounds").then((m) =>
-        m.playChatSound("recordStart", { keepRecording: true }),
-      );
       recTickRef.current = setInterval(() => {
         setRecMs((prev) => {
           const n = prev + 200;
@@ -1878,7 +1909,7 @@ export default function ChatThreadScreenBody() {
       recRef.current = null;
       clearRecTick();
       setRecUi("idle");
-      Alert.alert(t("messages.title"), t("common.genericError"));
+      blypAlert(t("messages.title"), t("common.genericError"));
     }
   };
 
@@ -1899,7 +1930,7 @@ export default function ChatThreadScreenBody() {
       setRecMs(0);
       setRecPreviewUri(null);
       if (clip) {
-        Alert.alert(t("messages.title"), t("messages.voiceTooShort"));
+        blypAlert(t("messages.title"), t("messages.voiceTooShort"));
       }
       return;
     }
@@ -1926,9 +1957,6 @@ export default function ChatThreadScreenBody() {
       recRef.current = rec;
       await rec.start();
       setRecUi("recording");
-      void import("@/lib/messages/chatSounds").then((m) =>
-        m.playChatSound("recordStart", { keepRecording: true }),
-      );
       const baseMs = totalRecDurationMs();
       recTickRef.current = setInterval(() => {
         setRecMs((prev) => {
@@ -1986,7 +2014,7 @@ export default function ChatThreadScreenBody() {
       clip = await mergeVoiceSegmentsForSend(parts);
     } catch {
       setRecBusy(false);
-      Alert.alert(t("messages.title"), t("common.genericError"));
+      blypAlert(t("messages.title"), t("common.genericError"));
       return;
     }
     recSegmentsRef.current = [];
@@ -1996,7 +2024,7 @@ export default function ChatThreadScreenBody() {
     setRecPreviewPlaying(false);
     setRecBusy(false);
     if (!clip || clip.durationMs < 400) {
-      Alert.alert(t("messages.title"), t("messages.voiceTooShort"));
+      blypAlert(t("messages.title"), t("messages.voiceTooShort"));
       return;
     }
     void import("@/lib/messages/chatSounds").then((m) => {
@@ -2033,7 +2061,6 @@ export default function ChatThreadScreenBody() {
       return next;
     });
     bumpConversationPreview("VOICE", "voice", optimistic.createdAt);
-    scrollToLatest(false);
     void (async () => {
       let uri = clip.uri;
       try {
@@ -2051,6 +2078,9 @@ export default function ChatThreadScreenBody() {
         /* uri rec encore bonne le temps du 1er essai */
       }
       kickVoiceOutbox(token);
+      void import("@/lib/voice/waveformPeaks").then((m) => {
+        m.prefetchVoiceWaveform(`pending-${clientId}`, uri);
+      });
     })().catch(() => {
       /* outbox / cache — la bulle reste */
     });
@@ -2147,7 +2177,6 @@ export default function ChatThreadScreenBody() {
       bumpConversationPreview(preview, "image", lastAt);
       atLatestRef.current = true;
       setPinListOnInsert(false);
-      scrollToLatest(false);
       kickImageOutbox(token);
     },
     [
@@ -2168,14 +2197,14 @@ export default function ChatThreadScreenBody() {
       closeEmojiPanel();
       const granted = await ensureImageLibraryPermission();
       if (!granted) {
-        Alert.alert(t("messages.title"), t("messages.imagePermissionDenied"));
+        blypAlert(t("messages.title"), t("messages.imagePermissionDenied"));
         return;
       }
       const assets = await pickImagesFromLibrary();
       if (!assets?.length) return;
       setPendingImages(assets);
     } catch {
-      Alert.alert(t("messages.title"), t("messages.imageSendFailed"));
+      blypAlert(t("messages.title"), t("messages.imageSendFailed"));
     } finally {
       imagePickBusyRef.current = false;
     }
@@ -2188,14 +2217,14 @@ export default function ChatThreadScreenBody() {
       closeEmojiPanel();
       const granted = await ensureCameraPermission();
       if (!granted) {
-        Alert.alert(t("messages.title"), t("messages.cameraPermissionDenied"));
+        blypAlert(t("messages.title"), t("messages.cameraPermissionDenied"));
         return;
       }
       const shot = await pickImageFromCamera();
       if (!shot) return;
       setPendingImages([shot]);
     } catch {
-      Alert.alert(t("messages.title"), t("messages.imageSendFailed"));
+      blypAlert(t("messages.title"), t("messages.imageSendFailed"));
     } finally {
       imagePickBusyRef.current = false;
     }
@@ -2220,14 +2249,14 @@ export default function ChatThreadScreenBody() {
     } catch (e) {
       const msg = e instanceof Error ? e.message : "";
       if (msg === "DOCUMENT_SIZE") {
-        Alert.alert(t("messages.title"), t("messages.documentTooLarge"));
+        blypAlert(t("messages.title"), t("messages.documentTooLarge"));
         return;
       }
       if (msg === "DOCUMENT_NATIVE_MISSING") {
-        Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+        blypAlert(t("messages.title"), t("messages.documentSendFailed"));
         return;
       }
-      Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+      blypAlert(t("messages.title"), t("messages.documentSendFailed"));
     }
   };
 
@@ -2275,7 +2304,6 @@ export default function ChatThreadScreenBody() {
       });
       const preview = cap ?? `📄 ${file.name}`;
       bumpConversationPreview(preview, "document", optimistic.createdAt);
-      scrollToLatest(false);
       void (async () => {
         try {
           const api = await import("@/lib/api/client");
@@ -2325,7 +2353,7 @@ export default function ChatThreadScreenBody() {
             return next;
           });
         } catch {
-          Alert.alert(t("messages.title"), t("messages.documentSendFailed"));
+          blypAlert(t("messages.title"), t("messages.documentSendFailed"));
         }
       })();
     },
@@ -2400,7 +2428,12 @@ export default function ChatThreadScreenBody() {
                 conversationId,
                 key,
               );
-              if (uri) rememberVoiceUri(key, uri);
+              if (uri) {
+                rememberVoiceUri(key, uri);
+                void import("@/lib/voice/waveformPeaks").then((m) => {
+                  m.prefetchVoiceWaveform(key, uri);
+                });
+              }
             } catch {
               /* un vocal en échec n’arrête pas les autres */
             }
@@ -2424,7 +2457,7 @@ export default function ChatThreadScreenBody() {
         }
         const uri = await resolveVoiceUri(msg);
         if (!uri) {
-          Alert.alert(t("messages.title"), t("messages.voicePlayFailed"));
+          blypAlert(t("messages.title"), t("messages.voicePlayFailed"));
           return;
         }
         await play.playVoice(uri, {
@@ -2442,7 +2475,7 @@ export default function ChatThreadScreenBody() {
           void resolveVoiceUri(nxt).catch(() => {});
         }
       } catch {
-        Alert.alert(t("messages.title"), t("messages.voicePlayFailed"));
+        blypAlert(t("messages.title"), t("messages.voicePlayFailed"));
       }
     },
     [resolveVoiceUri, t],
@@ -2486,7 +2519,7 @@ export default function ChatThreadScreenBody() {
     const moneyCaption = pendingMoneyCaptionRef.current.trim() || null;
     const bal = user?.balanceFcfa ?? 0;
     if (bal < n) {
-      Alert.alert(
+      blypAlert(
         t("pay.insufficientBalanceTitle"),
         t("messages.insufficientBalance"),
       );
@@ -2554,7 +2587,6 @@ export default function ChatThreadScreenBody() {
       "money",
       createdAt,
     );
-    scrollToLatest(false);
 
     const { storeMoneyOutboxSecrets } = await import(
       "@/lib/messages/moneyOutboxSecrets"
@@ -2624,7 +2656,7 @@ export default function ChatThreadScreenBody() {
         if (!pinInputRef.current?.isFocused()) pinInputRef.current?.focus();
         return;
       }
-      Alert.alert(
+      blypAlert(
         t("messages.sendMoney"),
         e instanceof ApiError && e.status > 0 && e.status < 500 && e.message.trim()
           ? e.message.trim()
@@ -2838,7 +2870,7 @@ export default function ChatThreadScreenBody() {
         setReceiptClaimContext(null);
         await onClaim(id, false);
       } catch {
-        Alert.alert(t("moneyReceipt.claimTitle"), t("common.genericError"));
+        blypAlert(t("moneyReceipt.claimTitle"), t("common.genericError"));
       } finally {
         setReceiptClaimBusy(false);
       }
@@ -2944,7 +2976,7 @@ export default function ChatThreadScreenBody() {
           e instanceof ApiError && e.code === "DELETE_TOO_LATE"
             ? "messages.deleteTooLate"
             : "messages.deleteFailed";
-        Alert.alert(t(msgKey));
+        blypAlert(t(msgKey));
         void pullThread();
       }
     },
@@ -2957,11 +2989,11 @@ export default function ChatThreadScreenBody() {
       .filter((m): m is ChatMessage => Boolean(m))
       .filter(canForwardMessage);
     if (!msgs.length) {
-      Alert.alert(t("messages.forwardNone"));
+      blypAlert(t("messages.forwardNone"));
       return;
     }
     if (isDemoConversationId(conversationId)) {
-      Alert.alert(t("messages.forwardFailed"));
+      blypAlert(t("messages.forwardFailed"));
       return;
     }
     const ordered = messages.filter((m) => msgs.some((x) => x.id === m.id));
@@ -3008,7 +3040,7 @@ export default function ChatThreadScreenBody() {
       });
     }
     buttons.push({ text: t("common.cancel"), style: "cancel" });
-    Alert.alert(title, undefined, buttons);
+    blypAlert(title, undefined, buttons);
   }, [
     selectedMessageIds,
     messages,
@@ -3112,6 +3144,14 @@ export default function ChatThreadScreenBody() {
     () => Object.keys(peerTranslations).join("\u001f"),
     [peerTranslations],
   );
+
+  const peerTypingSnap = useMemo(() => {
+    void typingUiTick;
+    return getTypingSnapshot(conversationId);
+  }, [conversationId, typingUiTick]);
+
+  const peerTypingActive = Boolean(peerTypingSnap);
+
   const listExtraData = useMemo(
     () =>
       [
@@ -3196,10 +3236,6 @@ export default function ChatThreadScreenBody() {
     ],
   );
 
-  const peerTypingActive = Boolean(
-    peerTypingName || getTypingSnapshot(conversationId),
-  );
-
   const threadHeaderStatus = useMemo(() => {
     if (!peerOnBlyp) return null;
     void presenceClock;
@@ -3223,20 +3259,6 @@ export default function ChatThreadScreenBody() {
     peerLastDeliveredAt,
     presenceClock,
   ]);
-
-  const typingFooter = useMemo(() => {
-    if (!peerTypingName) return null;
-    const name = firstNameOf(peerName) || t("messages.someone");
-    return (
-      <View style={[styles.bubbleRow, styles.bubbleRowTheirs]}>
-        <View style={[styles.bubble, styles.bubbleTheirs]}>
-          <Text style={styles.threadTyping}>
-            {t("messages.typing", { name })}
-          </Text>
-        </View>
-      </View>
-    );
-  }, [peerTypingName, peerName, styles, t]);
 
   const closeMoneySheet = useCallback(() => {
     if (fruitMoneySendRef.current) {
@@ -3296,7 +3318,7 @@ export default function ChatThreadScreenBody() {
   const leaveChat = useCallback(() => {
     stopTyping();
     if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)");
+    else router.replace("/(tabs)/pay");
   }, [stopTyping]);
 
   const handleThreadBack = useCallback(() => {
@@ -3520,17 +3542,10 @@ export default function ChatThreadScreenBody() {
             showsVerticalScrollIndicator={false}
             showsHorizontalScrollIndicator={false}
             data={threadListDisplayData}
-            onContentSizeChange={onThreadListContentSizeChange}
             drawDistance={360}
-            maintainVisibleContentPosition={{
-              startRenderingFromBottom: true,
-              ...(pinListOnInsert
-                ? { autoscrollToBottomThreshold: 48 }
-                : {}),
-            }}
+            maintainVisibleContentPosition={THREAD_LIST_MAINTAIN_VISIBLE}
             keyExtractor={(m) => m.id}
             extraData={listExtraData}
-            ListFooterComponent={typingFooter}
             contentContainerStyle={[
               styles.messagesList,
               { flexGrow: 1 },
@@ -3542,8 +3557,18 @@ export default function ChatThreadScreenBody() {
             scrollEventThrottle={32}
             onScroll={onListScroll}
             onStartReached={loadOlderThreadPage}
-            onStartReachedThreshold={0.35}
-            onScrollBeginDrag={() => {
+            onStartReachedThreshold={0.2}
+            onScrollBeginDrag={(e) => {
+              const { contentOffset, layoutMeasurement, contentSize } =
+                e.nativeEvent;
+              const y = contentOffset.y;
+              const atBottom =
+                y + layoutMeasurement.height >=
+                contentSize.height - CHAT_AT_BOTTOM_Y;
+              if (!atBottom) {
+                atLatestRef.current = false;
+                setPinListOnInsert(true);
+              }
               if (!selectionMode) closeReactPicker();
               dismissHighlight();
               revealStickyDate();
@@ -3653,6 +3678,11 @@ export default function ChatThreadScreenBody() {
             </>
           ) : null}
           </View>
+          {peerTypingActive ? (
+            <View style={{ paddingHorizontal: 12, paddingBottom: 4 }}>
+              <TypingDotsBubble colors={colors} styles={styles} />
+            </View>
+          ) : null}
         <View
           style={{
             backgroundColor: colors.background,

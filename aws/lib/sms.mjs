@@ -1,8 +1,11 @@
 /**
- * Envoi SMS (OTP) — fournisseur choisi par variables d’environnement.
- * Détection (dans l’ordre) : Obit SMS, Africa’s Talking, webhook HTTP, Twilio (optionnel).
- * Sans rien en prod → erreur ; en dev → code loggé dans la console.
+ * Envoi SMS (OTP fallback Obit) + OTP WhatsApp via Meta Cloud API.
+ * SMS : Obit, Africa’s Talking, webhook HTTP.
  */
+import {
+  metaWhatsAppConfigured,
+  sendOtpViaMetaWhatsApp,
+} from "./whatsappCloud.mjs";
 
 let warnedMissingAndroidSmsHash = false;
 let warnedMissingAndroidSmsHashProd = false;
@@ -201,64 +204,6 @@ async function sendViaWebhook(toE164, text) {
   return { ok: true };
 }
 
-function twilioConfigured() {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_PHONE_NUMBER;
-  const ms = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  return Boolean(sid && token && (from || ms));
-}
-
-async function sendViaTwilio(toE164, text, fromOverride) {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const fromNumber = fromOverride ?? process.env.TWILIO_PHONE_NUMBER;
-  const messagingServiceSid = fromOverride
-    ? null
-    : process.env.TWILIO_MESSAGING_SERVICE_SID;
-
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`;
-  const auth = Buffer.from(`${sid}:${token}`).toString("base64");
-  const params = new URLSearchParams({ To: toE164, Body: text });
-  if (messagingServiceSid) {
-    params.set("MessagingServiceSid", messagingServiceSid);
-  } else if (fromNumber) {
-    params.set("From", fromNumber);
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${auth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: params.toString(),
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text();
-    console.error("[SMS Twilio]", res.status, errBody);
-    return { ok: false, detail: errBody };
-  }
-  return { ok: true };
-}
-
-function twilioWhatsAppConfigured() {
-  return Boolean(
-    twilioConfigured() && process.env.TWILIO_WHATSAPP_FROM?.trim(),
-  );
-}
-
-async function sendViaTwilioWhatsApp(toE164, text) {
-  const from = process.env.TWILIO_WHATSAPP_FROM.trim();
-  if (!twilioWhatsAppConfigured()) {
-    return { ok: false, reason: "whatsapp_not_configured" };
-  }
-  const to = toE164.startsWith("whatsapp:") ? toE164 : `whatsapp:${toE164}`;
-  const r = await sendViaTwilio(to, text, from);
-  return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
-}
-
 function smsProviderExplicit() {
   const p = String(process.env.SMS_PROVIDER || "")
     .trim()
@@ -267,7 +212,6 @@ function smsProviderExplicit() {
   if (["obitsms", "obit"].includes(p)) return "obitsms";
   if (["africastalking", "at", "africa"].includes(p)) return "africastalking";
   if (["webhook", "http"].includes(p)) return "webhook";
-  if (p === "twilio") return "twilio";
   return null;
 }
 
@@ -275,8 +219,7 @@ function anySmsConfigured() {
   return (
     obitsmsConfigured() ||
     africasTalkingConfigured() ||
-    webhookConfigured() ||
-    twilioConfigured()
+    webhookConfigured()
   );
 }
 
@@ -318,22 +261,11 @@ export function describeSmsSetup() {
       devOtpInLogs: !prod,
     };
   }
-  if (explicit === "twilio") {
-    if (twilioConfigured())
-      return { sendingSms: true, provider: "twilio" };
-    return {
-      sendingSms: false,
-      provider: "twilio",
-      misconfigured: true,
-      devOtpInLogs: !prod,
-    };
-  }
 
   if (obitsmsConfigured()) return { sendingSms: true, provider: "obitsms" };
   if (africasTalkingConfigured())
     return { sendingSms: true, provider: "africastalking" };
   if (webhookConfigured()) return { sendingSms: true, provider: "webhook" };
-  if (twilioConfigured()) return { sendingSms: true, provider: "twilio" };
 
   return {
     sendingSms: false,
@@ -371,12 +303,6 @@ export async function deliverSms(phoneE164, text) {
       const r = await sendViaWebhook(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
-    if (explicit === "twilio") {
-      if (!twilioConfigured())
-        return { ok: false, reason: "sms_not_configured" };
-      const r = await sendViaTwilio(phoneE164, body);
-      return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
-    }
 
     if (obitsmsConfigured()) {
       const r = await sendViaObitsms(phoneE164, body);
@@ -390,10 +316,6 @@ export async function deliverSms(phoneE164, text) {
       const r = await sendViaWebhook(phoneE164, body);
       return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
     }
-    if (twilioConfigured()) {
-      const r = await sendViaTwilio(phoneE164, body);
-      return r.ok ? { ok: true } : { ok: false, reason: "provider_failed" };
-    }
     return { ok: false, reason: "sms_not_configured" };
   };
 
@@ -404,7 +326,7 @@ export async function deliverSms(phoneE164, text) {
   if (result.reason === "sms_not_configured") {
     if (process.env.NODE_ENV === "production") {
       console.error(
-        "[SMS] Production : configure Obit (OBIT_SMS_*), Africa’s Talking, SMS_WEBHOOK_URL ou Twilio — voir server/.env.example",
+        "[SMS] Production : configure Obit (OBIT_SMS_*), Africa’s Talking ou SMS_WEBHOOK_URL — voir server/.env.example",
       );
       return { ok: false, reason: "sms_not_configured" };
     }
@@ -415,28 +337,47 @@ export async function deliverSms(phoneE164, text) {
   return result;
 }
 
-/**
- * @param {string} phoneE164 ex. +237612345678
- * @param {string} code 6 chiffres
- * @returns {Promise<{ ok: boolean, reason?: string }>}
- */
-export async function deliverOtpSms(phoneE164, code) {
-  return deliverSms(phoneE164, otpMessage(code));
+export function isOtpWhatsAppConfigured() {
+  return metaWhatsAppConfigured();
 }
 
 /**
- * Invitation peer sans compte : SMS (Obit / etc.), ou WhatsApp Twilio si SMS indisponible.
- * @param {string} phoneE164
- * @param {string} text
+ * OTP : WhatsApp Meta Cloud ; SMS si OTP_SMS_FALLBACK=1 (Obit / Orange plus tard).
  */
-export async function deliverPeerInvite(phoneE164, text) {
-  const sms = await deliverSms(phoneE164, text);
-  if (sms.ok) return { ok: true, channel: "sms" };
-  if (twilioWhatsAppConfigured()) {
-    const wa = await sendViaTwilioWhatsApp(phoneE164, text);
+export async function deliverOtpSms(phoneE164, code) {
+  if (metaWhatsAppConfigured()) {
+    const wa = await sendOtpViaMetaWhatsApp(phoneE164, code);
     if (wa.ok) return { ok: true, channel: "whatsapp" };
+    console.warn("[OTP WhatsApp Cloud]", wa.reason ?? "provider_failed");
   }
-  return sms;
+
+  const smsFallback =
+    String(process.env.OTP_SMS_FALLBACK ?? "")
+      .trim()
+      .toLowerCase() === "1";
+  if (smsFallback) {
+    const sms = await deliverSms(phoneE164, otpMessage(code));
+    if (sms.ok) return { ok: true, channel: "sms" };
+    return { ok: false, reason: "sms_failed" };
+  }
+
+  if (!metaWhatsAppConfigured()) {
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[OTP] Production : WHATSAPP_CLOUD_TOKEN + WHATSAPP_PHONE_NUMBER_ID + template auth Meta",
+      );
+      return { ok: false, reason: "whatsapp_not_configured" };
+    }
+    console.log(`[OTP dev] ${phoneE164} → ${code} (Meta WhatsApp non configuré)`);
+    return { ok: true, channel: "dev_log" };
+  }
+
+  return { ok: false, reason: "whatsapp_failed" };
+}
+
+/** Invitation peer sans compte : SMS (Obit / etc.). */
+export async function deliverPeerInvite(phoneE164, text) {
+  return deliverSms(phoneE164, text);
 }
 
 export { anySmsConfigured };

@@ -29,16 +29,8 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  InteractionManager,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, FlatList, InteractionManager, Pressable, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export default function NewChatScreen() {
@@ -119,11 +111,11 @@ export default function NewChatScreen() {
       setOpening(false);
       if (res.ok) return;
       if (res.code === "auth" || res.code === "session") {
-        Alert.alert(t("messages.signInRequired"));
+        blypAlert(t("messages.signInRequired"));
       } else if (res.code === "api" && res.message) {
-        Alert.alert(res.message);
+        blypAlert(res.message);
       } else {
-        Alert.alert(t("messages.openFailed"));
+        blypAlert(t("messages.openFailed"));
       }
     },
     [opening, t, token],
@@ -137,7 +129,7 @@ export default function NewChatScreen() {
       return;
     }
     if (picked.reason === "invalid") {
-      Alert.alert(t("messages.contactNotCmMobile"));
+      blypAlert(t("messages.contactNotCmMobile"));
     }
   }, [opening, openPeer, t]);
 

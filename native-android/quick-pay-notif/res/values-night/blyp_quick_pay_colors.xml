@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="blyp_accent">#5DC705</color>
+    <color name="quick_pay_chip_bg">#33FFFFFF</color>
+    <color name="quick_pay_chip_text">#F2FFFFFF</color>
+    <color name="quick_pay_chip_text_selected">#FFFFFF</color>
+</resources>

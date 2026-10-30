@@ -17,6 +17,7 @@ type Props = {
   trips: SoaReportTripListItem[];
   onDismiss: () => void;
   onSelectTrip: (trip: SoaReportTripListItem) => void;
+  onPrewarmTrip?: (trip: SoaReportTripListItem) => void;
 };
 
 export function SoaCarTripListSheet({
@@ -25,6 +26,7 @@ export function SoaCarTripListSheet({
   trips,
   onDismiss,
   onSelectTrip,
+  onPrewarmTrip,
 }: Props) {
   const { t } = useTranslation();
   const { colors } = useTheme();
@@ -81,6 +83,11 @@ export function SoaCarTripListSheet({
                     item={item}
                     title={title}
                     styles={reportStyles}
+                    onPressIn={
+                      onPrewarmTrip
+                        ? () => onPrewarmTrip(item)
+                        : undefined
+                    }
                     onPress={() => onSelectTrip(item)}
                   />
                 );

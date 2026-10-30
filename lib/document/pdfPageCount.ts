@@ -1,3 +1,4 @@
+import { loadPdfLib } from "@/lib/pdf/loadPdfLib";
 import FS from "@/lib/voice/fileSystemLegacy";
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -14,7 +15,7 @@ export async function readPdfPageCount(localUri: string): Promise<number | undef
   const uri = String(localUri ?? "").trim();
   if (!uri) return undefined;
   try {
-    const { PDFDocument } = await import("pdf-lib");
+    const { PDFDocument } = loadPdfLib();
     const b64 = await FS.readAsStringAsync(uri, {
       encoding: FS.EncodingType.Base64,
     });

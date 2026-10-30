@@ -2,7 +2,7 @@
  * File d’attente offline (point 4) — rejoue les ops à la reconnexion.
  * PIN pay : SecureStore uniquement (jamais en clair dans SQLite).
  */
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
@@ -72,15 +72,16 @@ export async function enqueueOfflineOp(
 }
 
 export async function listOfflineOps(): Promise<OfflineOp[]> {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db.getAllAsync<{
-    id: string;
-    type: string;
-    payload: string;
-    createdAt: string;
-    attempts: number;
-  }>(`SELECT * FROM offline_queue ORDER BY createdAt ASC LIMIT 50`);
+  const rows = await runDbRead(async (db) =>
+    db.getAllAsync<{
+      id: string;
+      type: string;
+      payload: string;
+      createdAt: string;
+      attempts: number;
+    }>(`SELECT * FROM offline_queue ORDER BY createdAt ASC LIMIT 50`),
+  );
+  if (!rows) return [];
   return rows.map((r) => ({
     id: r.id,
     type: r.type as OfflineOpType,

@@ -43,9 +43,9 @@ type Styles = {
   quickAmountChipDisabled: StyleProp<ViewStyle>;
   quickAmountChipText: StyleProp<TextStyle>;
   quickAmountChipTextSelected: StyleProp<TextStyle>;
-  topUpSuccessBanner: StyleProp<TextStyle>;
   payBalanceRow: StyleProp<ViewStyle>;
   payBalanceText: StyleProp<TextStyle>;
+  payLineFcfaSuffix: StyleProp<TextStyle>;
   payFeeLine: StyleProp<TextStyle>;
 };
 
@@ -58,8 +58,6 @@ type Props = {
   onPay: (amountFcfa: number) => void;
   /** Montant courant (null si vide / invalide) — pour recharge + sans modal. */
   onAmountFcfaChange?: (amountFcfa: number | null) => void;
-  /** Message vert au-dessus du pad quand la recharge est créditée. */
-  topUpSuccessMessage?: string | null;
   /** Solde affiché juste au-dessus du clavier (null = masqué). */
   balanceFcfa?: number | null;
   /** Contrôle à droite du F, même ligne (switch Recevoir). */
@@ -88,7 +86,6 @@ function PayAmountEntryInner({
   payBusy,
   onPay,
   onAmountFcfaChange,
-  topUpSuccessMessage,
   balanceFcfa,
   quickAmounts,
   amountFooter,
@@ -223,11 +220,12 @@ function PayAmountEntryInner({
             <Text
               style={styles.payFeeLine}
               accessibilityRole="text"
-              accessibilityLabel={t("pay.feeLine", {
+              accessibilityLabel={`${t("pay.feeLine", {
                 amount: formatFcfa(feeFcfa),
-              })}
+              })}F`}
             >
               {t("pay.feeLine", { amount: formatFcfa(feeFcfa) })}
+              <Text style={styles.payLineFcfaSuffix}>F</Text>
             </Text>
           ) : null}
         </View>
@@ -241,25 +239,17 @@ function PayAmountEntryInner({
           { paddingBottom: Math.max(insets.bottom, 8) },
         ]}
       >
-        {topUpSuccessMessage ? (
-          <Text
-            style={styles.topUpSuccessBanner}
-            accessibilityRole="text"
-            accessibilityLiveRegion="polite"
-          >
-            {topUpSuccessMessage}
-          </Text>
-        ) : null}
         {balanceFcfa != null ? (
           <View style={styles.payBalanceRow}>
             <Text
               style={styles.payBalanceText}
               accessibilityRole="text"
-              accessibilityLabel={t("pay.balanceShort", {
+              accessibilityLabel={`${t("pay.balanceShort", {
                 amount: formatFcfa(balanceFcfa),
-              })}
+              })}F`}
             >
               {t("pay.balanceShort", { amount: formatFcfa(balanceFcfa) })}
+              <Text style={styles.payLineFcfaSuffix}>F</Text>
             </Text>
           </View>
         ) : null}

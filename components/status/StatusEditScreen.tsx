@@ -16,16 +16,8 @@ import { useFocusEffect } from "@react-navigation/native";
 import { router, useLocalSearchParams } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 export function StatusEditScreen() {
@@ -81,7 +73,7 @@ export function StatusEditScreen() {
     if (!token || !myId || !post || busy) return;
     const body = String(text ?? "").trim();
     if (!body) {
-      Alert.alert(t("status.editEmptyTextTitle"), t("status.editEmptyTextMessage"));
+      blypAlert(t("status.editEmptyTextTitle"), t("status.editEmptyTextMessage"));
       return;
     }
     const textStyle: StatusTextPostStyle = normalizeStatusTextPostStyle({
@@ -96,7 +88,7 @@ export function StatusEditScreen() {
       });
       router.back();
     } catch {
-      Alert.alert(t("common.genericError"));
+      blypAlert(t("common.genericError"));
     } finally {
       setBusy(false);
     }
@@ -111,7 +103,7 @@ export function StatusEditScreen() {
       });
       router.back();
     } catch {
-      Alert.alert(t("common.genericError"));
+      blypAlert(t("common.genericError"));
     } finally {
       setBusy(false);
     }
@@ -133,7 +125,7 @@ export function StatusEditScreen() {
           fontVariant={fontVariant}
           onClose={() => router.back()}
           onMention={() =>
-            Alert.alert(t("status.comingSoonTitle"), t("status.comingSoonMessage"))
+            blypAlert(t("status.comingSoonTitle"), t("status.comingSoonMessage"))
           }
           onSend={() => void saveText()}
           sendDisabled={!text.trim() || busy}

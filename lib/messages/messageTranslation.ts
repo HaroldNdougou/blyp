@@ -1,6 +1,7 @@
 import type { ChatMessage } from "@/lib/api/types";
+import { parseAmountFcfa } from "@/lib/amountLimits";
 import { resolveTranslateTargetLanguage } from "@/lib/i18n/translateLocale";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { getMessagesCacheOwnerPhone } from "@/lib/messagesCache";
 import { parseJumboEmojiBody } from "@/lib/messages/jumboEmoji";
 import { isReactionSyncBody } from "@/lib/messages/reactionSync";
@@ -8,69 +9,111 @@ import { isChatMessageMine } from "@/lib/messages/messageMine";
 
 const ram = new Map<string, string>();
 
-function cacheKey(messageId: string, targetLang: string): string {
-  return `${messageId}::${targetLang}`;
+function cacheKey(storageKey: string, targetLang: string): string {
+  return `${storageKey}::${targetLang}`;
 }
 
-function kvKey(messageId: string, targetLang: string): string {
-  return `msg_tr:${messageId}:${targetLang}`;
+function kvKey(storageKey: string, targetLang: string): string {
+  return `msg_tr:${storageKey}:${targetLang}`;
+}
+
+function storageKeyFromKvRow(
+  rowKey: string,
+  targetLang: string,
+): string | null {
+  const prefix = "msg_tr:";
+  if (!rowKey.startsWith(prefix)) return null;
+  const tail = rowKey.slice(prefix.length);
+  const langSuffix = `:${targetLang}`;
+  if (!tail.endsWith(langSuffix)) return null;
+  const storageKey = tail.slice(0, -langSuffix.length);
+  return storageKey || null;
+}
+
+/** Clé RAM / SQLite / état UI — légende seule pour les messages money. */
+export function messageTranslationStorageKey(
+  msg: Pick<ChatMessage, "id" | "type">,
+): string {
+  return msg.type === "money" ? `${msg.id}::caption` : msg.id;
+}
+
+/** Montant / pseudo-montant dans body : ne pas traduire ni afficher comme légende. */
+export function isLikelyMoneyAmountCaption(
+  caption: string,
+  amountFcfa: number | undefined,
+): boolean {
+  const c = String(caption ?? "").trim();
+  if (!c) return true;
+  if (/^\s*[\d\s.]+\s*(?:fcfa|cfa|f)\s*$/i.test(c)) return true;
+  const digits = c.replace(/[^\d]/g, "");
+  const parsed = parseAmountFcfa(digits);
+  if (
+    parsed != null &&
+    amountFcfa != null &&
+    parsed === amountFcfa &&
+    digits.length > 0
+  ) {
+    return true;
+  }
+  return false;
 }
 
 export function getCachedMessageTranslation(
-  messageId: string,
+  storageKey: string,
   targetLang: string,
 ): string | undefined {
-  return ram.get(cacheKey(messageId, targetLang));
+  return ram.get(cacheKey(storageKey, targetLang));
 }
 
 function rememberTranslation(
-  messageId: string,
+  storageKey: string,
   targetLang: string,
   translated: string,
   phone: string | null,
 ): void {
   const trimmed = String(translated ?? "").trim();
   if (!trimmed) return;
-  ram.set(cacheKey(messageId, targetLang), trimmed);
+  ram.set(cacheKey(storageKey, targetLang), trimmed);
   if (!phone) return;
   void runDbWrite((db) =>
     db.runAsync(
       `INSERT OR REPLACE INTO kv_cache (phone, key, json) VALUES (?, ?, ?)`,
       phone,
-      kvKey(messageId, targetLang),
+      kvKey(storageKey, targetLang),
       JSON.stringify({ text: trimmed }),
     ),
-  );
+  ).catch(() => {});
 }
 
 export async function warmMessageTranslationsFromSqlite(
   _token: string,
-  messageIds: string[],
+  messages: ChatMessage[],
   targetLang: string,
 ): Promise<void> {
   const phone = getMessagesCacheOwnerPhone();
-  if (!phone || messageIds.length === 0) return;
-  const db = await getDb();
-  const keys = messageIds.map((id) => kvKey(id, targetLang));
-  const placeholders = keys.map(() => "?").join(",");
-  const rows = await db.getAllAsync<{ key: string; json: string }>(
-    `SELECT key, json FROM kv_cache WHERE phone = ? AND key IN (${placeholders})`,
-    phone,
-    ...keys,
-  );
-  for (const row of rows) {
-    const parts = row.key.split(":");
-    if (parts[0] !== "msg_tr" || parts.length < 3) continue;
-    const id = parts[1];
-    if (!id) continue;
-    try {
-      const parsed = JSON.parse(row.json) as { text?: string };
-      const text = String(parsed.text ?? "").trim();
-      if (text) ram.set(cacheKey(id, targetLang), text);
-    } catch {
-      /* ignore */
+  if (!phone || messages.length === 0) return;
+  const storageKeys = messages.map((m) => messageTranslationStorageKey(m));
+  await runDbRead(async (db) => {
+    const keys = storageKeys.map((sk) => kvKey(sk, targetLang));
+    const placeholders = keys.map(() => "?").join(",");
+    const rows = await db.getAllAsync<{ key: string; json: string }>(
+      `SELECT key, json FROM kv_cache WHERE phone = ? AND key IN (${placeholders})`,
+      phone,
+      ...keys,
+    );
+    for (const row of rows) {
+      const storageKey = storageKeyFromKvRow(row.key, targetLang);
+      if (!storageKey) continue;
+      try {
+        const parsed = JSON.parse(row.json) as { text?: string };
+        const text = String(parsed.text ?? "").trim();
+        if (text) ram.set(cacheKey(storageKey, targetLang), text);
+      } catch {
+        /* ignore */
+      }
     }
-  }
+    // Anciennes entrées (money traduit sur msg.id) — ignorer volontairement.
+  });
 }
 
 export function translatablePeerText(
@@ -86,11 +129,18 @@ export function translatablePeerText(
   }
   if (
     msg.type === "image" ||
-    msg.type === "document" ||
-    msg.type === "money"
+    msg.type === "document"
   ) {
     const c = String(msg.body ?? "").trim();
     return c || null;
+  }
+  if (msg.type === "money") {
+    const c = String(msg.body ?? "").trim();
+    if (!c) return null;
+    if (isLikelyMoneyAmountCaption(c, msg.moneyTransfer?.amountFcfa)) {
+      return null;
+    }
+    return c;
   }
   return null;
 }
@@ -161,18 +211,19 @@ export async function ensureThreadTranslations(
 ): Promise<void> {
   const targetLang = resolveTranslateTargetLanguage();
   const phone = getMessagesCacheOwnerPhone();
-  const pending: { id: string; text: string }[] = [];
+  const pending: { apiId: string; storageKey: string; text: string }[] = [];
   const patch: Record<string, string> = {};
 
   for (const msg of messages) {
     const text = translatablePeerText(msg, myUserId);
     if (!text) continue;
-    const cached = getCachedMessageTranslation(msg.id, targetLang);
+    const storageKey = messageTranslationStorageKey(msg);
+    const cached = getCachedMessageTranslation(storageKey, targetLang);
     if (cached) {
-      if (!sameDisplayText(text, cached)) patch[msg.id] = cached;
+      if (!sameDisplayText(text, cached)) patch[storageKey] = cached;
       continue;
     }
-    pending.push({ id: msg.id, text });
+    pending.push({ apiId: msg.id, storageKey, text });
   }
 
   if (Object.keys(patch).length > 0) onPatch(patch);
@@ -182,21 +233,24 @@ export async function ensureThreadTranslations(
   const { translateChatMessages } = await import("@/lib/api/client");
   for (let i = 0; i < pending.length; i += BATCH_SIZE) {
     const slice = pending.slice(i, i + BATCH_SIZE);
+    const apiItems = slice.map((p) => ({ id: p.apiId, text: p.text }));
     try {
       const res = await translateChatMessages(
         token,
         conversationId,
         targetLang,
-        slice,
+        apiItems,
       );
       const batchPatch: Record<string, string> = {};
       for (const row of res.items) {
-        const id = String(row.id ?? "").trim();
+        const apiId = String(row.id ?? "").trim();
         const translated = String(row.translatedText ?? "").trim();
-        const original = pending.find((p) => p.id === id)?.text ?? "";
+        const pendingRow = pending.find((p) => p.apiId === apiId);
+        const original = pendingRow?.text ?? "";
+        const storageKey = pendingRow?.storageKey ?? apiId;
         const sourceLanguage =
           (row as { sourceLanguage?: string | null }).sourceLanguage ?? null;
-        if (!id || !translated) continue;
+        if (!apiId || !translated) continue;
         if (
           !shouldApplyTranslation(
             original,
@@ -207,8 +261,8 @@ export async function ensureThreadTranslations(
         ) {
           continue;
         }
-        rememberTranslation(id, targetLang, translated, phone);
-        batchPatch[id] = translated;
+        rememberTranslation(storageKey, targetLang, translated, phone);
+        batchPatch[storageKey] = translated;
       }
       if (Object.keys(batchPatch).length > 0) onPatch(batchPatch);
     } catch (err) {

@@ -1,5 +1,8 @@
 import type { StatusPost } from "@/lib/api/types";
-import { setForwardDraft } from "@/lib/messages/forwardDraft";
+import {
+  FORWARD_SOURCE_STATUS,
+  setForwardDraft,
+} from "@/lib/messages/forwardDraft";
 import { router } from "expo-router";
 import { Share } from "react-native";
 import i18n from "@/lib/i18n";
@@ -19,11 +22,11 @@ export function forwardStatusPost(post: StatusPost, senderUserId: string): boole
   if (!body) return false;
 
   setForwardDraft({
-    sourceConversationId: "__status__",
+    sourceConversationId: FORWARD_SOURCE_STATUS,
     messages: [
       {
         id: `fwd-status-${post.id}`,
-        conversationId: "__status__",
+        conversationId: FORWARD_SOURCE_STATUS,
         senderUserId,
         type: "text",
         body,

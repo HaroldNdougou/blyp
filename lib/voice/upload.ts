@@ -1,6 +1,10 @@
 /** PUT signé S3 — FileSystem, hors chemin Pay. */
 
 import { getVoiceFileSystem } from "@/lib/voice/fileSystem";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 export async function uploadVoiceFile(
   uploadUrl: string,
@@ -31,7 +35,11 @@ export async function cacheVoiceFile(
   const safe = key.replace(/[^a-zA-Z0-9._-]+/g, "_");
   const dest = `${dir}${safe}`;
   const existing = await FS.getInfoAsync(dest);
-  if (existing.exists) return dest;
+  if (existing.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
   const dl = await FS.downloadAsync(remoteUrl, dest);
+  await noteMediaCacheWrite(dl.uri, "voice");
   return dl.uri;
 }

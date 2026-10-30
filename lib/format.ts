@@ -58,6 +58,26 @@ export function formatCameroonPhoneDisplay(digits: string): string {
   return parts.join(" ");
 }
 
+/** Saisie type « 698 25 67 89 » — 3 chiffres puis paires de 2. */
+export function formatCameroonPhoneSpacedPairs(digits: string): string {
+  const d = normalizeCameroonPhoneDigits(digits);
+  if (d.length === 0) return "";
+  const parts: string[] = [d.slice(0, Math.min(3, d.length))];
+  for (let i = 3; i < d.length; i += 2) {
+    parts.push(d.slice(i, i + 2));
+  }
+  return parts.join(" ");
+}
+
+/** Longueur max du champ formaté (9 chiffres + 3 espaces : 3+2+2+2). */
+export function cameroonPhoneSpacedPairsMaxLength(digitCount = 9): number {
+  if (digitCount <= 0) return 0;
+  if (digitCount <= 3) return digitCount;
+  const tailDigits = digitCount - 3;
+  const tailGroups = Math.ceil(tailDigits / 2);
+  return digitCount + tailGroups;
+}
+
 export { formatFcfa } from "./formatFcfa";
 
 import i18n, { getNumberLocale, type AppLanguage } from "@/lib/i18n";

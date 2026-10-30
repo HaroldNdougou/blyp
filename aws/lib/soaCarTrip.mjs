@@ -156,7 +156,19 @@ async function listArchivedTrips(commerceId) {
   return (res.Items ?? []).map(tripRowFromArchive);
 }
 
-const DEMO_SEED_MARKER_SK = "SOA_TRIP#DEMO_SEED_V2";
+const DEMO_SEED_MARKER_SK = "SOA_TRIP#DEMO_SEED_V3";
+
+function dedupeSoaReportTripsByTripId(trips) {
+  const map = new Map();
+  for (const trip of trips) {
+    const id = trip.isActive ? "active" : String(trip.tripId ?? "").trim();
+    if (!id) continue;
+    const score = (t) => (t.seats?.length ?? 0) * 1_000_000 + (t.totalFcfa ?? 0);
+    const prev = map.get(id);
+    if (!prev || score(trip) > score(prev)) map.set(id, trip);
+  }
+  return [...map.values()];
+}
 
 async function listArchivedTripItems(commerceId) {
   const res = await doc.send(
@@ -201,13 +213,12 @@ async function ensureDevDemoSoaArchives(commerceId) {
 
   const rows = buildDevDemoArchiveRows();
   for (const row of rows) {
-    const endedMs = Date.parse(row.endedAt);
     await doc.send(
       new PutCommand({
         TableName: getTableName(),
         Item: {
           PK: commercePk(commerceId),
-          SK: `${TRIP_ARCH_PREFIX}${String(endedMs).padStart(13, "0")}#${row.tripId}`,
+          SK: `${TRIP_ARCH_PREFIX}DEMO#${row.tripId}`,
           entityType: "SOA_CAR_TRIP_ARCH",
           commerceId,
           tripId: row.tripId,
@@ -323,17 +334,18 @@ export async function getSoaCarDayReport(userId, commerceId, dayKeyRaw) {
       });
     }
   }
-  trips.sort(
+  const uniqueTrips = dedupeSoaReportTripsByTripId(trips);
+  uniqueTrips.sort(
     (a, b) =>
       Date.parse(b.tripStartedAt || b.endedAt || 0) -
       Date.parse(a.tripStartedAt || a.endedAt || 0),
   );
-  const totalFcfa = trips.reduce((sum, t) => sum + (t.totalFcfa || 0), 0);
+  const totalFcfa = uniqueTrips.reduce((sum, t) => sum + (t.totalFcfa || 0), 0);
   return {
     dayKey,
     totalFcfa,
-    tripCount: trips.length,
-    trips,
+    tripCount: uniqueTrips.length,
+    trips: uniqueTrips,
   };
 }
 

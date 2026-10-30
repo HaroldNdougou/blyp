@@ -1,4 +1,8 @@
 import FS from "@/lib/voice/fileSystemLegacy";
+import {
+  noteMediaCacheHit,
+  noteMediaCacheWrite,
+} from "@/lib/media/lruDiskCache";
 
 const DIR = `${FS.cacheDirectory}blyp-doc/`;
 
@@ -9,7 +13,11 @@ function safeKey(key: string): string {
 export async function peekDocumentCache(key: string): Promise<string | null> {
   const dest = `${DIR}${safeKey(key)}`;
   const info = await FS.getInfoAsync(dest);
-  return info.exists ? dest : null;
+  if (info.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
+  return null;
 }
 
 /** Télécharge un PDF S3 signé dans le cache local (lecture + vignette). */
@@ -23,7 +31,11 @@ export async function cacheDocumentFile(
   }
   const dest = `${DIR}${safeKey(key)}`;
   const existing = await FS.getInfoAsync(dest);
-  if (existing.exists) return dest;
+  if (existing.exists) {
+    noteMediaCacheHit(dest);
+    return dest;
+  }
   const dl = await FS.downloadAsync(remoteUrl, dest);
+  await noteMediaCacheWrite(dl.uri, "doc");
   return dl.uri;
 }

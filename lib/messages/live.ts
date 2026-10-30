@@ -65,8 +65,9 @@ const typingListeners = new Set<TypingListener>();
 const presenceListeners = new Set<PresenceListener>();
 const moneyUpdatedListeners = new Set<MoneyUpdatedListener>();
 const typingByConv = new Map<string, { fromName: string; until: number }>();
+const typingExpiryTimerByConv = new Map<string, ReturnType<typeof setTimeout>>();
 const presenceUntilByConv = new Map<string, number>();
-const TYPING_TTL_MS = 6000;
+const TYPING_TTL_MS = 3500;
 let activeConversationId: string | null = null;
 let nativeListening = false;
 
@@ -321,11 +322,33 @@ export function getTypingSnapshot(
   return { fromName: cur.fromName };
 }
 
+function parseTypingOnFlag(raw: unknown): boolean {
+  return !(
+    raw === false ||
+    raw === 0 ||
+    raw === "0" ||
+    raw === "false"
+  );
+}
+
+function clearTypingExpiryTimer(conversationId: string): void {
+  const t = typingExpiryTimerByConv.get(conversationId);
+  if (t) {
+    clearTimeout(t);
+    typingExpiryTimerByConv.delete(conversationId);
+  }
+}
+
+export function isConversationPeerTyping(conversationId: string): boolean {
+  return getTypingSnapshot(conversationId) != null;
+}
+
 export function notifyConversationTyping(raw: TypingPatch): void {
   const conversationId = String(raw.conversationId ?? "").trim();
   if (!conversationId) return;
   const fromName = String(raw.fromName ?? "").trim();
-  const on = raw.on !== false;
+  const on = parseTypingOnFlag(raw.on);
+  clearTypingExpiryTimer(conversationId);
   if (!on) {
     typingByConv.delete(conversationId);
   } else {
@@ -333,7 +356,8 @@ export function notifyConversationTyping(raw: TypingPatch): void {
       fromName,
       until: Date.now() + TYPING_TTL_MS,
     });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
+      typingExpiryTimerByConv.delete(conversationId);
       const cur = typingByConv.get(conversationId);
       if (cur && cur.until <= Date.now()) {
         typingByConv.delete(conversationId);
@@ -342,6 +366,7 @@ export function notifyConversationTyping(raw: TypingPatch): void {
         }
       }
     }, TYPING_TTL_MS + 40);
+    typingExpiryTimerByConv.set(conversationId, timer);
   }
   for (const cb of typingListeners) {
     cb({ conversationId, fromName, on });

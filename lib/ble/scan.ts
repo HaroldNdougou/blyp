@@ -1,11 +1,15 @@
 import {
   BLYP_BLE_SCAN_CALLBACK_ALL_MATCHES,
   BLYP_BLE_SCAN_MODE_LOW_LATENCY,
+  BLYP_BLE_SCAN_KICK_MS,
   BLYP_PEER_MIN_RSSI,
   BLYP_PEER_RSSI_EMIT_DELTA_DB,
   BLYP_PEER_RSSI_HYSTERESIS_DB,
-  BLYP_PEER_STALE_MS,
+  BLYP_PEER_STALE_MS_FAR,
+  BLYP_PEER_STALE_MS_NEAR,
+  BLYP_PEER_STALE_RSSI_SPLIT,
   BLYP_PEER_STALE_TICK_MS,
+  BLYP_PEER_UI_HOLD_MS,
 } from "@/lib/ble/constants";
 import { base64ToBytes, bytesToHex } from "@/lib/ble/base64";
 import { isBlePlxNativeAvailable } from "@/lib/ble/nativeAvailable";
@@ -18,6 +22,7 @@ import {
   subscribeBleConsent,
 } from "@/lib/ble/consent";
 import { isPayScanFocused } from "@/lib/ble/payScanGate";
+import { isQuickPayBleScanActive } from "@/lib/pay/quickPayBleScanGate";
 import { withTimeout } from "@/lib/ble/timeout";
 import { prepareBleRadio } from "@/lib/ble/prepareRadio";
 import { isBleBroadcasting } from "@/lib/ble/radioMode";
@@ -40,12 +45,23 @@ const peerListeners = new Set<PeerListener>();
 const statusListeners = new Set<StatusListener>();
 let lastStatus: BleScanStatus = "idle";
 let lastScanStartAt = 0;
+let lastValidPeer: BleTaxiPeer | null = null;
+let lastValidPeerAt = 0;
 
 const selector = createBlePeerSelector({
-  staleMs: BLYP_PEER_STALE_MS,
+  staleMsNear: BLYP_PEER_STALE_MS_NEAR,
+  staleMsFar: BLYP_PEER_STALE_MS_FAR,
+  staleRssiSplit: BLYP_PEER_STALE_RSSI_SPLIT,
   minRssi: BLYP_PEER_MIN_RSSI,
   hysteresisDb: BLYP_PEER_RSSI_HYSTERESIS_DB,
 });
+
+const SCAN_OPTIONS = {
+  allowDuplicates: true,
+  legacyScan: true,
+  scanMode: BLYP_BLE_SCAN_MODE_LOW_LATENCY,
+  callbackType: BLYP_BLE_SCAN_CALLBACK_ALL_MATCHES,
+} as const;
 
 function emitStatus(status: BleScanStatus) {
   lastStatus = status;
@@ -69,7 +85,7 @@ function watchBleAdapter(
     }
     if (s !== "PoweredOn") return;
     if (isBleBroadcasting() || isBleAutoPromptDeclined()) return;
-    if (!isPayScanFocused()) return;
+    if (!isPayScanFocused() && !isQuickPayBleScanActive()) return;
     if (lastStatus !== "powered_off") return;
     void startTaxiScan();
   }, false);
@@ -122,8 +138,19 @@ function publishSelection(next: BleTaxiPeer | null) {
   emitPeer(next);
 }
 
+function applyUiHold(next: BleTaxiPeer | null): BleTaxiPeer | null {
+  if (next != null) return next;
+  if (!scanning || !lastValidPeer) return null;
+  const age = Date.now() - lastValidPeerAt;
+  if (age > BLYP_PEER_UI_HOLD_MS) {
+    lastValidPeer = null;
+    return null;
+  }
+  return { ...lastValidPeer };
+}
+
 function sweepStalePeer() {
-  publishSelection(selector.tick());
+  publishSelection(applyUiHold(selector.tick()));
 }
 
 async function getManager(): Promise<import("react-native-ble-plx").BleManager | null> {
@@ -222,9 +249,19 @@ function onDevice(error: BleError | null, device: Device | null) {
   });
   if (!parsed) return;
 
-  publishSelection(
-    selector.noteSighting({ ...parsed, lastSeenAt: Date.now() }),
-  );
+  const now = Date.now();
+  const sighting: BleTaxiPeer = { ...parsed, lastSeenAt: now };
+  lastValidPeerAt = now;
+  const selected = selector.noteSighting(sighting);
+  if (selected) {
+    lastValidPeer = selected;
+  } else if (
+    !lastValidPeer ||
+    lastValidPeer.accountId === sighting.accountId
+  ) {
+    lastValidPeer = sighting;
+  }
+  publishSelection(applyUiHold(selected));
 }
 
 export function subscribeBleTaxiPeer(listener: PeerListener): () => void {
@@ -271,13 +308,15 @@ function haltScanEngine() {
     }
   }
   selector.clear();
+  lastValidPeer = null;
+  lastValidPeerAt = 0;
   emitPeer(null);
 }
 
 export async function startTaxiScan(opts?: {
   forcePrompt?: boolean;
 }): Promise<BleScanStatus> {
-  if (!opts?.forcePrompt && !isPayScanFocused()) {
+  if (!opts?.forcePrompt && !isPayScanFocused() && !isQuickPayBleScanActive()) {
     return lastStatus;
   }
   if (isBleBroadcasting()) {
@@ -339,6 +378,8 @@ export async function startTaxiScan(opts?: {
   }
 
   selector.clear();
+  lastValidPeer = null;
+  lastValidPeerAt = 0;
   emitPeer(null);
   scanning = true;
   lastScanStartAt = Date.now();
@@ -347,16 +388,7 @@ export async function startTaxiScan(opts?: {
     hexLogged.clear();
     console.log("[ble] scan START (nearest RSSI)");
   }
-  mgr.startDeviceScan(
-    null,
-    {
-      allowDuplicates: true,
-      legacyScan: true,
-      scanMode: BLYP_BLE_SCAN_MODE_LOW_LATENCY,
-      callbackType: BLYP_BLE_SCAN_CALLBACK_ALL_MATCHES,
-    },
-    onDevice,
-  );
+  mgr.startDeviceScan(null, SCAN_OPTIONS, onDevice);
 
   if (!staleTimer) {
     staleTimer = setInterval(sweepStalePeer, BLYP_PEER_STALE_TICK_MS);
@@ -395,7 +427,32 @@ export async function refreshTaxiScan(opts?: {
   return startTaxiScan({ forcePrompt: Boolean(opts?.forcePrompt) });
 }
 
+/**
+ * MIUI / OEM : le scan peut se figer sans erreur — relance sans perdre les pairs en mémoire.
+ */
+export function kickTaxiScanIfActive(): void {
+  if (!scanning || !manager) return;
+  try {
+    manager.stopDeviceScan();
+  } catch {
+    /* ignore */
+  }
+  try {
+    manager.startDeviceScan(null, SCAN_OPTIONS, onDevice);
+    lastScanStartAt = Date.now();
+    if (__DEV__) console.log("[ble] scan KICK (keep peers)");
+  } catch (e) {
+    if (__DEV__) {
+      console.warn(
+        "[ble] scan kick failed",
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+}
+
 export async function stopTaxiScan(): Promise<void> {
+  if (isQuickPayBleScanActive() || isPayScanFocused()) return;
   haltScanEngine();
   if (
     lastStatus === "denied" ||

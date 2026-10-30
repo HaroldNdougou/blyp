@@ -40,7 +40,7 @@ export function ChatThreadShellFallback({
           style={styles.headerBtn}
           onPress={() => {
             if (router.canGoBack()) router.back();
-            else router.replace("/(tabs)");
+            else router.replace("/(tabs)/pay");
           }}
           accessibilityLabel={t("common.back")}
         >

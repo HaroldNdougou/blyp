@@ -10,6 +10,7 @@ import {
   androidOtpSmsHashHealthSnapshot,
   deliverOtpSms,
   describeSmsSetup,
+  isOtpWhatsAppConfigured,
 } from "./sms.js";
 import { hashTransactionPin, verifyTransactionPin } from "./pin.js";
 import { makeAccountId, resolveAccountId } from "./accountId.js";
@@ -64,6 +65,10 @@ app.post(
 );
 app.use(express.json());
 
+function generateOtpCode() {
+  return String(crypto.randomInt(100_000, 1_000_000));
+}
+
 function hashOtp(phone, code) {
   return crypto
     .createHash("sha256")
@@ -105,8 +110,8 @@ function trimStr(s) {
 }
 
 function getOnboardingStep(u) {
-  if (!u?.transactionPinHash) return "pin";
   if (!trimStr(u.firstName) || !trimStr(u.lastName)) return "profile";
+  if (!u?.transactionPinHash) return "pin";
   return null;
 }
 
@@ -160,9 +165,10 @@ app.post("/auth/request-otp", async (req, res) => {
       });
     }
 
-    /** TEMP — Obit/Orange : OTP fixe 1234. Retirer dès SMS OK. */
     const TEMP_DEV_OTP_CODE = "1234";
-    const code = TEMP_DEV_OTP_CODE;
+    const code = isOtpWhatsAppConfigured()
+      ? generateOtpCode()
+      : TEMP_DEV_OTP_CODE;
     const codeHash = hashOtp(phone, code);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await prisma.otpChallenge.deleteMany({ where: { phone } });
@@ -177,8 +183,9 @@ app.post("/auth/request-otp", async (req, res) => {
     void deliverOtpSms(phone, code).then((sent) => {
       if (!sent.ok) {
         console.warn(
-          "[auth/request-otp] SMS échoué — TEMP OTP 1234 actif, challenge conservé",
+          "[auth/request-otp] OTP échoué — challenge conservé",
           sent.reason,
+          !isOtpWhatsAppConfigured() ? `(secours ${TEMP_DEV_OTP_CODE})` : "",
         );
       }
     });
@@ -320,23 +327,23 @@ app.post("/auth/onboarding/transaction-pin", authMiddleware, async (req, res) =>
   }
 });
 
+function isAllowedProfileNamePart(value) {
+  const t = trimStr(value);
+  if (t.length < 1 || t.length > 80) return false;
+  return !/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/.test(t);
+}
+
 app.post("/auth/onboarding/profile", authMiddleware, async (req, res) => {
   try {
     const firstName = trimStr(req.body?.firstName);
     const lastName = trimStr(req.body?.lastName);
-    if (firstName.length < 2 || firstName.length > 80) {
+    if (!isAllowedProfileNamePart(firstName)) {
       return res
         .status(400)
-        .json({ error: "Prénom invalide (2 à 80 caractères)" });
+        .json({ error: "Prénom invalide (1 à 80 caractères)" });
     }
-    if (lastName.length < 2 || lastName.length > 80) {
-      return res.status(400).json({ error: "Nom invalide (2 à 80 caractères)" });
-    }
-    const nameRe = /^[a-zA-ZÀ-ÿ\s'-]+$/;
-    if (!nameRe.test(firstName) || !nameRe.test(lastName)) {
-      return res.status(400).json({
-        error: "Prénom ou nom : lettres, espaces, tirets et apostrophes uniquement",
-      });
+    if (!isAllowedProfileNamePart(lastName)) {
+      return res.status(400).json({ error: "Nom invalide (1 à 80 caractères)" });
     }
     const row = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!row?.transactionPinHash) {

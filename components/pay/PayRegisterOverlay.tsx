@@ -1,4 +1,6 @@
+import { RegisterCancelConfirmModal } from "@/components/auth/RegisterCancelConfirmModal";
 import { AndroidOtpSmsAutofill } from "@/components/AndroidOtpSmsAutofill";
+import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
 import { createPayRegisterStyles } from "@/components/pay/payRegisterStyles";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,33 +10,30 @@ import {
   fetchHealth,
   setOnboardingProfile,
   setOnboardingTransactionPin,
+  getMe,
 } from "@/lib/api/client";
 import { USE_MOCK_API } from "@/lib/config";
 import {
   formatCameroonPhoneDisplay,
+  formatCameroonPhoneSpacedPairs,
+  cameroonPhoneSpacedPairsMaxLength,
   inferCameroonMobileMoneyBrand,
   normalizeCameroonPhoneDigits,
 } from "@/lib/format";
+import {
+  formatRegistrationFullName,
+  parseRegistrationFullName,
+} from "@/lib/profile/parseRegistrationFullName";
+import {
+  ensureImageLibraryPermission,
+  pickImagesFromLibrary,
+  warmImageLibraryPermission,
+} from "@/lib/image/pickFromLibrary";
 import { Ionicons } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  Image,
-  InteractionManager,
-  Keyboard,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  useWindowDimensions,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, Animated, BackHandler, Dimensions, Image, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, useWindowDimensions, View } from "react-native";
 import { SafeAreaView as SafeModalArea } from "react-native-safe-area-context";
 
 /** Part de la hauteur d’écran pour la feuille (depuis le bas), aligné sur `app/deposit.tsx`. */
@@ -45,48 +44,59 @@ const OTP_RESEND_COOLDOWN_SEC = 60;
 /** Limite d’envois par ouverture du modal d’inscription. */
 const MAX_OTP_SENDS_PER_SESSION = 8;
 
-/** TEMP : 4 chiffres (OTP de secours 1234) — remettre à 6 quand Obit/Orange OK. */
+/** 4 chiffres tant que Meta WhatsApp off (1234) ; passer à 6 quand WHATSAPP_* est configuré. */
 const OTP_LEN = 4;
 const ONBOARDING_PIN_LEN = 4;
 
 const REG_STEPS = [
   "phone",
   "otp",
+  "profileName",
+  "profilePhoto",
   "pin",
   "pinConfirm",
-  "profile",
 ] as const;
 type RegStep = (typeof REG_STEPS)[number];
 
 export default function PayRegisterOverlay({
   onComplete,
+  presentation = "sheet",
 }: {
   onComplete: () => void;
+  presentation?: "sheet" | "fullScreen";
 }) {
+  const isFullScreen = presentation === "fullScreen";
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createPayRegisterStyles(colors), [colors]);
-  const { user, token, requestOtp, verifyAndSignIn, refreshUser } = useAuth();
+  const { user, token, requestOtp, verifyAndSignIn, refreshUser, cancelRegistration } =
+    useAuth();
   const [welcomePhone, setWelcomePhone] = useState("");
   const [welcomeOtp, setWelcomeOtp] = useState("");
   const [welcomeStep, setWelcomeStep] = useState<RegStep>("phone");
   const [onboardingPin, setOnboardingPin] = useState("");
   const [onboardingPinConfirm, setOnboardingPinConfirm] = useState("");
-  const [onboardingFirstName, setOnboardingFirstName] = useState("");
-  const [onboardingLastName, setOnboardingLastName] = useState("");
+  const [onboardingFullName, setOnboardingFullName] = useState("");
+  const [onboardingAvatarUri, setOnboardingAvatarUri] = useState<string | null>(
+    null,
+  );
+  const [onboardingAvatarPickerOpen, setOnboardingAvatarPickerOpen] =
+    useState(false);
+  const [authAvatarUploading, setAuthAvatarUploading] = useState(false);
   const [authOtpSending, setAuthOtpSending] = useState(false);
   const [authResendSending, setAuthResendSending] = useState(false);
   const [authVerifySending, setAuthVerifySending] = useState(false);
   const [authPinSaving, setAuthPinSaving] = useState(false);
   const [authProfileSaving, setAuthProfileSaving] = useState(false);
+  const [cancelRegModalVisible, setCancelRegModalVisible] = useState(false);
+  const [cancelRegBusy, setCancelRegBusy] = useState(false);
   const [otpResendCooldown, setOtpResendCooldown] = useState(0);
   const [otpSendCount, setOtpSendCount] = useState(0);
   const regPhoneInputRef = useRef<TextInput>(null);
   const regOtpInputRef = useRef<TextInput>(null);
   const regPinInputRef = useRef<TextInput>(null);
   const regPinConfirmInputRef = useRef<TextInput>(null);
-  const regFirstNameInputRef = useRef<TextInput>(null);
-  const regLastNameInputRef = useRef<TextInput>(null);
+  const regFullNameInputRef = useRef<TextInput>(null);
   const regFocusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const regFocusGenRef = useRef(0);
   /** Remount phone field → autoFocus fiable (MIUI / Modal Android). */
@@ -102,12 +112,25 @@ export default function PayRegisterOverlay({
   const pinConfirmAutoSubmittedRef = useRef<string | null>(null);
   const pinConfirmVerifyInFlightRef = useRef(false);
   const railwayOtpHashAlertShownRef = useRef(false);
+  /** Évite de réécraser prénom/nom locaux à chaque refresh `user`. */
+  const onboardingHydratedKeyRef = useRef<string | null>(null);
   const regSlideX = useRef(new Animated.Value(0)).current;
   const regScrollRef = useRef<ScrollView>(null);
   const [regSlideWidth, setRegSlideWidth] = useState(0);
   /** RN Modal Android n’applique pas adjustResize → on soulève la feuille. */
   const [keyboardLift, setKeyboardLift] = useState(0);
+  /** Plein écran welcome : hauteur figée pour que le clavier (resize Android) ne recalcule pas le centre. */
+  const fullScreenLayoutHeightRef = useRef(0);
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  if (isFullScreen && fullScreenLayoutHeightRef.current === 0 && windowHeight > 0) {
+    fullScreenLayoutHeightRef.current = Math.max(
+      windowHeight,
+      Dimensions.get("window").height,
+    );
+  }
+  const fullScreenScrollMinHeight = isFullScreen
+    ? fullScreenLayoutHeightRef.current || windowHeight
+    : 0;
   const regSlidePanelW =
     regSlideWidth > 0 ? regSlideWidth : Math.max(280, windowWidth - 72);
   const regSheetHeight = windowHeight * REG_SHEET_HEIGHT_RATIO;
@@ -120,6 +143,7 @@ export default function PayRegisterOverlay({
   }, []);
 
   useEffect(() => {
+    if (isFullScreen) return;
     const showEvt =
       Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow";
     const hideEvt =
@@ -134,18 +158,13 @@ export default function PayRegisterOverlay({
       onShow.remove();
       onHide.remove();
     };
-  }, [scrollRegSheetToFooter]);
+  }, [isFullScreen, scrollRegSheetToFooter]);
 
   const phoneWalletBrand = inferCameroonMobileMoneyBrand(welcomePhone);
 
   useEffect(() => {
-    if (user?.needsOnboarding) {
-      setWelcomeStep(user.onboardingStep === "profile" ? "profile" : "pin");
-      const nine = user.phone.replace(/\D/g, "").slice(-9);
-      setWelcomePhone(nine);
-      setOnboardingFirstName(user.firstName?.trim() ?? "");
-      setOnboardingLastName(user.lastName?.trim() ?? "");
-    } else {
+    if (!user?.needsOnboarding) {
+      onboardingHydratedKeyRef.current = null;
       setWelcomeStep("phone");
       setWelcomeOtp("");
       setWelcomePhone("");
@@ -153,10 +172,99 @@ export default function PayRegisterOverlay({
       setOtpSendCount(0);
       setOnboardingPin("");
       setOnboardingPinConfirm("");
-      setOnboardingFirstName("");
-      setOnboardingLastName("");
+      setOnboardingFullName("");
+      setOnboardingAvatarUri(null);
+      return;
+    }
+
+    const hydrateKey = [
+      user.personalAccountId ?? user.id ?? "",
+      user.phone,
+      user.onboardingStep ?? "",
+    ].join("|");
+    if (onboardingHydratedKeyRef.current === hydrateKey) return;
+    onboardingHydratedKeyRef.current = hydrateKey;
+
+    const nine = user.phone.replace(/\D/g, "").slice(-9);
+    setWelcomePhone(nine);
+    setOnboardingFullName((prev) => {
+      const fromServer = formatRegistrationFullName(
+        user.firstName,
+        user.lastName,
+      );
+      return fromServer.length > 0 ? fromServer : prev;
+    });
+
+    if (user.onboardingStep === "profile") {
+      const fn = user.firstName?.trim() ?? "";
+      const ln = user.lastName?.trim() ?? "";
+      if (fn.length >= 1 && ln.length >= 1) {
+        setWelcomeStep("profilePhoto");
+      } else {
+        setWelcomeStep("profileName");
+      }
+    } else {
+      setWelcomeStep("pin");
     }
   }, [user]);
+
+  const advanceAfterOnboardingStep = useCallback(async () => {
+    if (!token) return;
+    const me = await getMe(token);
+    if (!me.needsOnboarding) {
+      onComplete();
+      return;
+    }
+    if (me.onboardingStep === "profile") {
+      const fn = me.firstName?.trim() ?? "";
+      const ln = me.lastName?.trim() ?? "";
+      if (fn.length >= 1 && ln.length >= 1) {
+        setWelcomeStep("profilePhoto");
+      } else {
+        setWelcomeStep("profileName");
+      }
+      return;
+    }
+    setWelcomeStep("pin");
+  }, [token, onComplete]);
+
+  const pickOnboardingAvatar = useCallback(async () => {
+    if (
+      !token ||
+      authAvatarUploading ||
+      authProfileSaving ||
+      onboardingAvatarPickerOpen
+    ) {
+      return;
+    }
+    setOnboardingAvatarPickerOpen(true);
+    try {
+      const granted = await ensureImageLibraryPermission();
+      if (!granted) return;
+      const assets = await pickImagesFromLibrary();
+      const asset = assets?.[0];
+      if (!asset?.uri) return;
+      setOnboardingAvatarUri(asset.uri);
+    } catch (e) {
+      if (__DEV__) {
+        console.warn("[Blyp register] avatar pick failed", e);
+      }
+      blypAlert(t("register.profileTitle"), t("register.photoPickFailed"));
+    } finally {
+      setOnboardingAvatarPickerOpen(false);
+    }
+  }, [
+    token,
+    authAvatarUploading,
+    authProfileSaving,
+    onboardingAvatarPickerOpen,
+    t,
+  ]);
+
+  useEffect(() => {
+    if (welcomeStep !== "profilePhoto") return;
+    void warmImageLibraryPermission();
+  }, [welcomeStep]);
 
   useEffect(() => {
     if (welcomeStep !== "otp" || otpResendCooldown <= 0) return;
@@ -178,6 +286,11 @@ export default function PayRegisterOverlay({
     }).start();
   }, [welcomeStep, regSlideWidth, windowWidth, regSlideX]);
 
+  useEffect(() => {
+    if (!isFullScreen) return;
+    regScrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [isFullScreen, welcomeStep]);
+
   const requestOtpForRegistration = async (
     mode: "initial" | "resend",
     phoneOverride?: string,
@@ -185,7 +298,7 @@ export default function PayRegisterOverlay({
     const phone = phoneOverride ?? welcomePhone;
     if (phone.length !== 9) return;
     if (otpSendCount >= MAX_OTP_SENDS_PER_SESSION) {
-      Alert.alert(
+      blypAlert(
         t("register.sendLimitTitle"),
         t("register.sendLimitMessage"),
       );
@@ -220,7 +333,7 @@ export default function PayRegisterOverlay({
       if (e instanceof ApiError && e.retryAfterSeconds != null) {
         setOtpResendCooldown(e.retryAfterSeconds);
       }
-      Alert.alert(t("register.smsCodeTitle"), msg);
+      blypAlert(t("register.smsCodeTitle"), msg);
       if (mode === "initial") {
         phoneAutoSubmittedRef.current = null;
         setWelcomeStep("phone");
@@ -246,12 +359,12 @@ export default function PayRegisterOverlay({
       if (!u.needsOnboarding) {
         onComplete();
       } else {
-        setWelcomeStep("pin");
+        setWelcomeStep(u.onboardingStep === "profile" ? "profileName" : "pin");
         setOnboardingPin("");
         setOnboardingPinConfirm("");
       }
     } catch (e) {
-      Alert.alert(
+      blypAlert(
         t("register.verificationTitle"),
         e instanceof ApiError ? e.message : t("common.invalidCode"),
       );
@@ -266,9 +379,10 @@ export default function PayRegisterOverlay({
   }, []);
 
   const closeRegistrationOverlay = useCallback(() => {
+    if (isFullScreen) return;
     Keyboard.dismiss();
     onComplete();
-  }, [onComplete]);
+  }, [onComplete, isFullScreen]);
 
   const goBackToRegistrationPhone = useCallback(() => {
     Keyboard.dismiss();
@@ -277,14 +391,72 @@ export default function PayRegisterOverlay({
     setOtpResendCooldown(0);
   }, []);
 
+  const registrationAbortable = Boolean(token && user?.needsOnboarding);
+
+  const resetRegistrationToPhone = useCallback(() => {
+    phoneAutoSubmittedRef.current = null;
+    setWelcomeStep("phone");
+    setWelcomeOtp("");
+    setWelcomePhone("");
+    setOtpResendCooldown(0);
+    setOtpSendCount(0);
+    setOnboardingPin("");
+    setOnboardingPinConfirm("");
+    setOnboardingFullName("");
+    setOnboardingAvatarUri(null);
+    otpAutoSubmittedRef.current = null;
+    otpChallengeReadyRef.current = false;
+  }, []);
+
+  const promptCancelRegistration = useCallback(() => {
+    setCancelRegModalVisible(true);
+  }, []);
+
+  const confirmCancelRegistration = useCallback(async () => {
+    setCancelRegBusy(true);
+    try {
+      await cancelRegistration();
+      resetRegistrationToPhone();
+      setCancelRegModalVisible(false);
+      if (!isFullScreen) {
+        onComplete();
+      }
+    } catch (e) {
+      blypAlert(
+        t("register.cancelRegistrationTitle"),
+        e instanceof ApiError ? e.message : t("common.genericError"),
+      );
+    } finally {
+      setCancelRegBusy(false);
+    }
+  }, [
+    cancelRegistration,
+    resetRegistrationToPhone,
+    isFullScreen,
+    onComplete,
+    t,
+  ]);
+
   const goBackInRegistrationHeader = useCallback(() => {
+    if (registrationAbortable) {
+      promptCancelRegistration();
+      return;
+    }
     Keyboard.dismiss();
     if (welcomeStep === "otp") {
       goBackToRegistrationPhone();
       return;
     }
+    if (welcomeStep === "profileName") {
+      goBackToRegistrationPhone();
+      return;
+    }
+    if (welcomeStep === "profilePhoto") {
+      setWelcomeStep("profileName");
+      return;
+    }
     if (welcomeStep === "pin") {
-      setWelcomeStep("otp");
+      setWelcomeStep("profilePhoto");
       setOnboardingPin("");
       return;
     }
@@ -292,7 +464,40 @@ export default function PayRegisterOverlay({
       setWelcomeStep("pin");
       setOnboardingPinConfirm("");
     }
-  }, [welcomeStep, goBackToRegistrationPhone]);
+  }, [
+    welcomeStep,
+    goBackToRegistrationPhone,
+    registrationAbortable,
+    promptCancelRegistration,
+  ]);
+
+  const handleRegistrationHardwareBack = useCallback((): boolean => {
+    if (welcomeStep === "phone") return false;
+    if (registrationAbortable) {
+      promptCancelRegistration();
+      return true;
+    }
+    if (welcomeStep === "otp") {
+      goBackToRegistrationPhone();
+      return true;
+    }
+    goBackInRegistrationHeader();
+    return true;
+  }, [
+    welcomeStep,
+    registrationAbortable,
+    promptCancelRegistration,
+    goBackToRegistrationPhone,
+    goBackInRegistrationHeader,
+  ]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener(
+      "hardwareBackPress",
+      handleRegistrationHardwareBack,
+    );
+    return () => sub.remove();
+  }, [handleRegistrationHardwareBack]);
 
   const submitOnboardingPinContinue = useCallback(() => {
     const d = onboardingPin.replace(/\D/g, "");
@@ -307,7 +512,7 @@ export default function PayRegisterOverlay({
     const b = onboardingPinConfirm.replace(/\D/g, "");
     if (a.length !== ONBOARDING_PIN_LEN || b.length !== ONBOARDING_PIN_LEN) return;
     if (a !== b) {
-      Alert.alert(t("register.pinTitle"), t("register.pinMismatch"));
+      blypAlert(t("register.pinTitle"), t("register.pinMismatch"));
       setOnboardingPinConfirm("");
       pinConfirmAutoSubmittedRef.current = null;
       return;
@@ -324,12 +529,12 @@ export default function PayRegisterOverlay({
       );
       await saveTransactionPinVault(b);
       await refreshUser();
-      setWelcomeStep("profile");
       setOnboardingPin("");
       setOnboardingPinConfirm("");
       pinConfirmAutoSubmittedRef.current = null;
+      await advanceAfterOnboardingStep();
     } catch (e) {
-      Alert.alert(
+      blypAlert(
         t("register.pinTitle"),
         e instanceof ApiError ? e.message : t("common.saveFailed"),
       );
@@ -344,34 +549,65 @@ export default function PayRegisterOverlay({
     token,
     refreshUser,
     t,
+    advanceAfterOnboardingStep,
   ]);
 
   const submitOnboardingProfile = useCallback(async () => {
-    const f = onboardingFirstName.trim();
-    const l = onboardingLastName.trim();
-    if (f.length < 2 || l.length < 2) {
-      Alert.alert(
-        t("register.profileTitle"),
-        t("register.profileMinLength"),
-      );
+    const parsed = parseRegistrationFullName(onboardingFullName);
+    if (!parsed) {
+      blypAlert(t("register.profileTitle"), t("register.fullNameInvalid"));
       return;
     }
+    const { firstName: f, lastName: l } = parsed;
     if (!token) return;
     Keyboard.dismiss();
     setAuthProfileSaving(true);
     try {
       await setOnboardingProfile(token, f, l);
+      if (onboardingAvatarUri) {
+        setAuthAvatarUploading(true);
+        try {
+          const { uploadProfileAvatar } = await import(
+            "@/lib/avatar/uploadProfileAvatar"
+          );
+          await uploadProfileAvatar(token, onboardingAvatarUri);
+        } finally {
+          setAuthAvatarUploading(false);
+        }
+      }
       await refreshUser();
-      onComplete();
+      setOnboardingAvatarUri(null);
+      await advanceAfterOnboardingStep();
     } catch (e) {
-      Alert.alert(
+      blypAlert(
         t("register.profileTitle"),
-        e instanceof ApiError ? e.message : t("common.saveFailed"),
+        e instanceof ApiError
+          ? e.message
+          : onboardingAvatarUri
+            ? t("profile.photoUploadFailed")
+            : t("common.saveFailed"),
       );
     } finally {
       setAuthProfileSaving(false);
     }
-  }, [onboardingFirstName, onboardingLastName, token, refreshUser, onComplete, t]);
+  }, [
+    onboardingFullName,
+    onboardingAvatarUri,
+    token,
+    refreshUser,
+    advanceAfterOnboardingStep,
+    t,
+  ]);
+
+  const continueProfileName = useCallback(() => {
+    const parsed = parseRegistrationFullName(onboardingFullName);
+    if (!parsed) {
+      blypAlert(t("register.profileTitle"), t("register.fullNameInvalid"));
+      return;
+    }
+    Keyboard.dismiss();
+    setWelcomeStep("profilePhoto");
+  }, [onboardingFullName, t]);
 
   useEffect(() => {
     if (user) return;
@@ -437,7 +673,7 @@ export default function PayRegisterOverlay({
     if (step === "otp") return regOtpInputRef.current;
     if (step === "pin") return regPinInputRef.current;
     if (step === "pinConfirm") return regPinConfirmInputRef.current;
-    if (step === "profile") return regFirstNameInputRef.current;
+    if (step === "profileName") return regFullNameInputRef.current;
     return null;
   }, []);
 
@@ -482,6 +718,12 @@ export default function PayRegisterOverlay({
     [focusRefForStep],
   );
 
+  const resumeRegistrationAfterCancelDismiss = useCallback(() => {
+    if (cancelRegBusy) return;
+    setCancelRegModalVisible(false);
+    scheduleRegFieldFocus(welcomeStep);
+  }, [cancelRegBusy, welcomeStep, scheduleRegFieldFocus]);
+
   useEffect(() => {
     if (welcomeStep === "phone") {
       setRegPhoneInputKey((k) => k + 1);
@@ -521,85 +763,97 @@ export default function PayRegisterOverlay({
     };
   }, [welcomeStep]);
 
-  return (
-    <>
-      <Modal
-        visible
-            transparent
-            animationType="none"
-            statusBarTranslucent
-            onShow={() => {
-              if (welcomeStep === "phone") {
-                setRegPhoneInputKey((k) => k + 1);
-              }
-              scheduleRegFieldFocus(welcomeStep);
-            }}
-            onRequestClose={() => {
-              if (welcomeStep === "phone" || welcomeStep === "otp") {
-                closeRegistrationOverlay();
-              } else {
-                Keyboard.dismiss();
-                goBackInRegistrationHeader();
-              }
-            }}
-          >
-            <View style={styles.regModalRoot}>
-              <Pressable
-                style={styles.regModalBackdrop}
-                onPress={() => {
-                  if (welcomeStep === "phone" || welcomeStep === "otp") {
-                    closeRegistrationOverlay();
-                  } else {
-                    Keyboard.dismiss();
-                  }
-                }}
-                accessibilityLabel={
-                  welcomeStep === "phone" || welcomeStep === "otp"
-                    ? t("common.close")
-                    : t("common.background")
-                }
-                accessibilityRole="button"
-              />
-              <View
-                style={[
-                  styles.regModalSheet,
-                  {
-                    bottom: keyboardLift,
-                    maxHeight: Math.max(
-                      280,
-                      windowHeight - keyboardLift - 12,
-                    ),
-                    height: Math.min(
-                      regSheetHeight,
-                      Math.max(280, windowHeight - keyboardLift - 12),
-                    ),
-                  },
-                ]}
-              >
-                <KeyboardAvoidingView
+  const RegKeyboardWrapper = isFullScreen ? View : KeyboardAvoidingView;
+
+  const fullScreenStepVerticallyCentered =
+    welcomeStep === "phone" || welcomeStep === "profileName";
+
+  const registrationBody = (
+    <View
+      style={
+        isFullScreen ? styles.regFullScreenRoot : styles.regModalRoot
+      }
+    >
+      {!isFullScreen ? (
+        <Pressable
+          style={styles.regModalBackdrop}
+          onPress={() => {
+            if (welcomeStep === "phone" || welcomeStep === "otp") {
+              closeRegistrationOverlay();
+            } else {
+              Keyboard.dismiss();
+            }
+          }}
+          accessibilityLabel={
+            welcomeStep === "phone" || welcomeStep === "otp"
+              ? t("common.close")
+              : t("common.background")
+          }
+          accessibilityRole="button"
+        />
+      ) : null}
+      <View
+        style={
+          isFullScreen
+            ? styles.regFullScreenSheet
+            : [
+                styles.regModalSheet,
+                {
+                  bottom: keyboardLift,
+                  maxHeight: Math.max(
+                    280,
+                    windowHeight - keyboardLift - 12,
+                  ),
+                  height: Math.min(
+                    regSheetHeight,
+                    Math.max(280, windowHeight - keyboardLift - 12),
+                  ),
+                },
+              ]
+        }
+      >
+                <RegKeyboardWrapper
                   style={styles.regModalKeyboard}
-                  behavior={Platform.OS === "ios" ? "padding" : undefined}
-                  enabled={Platform.OS === "ios" && keyboardLift === 0}
+                  {...(!isFullScreen
+                    ? {
+                        behavior:
+                          Platform.OS === "ios" ? ("padding" as const) : undefined,
+                        enabled: Platform.OS === "ios" && keyboardLift === 0,
+                      }
+                    : {})}
                 >
                   <SafeModalArea
                     style={styles.regModalSafe}
-                    edges={keyboardLift > 0 ? ["left", "right"] : ["bottom", "left", "right"]}
+                    edges={
+                      !isFullScreen && keyboardLift > 0
+                        ? ["left", "right"]
+                        : isFullScreen
+                          ? ["top", "left", "right", "bottom"]
+                          : ["bottom", "left", "right"]
+                    }
                   >
+                    {!(isFullScreen && welcomeStep === "phone") ? (
                     <View style={styles.regModalHeader}>
                       {welcomeStep === "phone" ? (
-                        <Pressable
-                          onPress={closeRegistrationOverlay}
-                          style={({ pressed }) => [
-                            styles.regModalBackHeaderBtn,
-                            pressed && styles.regModalBackHeaderBtnPressed,
-                          ]}
-                          hitSlop={12}
-                          accessibilityLabel={t("common.close")}
-                          accessibilityRole="button"
-                        >
-                          <Ionicons name="close" size={28} color={colors.text} />
-                        </Pressable>
+                        isFullScreen ? (
+                          <View style={styles.regModalHeaderLeading} />
+                        ) : (
+                          <Pressable
+                            onPress={closeRegistrationOverlay}
+                            style={({ pressed }) => [
+                              styles.regModalBackHeaderBtn,
+                              pressed && styles.regModalBackHeaderBtnPressed,
+                            ]}
+                            hitSlop={12}
+                            accessibilityLabel={t("common.close")}
+                            accessibilityRole="button"
+                          >
+                            <Ionicons name="close" size={28} color={colors.text} />
+                          </Pressable>
+                        )
                       ) : welcomeStep === "otp" ||
+                        welcomeStep === "profileName" ||
+                        welcomeStep === "profilePhoto" ||
                         welcomeStep === "pin" ||
                         welcomeStep === "pinConfirm" ? (
                         <Pressable
@@ -626,13 +880,26 @@ export default function PayRegisterOverlay({
                       </Text>
                       <View style={styles.regModalHeaderSpacer} />
                     </View>
+                    ) : null}
 
                     <ScrollView
                       ref={regScrollRef}
                       style={styles.regModalScrollView}
                       contentContainerStyle={[
                         styles.regModalScroll,
-                        keyboardLift > 0 && styles.regModalScrollKeyboardPad,
+                        isFullScreen &&
+                          welcomeStep === "phone" && {
+                            minHeight: fullScreenScrollMinHeight,
+                          },
+                        isFullScreen &&
+                          fullScreenStepVerticallyCentered &&
+                          styles.regModalScrollCentered,
+                        isFullScreen &&
+                          !fullScreenStepVerticallyCentered &&
+                          styles.regModalScrollBelowHeader,
+                        !isFullScreen &&
+                          keyboardLift > 0 &&
+                          styles.regModalScrollKeyboardPad,
                       ]}
                       keyboardShouldPersistTaps="handled"
                       showsVerticalScrollIndicator={false}
@@ -662,9 +929,11 @@ export default function PayRegisterOverlay({
                               { width: regSlidePanelW },
                             ]}
                           >
-                            <Text style={styles.regModalLead}>
-                              {t("register.smsVerifyLead")}
-                            </Text>
+                            {!isFullScreen ? (
+                              <Text style={styles.regModalLead}>
+                                {t("register.smsVerifyLead")}
+                              </Text>
+                            ) : null}
                             <Text style={styles.regModalLabel}>{t("register.phoneLabel")}</Text>
                             <View style={styles.regModalPhoneWrap}>
                               <Text
@@ -681,29 +950,16 @@ export default function PayRegisterOverlay({
                                 placeholder={t("register.phonePlaceholder")}
                                 placeholderTextColor={colors.placeholder}
                                 keyboardType="number-pad"
-                                maxLength={9}
-                                value={welcomePhone}
+                                maxLength={cameroonPhoneSpacedPairsMaxLength(9)}
+                                value={formatCameroonPhoneSpacedPairs(welcomePhone)}
                                 editable={!authOtpSending}
                                 autoFocus={welcomeStep === "phone"}
                                 showSoftInputOnFocus
-                                onChangeText={(t) => {
-                                  const next = normalizeCameroonPhoneDigits(t);
+                                onChangeText={(text) => {
+                                  const next = normalizeCameroonPhoneDigits(text);
                                   setWelcomePhone(next);
                                   if (next.length < 9) {
                                     phoneAutoSubmittedRef.current = null;
-                                    return;
-                                  }
-                                  if (
-                                    next.length === 9 &&
-                                    phoneAutoSubmittedRef.current !== next &&
-                                    otpSendCount < MAX_OTP_SENDS_PER_SESSION
-                                  ) {
-                                    phoneAutoSubmittedRef.current = next;
-                                    Keyboard.dismiss();
-                                    void requestOtpForRegistration(
-                                      "initial",
-                                      next,
-                                    );
                                   }
                                 }}
                               />
@@ -728,13 +984,51 @@ export default function PayRegisterOverlay({
                                 />
                               )}
                             </View>
-                            {authOtpSending ? (
-                              <ActivityIndicator
-                                color={colors.accent}
-                                size="small"
-                                style={{ marginTop: 18 }}
-                              />
-                            ) : null}
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                styles.regModalPhoneContinueBtn,
+                                (welcomePhone.length !== 9 ||
+                                  authOtpSending ||
+                                  otpSendCount >= MAX_OTP_SENDS_PER_SESSION) &&
+                                  styles.regModalPrimaryBtnDisabled,
+                                pressed &&
+                                  welcomePhone.length === 9 &&
+                                  !authOtpSending &&
+                                  styles.regModalPrimaryBtnPressed,
+                              ]}
+                              disabled={
+                                welcomePhone.length !== 9 ||
+                                authOtpSending ||
+                                otpSendCount >= MAX_OTP_SENDS_PER_SESSION
+                              }
+                              accessibilityRole="button"
+                              accessibilityLabel={t("common.continue")}
+                              onPress={() => {
+                                const nine = welcomePhone;
+                                if (
+                                  nine.length !== 9 ||
+                                  phoneAutoSubmittedRef.current === nine ||
+                                  otpSendCount >= MAX_OTP_SENDS_PER_SESSION
+                                ) {
+                                  return;
+                                }
+                                phoneAutoSubmittedRef.current = nine;
+                                Keyboard.dismiss();
+                                void requestOtpForRegistration("initial", nine);
+                              }}
+                            >
+                              {authOtpSending ? (
+                                <ActivityIndicator
+                                  color={colors.accentOn}
+                                  size="small"
+                                />
+                              ) : (
+                                <Text style={styles.regModalPrimaryBtnText}>
+                                  {t("common.continue")}
+                                </Text>
+                              )}
+                            </Pressable>
                           </View>
                           <View
                             style={[
@@ -756,7 +1050,7 @@ export default function PayRegisterOverlay({
                             <Text style={styles.regModalLabel}>{t("register.verificationCode")}</Text>
                             <MaskedPinInput
                               ref={regOtpInputRef}
-                              variant="circles"
+                              variant="lines"
                               style={styles.regModalOtpInput}
                               accessibilityLabel={t("register.verificationCode")}
                               digits={welcomeOtp}
@@ -824,7 +1118,10 @@ export default function PayRegisterOverlay({
                                 }}
                               >
                                 {authResendSending ? (
-                                  <ActivityIndicator color={colors.accent} size="small" />
+                                  <ActivityIndicator
+                                    color={colors.textMuted}
+                                    size="small"
+                                  />
                                 ) : (
                                   <Text style={styles.regModalResendBtnText}>
                                     {t("register.resendCode")}
@@ -832,18 +1129,184 @@ export default function PayRegisterOverlay({
                                 )}
                               </Pressable>
                             )}
+                            <View style={styles.regModalOtpFooterSpacer} />
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.regModalLabel,
+                                styles.regModalLabelInputAlign,
+                              ]}
+                            >
+                              {t("register.fullName")}
+                            </Text>
+                            <TextInput
+                              ref={regFullNameInputRef}
+                              style={styles.regModalProfileInput}
+                              placeholder={t("register.fullNamePlaceholder")}
+                              placeholderTextColor={colors.placeholder}
+                              value={onboardingFullName}
+                              onChangeText={setOnboardingFullName}
+                              autoCapitalize="words"
+                              autoCorrect={false}
+                              maxLength={80}
+                              autoFocus={welcomeStep === "profileName"}
+                            />
                             <Pressable
                               style={({ pressed }) => [
-                                styles.regModalBackLink,
-                                pressed && { opacity: 0.6 },
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  onboardingFullName.trim().length >= 1 &&
+                                  styles.regModalPrimaryBtnPressed,
+                                onboardingFullName.trim().length < 1 &&
+                                  styles.regModalPrimaryBtnDisabled,
                               ]}
-                              onPress={goBackToRegistrationPhone}
+                              disabled={onboardingFullName.trim().length < 1}
+                              onPress={continueProfileName}
                             >
-                              <Text style={styles.regModalBackLinkText}>
-                                {t("register.editPhone")}
+                              <Text style={styles.regModalPrimaryBtnText}>
+                                {t("common.continue")}
                               </Text>
                             </Pressable>
-                            <View style={styles.regModalOtpFooterSpacer} />
+                          </View>
+                          <View
+                            style={[
+                              styles.regModalSlidePage,
+                              { width: regSlidePanelW },
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.regModalLead,
+                                styles.regModalLeadCentered,
+                              ]}
+                            >
+                              {t("register.profilePhotoLead")}
+                            </Text>
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalAvatarTap,
+                                pressed && styles.regModalAvatarTapPressed,
+                              ]}
+                              onPress={() => void pickOnboardingAvatar()}
+                              disabled={
+                                authProfileSaving ||
+                                authAvatarUploading ||
+                                onboardingAvatarPickerOpen
+                              }
+                              accessibilityRole="button"
+                              accessibilityLabel={t("register.addPhoto")}
+                            >
+                              {({ pressed }) => {
+                                const ringActive =
+                                  pressed ||
+                                  onboardingAvatarPickerOpen ||
+                                  Boolean(onboardingAvatarUri);
+                                return (
+                                  <>
+                                    <View style={styles.regModalAvatarRingWrap}>
+                                      <View
+                                        style={[
+                                          styles.regModalAvatarRing,
+                                          ringActive && {
+                                            borderColor: colors.accent,
+                                          },
+                                        ]}
+                                      >
+                                        <PeerAvatar
+                                          name={
+                                            onboardingFullName.trim() ||
+                                            formatRegistrationFullName(
+                                              user?.firstName,
+                                              user?.lastName,
+                                            ) ||
+                                            "?"
+                                          }
+                                          localUri={onboardingAvatarUri}
+                                          remoteUrl={user?.avatarUrl}
+                                          size={96}
+                                          style={styles.regModalAvatar}
+                                          textStyle={
+                                            styles.regModalAvatarInitials
+                                          }
+                                        />
+                                      </View>
+                                      {onboardingAvatarPickerOpen ? (
+                                        <View
+                                          style={[
+                                            styles.regModalAvatarSpinnerOverlay,
+                                            { backgroundColor: colors.overlay },
+                                          ]}
+                                        >
+                                          <ActivityIndicator
+                                            color={colors.accent}
+                                            size="small"
+                                          />
+                                        </View>
+                                      ) : null}
+                                    </View>
+                                    <View
+                                      style={[
+                                        styles.regModalAvatarBadge,
+                                        { backgroundColor: colors.modal },
+                                      ]}
+                                    >
+                                      <Ionicons
+                                        name="camera"
+                                        size={17}
+                                        color={colors.textMuted}
+                                      />
+                                    </View>
+                                  </>
+                                );
+                              }}
+                            </Pressable>
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalSkipPhotoBtn,
+                                pressed &&
+                                  !authProfileSaving &&
+                                  !authAvatarUploading &&
+                                  styles.regModalSkipPhotoBtnPressed,
+                              ]}
+                              disabled={authProfileSaving || authAvatarUploading}
+                              onPress={() => void submitOnboardingProfile()}
+                              accessibilityRole="button"
+                              accessibilityLabel={t("register.skipPhotoForNow")}
+                            >
+                              <Text style={styles.regModalSkipPhotoBtnText}>
+                                {t("register.skipPhotoForNow")}
+                              </Text>
+                            </Pressable>
+                            <Pressable
+                              style={({ pressed }) => [
+                                styles.regModalPrimaryBtn,
+                                pressed &&
+                                  !authProfileSaving &&
+                                  !authAvatarUploading &&
+                                  styles.regModalPrimaryBtnPressed,
+                                (authProfileSaving || authAvatarUploading) &&
+                                  styles.regModalPrimaryBtnDisabled,
+                              ]}
+                              disabled={authProfileSaving || authAvatarUploading}
+                              onPress={() => void submitOnboardingProfile()}
+                            >
+                              {authProfileSaving || authAvatarUploading ? (
+                                <ActivityIndicator
+                                  color={colors.accentOn}
+                                  size="small"
+                                />
+                              ) : (
+                                <Text style={styles.regModalPrimaryBtnText}>
+                                  {t("common.continue")}
+                                </Text>
+                              )}
+                            </Pressable>
                           </View>
                           <View
                             style={[
@@ -933,80 +1396,64 @@ export default function PayRegisterOverlay({
                               )}
                             </Pressable>
                           </View>
-                          <View
-                            style={[
-                              styles.regModalSlidePage,
-                              { width: regSlidePanelW },
-                            ]}
-                          >
-                            <Text style={styles.regModalLead}>
-                              {t("register.profileLead")}
-                            </Text>
-                            <Text style={styles.regModalLabel}>{t("register.firstName")}</Text>
-                            <TextInput
-                              ref={regFirstNameInputRef}
-                              style={styles.regModalProfileInput}
-                              placeholder={t("register.firstNamePlaceholder")}
-                              placeholderTextColor={colors.placeholder}
-                              value={onboardingFirstName}
-                              onChangeText={setOnboardingFirstName}
-                              autoCapitalize="words"
-                              autoCorrect={false}
-                              maxLength={80}
-                            />
-                            <Text style={styles.regModalLabel}>{t("register.lastName")}</Text>
-                            <TextInput
-                              ref={regLastNameInputRef}
-                              style={styles.regModalProfileInput}
-                              placeholder={t("register.lastNamePlaceholder")}
-                              placeholderTextColor={colors.placeholder}
-                              value={onboardingLastName}
-                              onChangeText={setOnboardingLastName}
-                              autoCapitalize="words"
-                              autoCorrect={false}
-                              maxLength={80}
-                            />
-                            <Pressable
-                              style={({ pressed }) => [
-                                styles.regModalPrimaryBtn,
-                                pressed &&
-                                  onboardingFirstName.trim().length >= 2 &&
-                                  onboardingLastName.trim().length >= 2 &&
-                                  !authProfileSaving &&
-                                  styles.regModalPrimaryBtnPressed,
-                                (onboardingFirstName.trim().length < 2 ||
-                                  onboardingLastName.trim().length < 2 ||
-                                  authProfileSaving) &&
-                                  styles.regModalPrimaryBtnDisabled,
-                              ]}
-                              disabled={
-                                onboardingFirstName.trim().length < 2 ||
-                                onboardingLastName.trim().length < 2 ||
-                                authProfileSaving
-                              }
-                              onPress={() => void submitOnboardingProfile()}
-                            >
-                              {authProfileSaving ? (
-                                <ActivityIndicator color={colors.accentOn} size="small" />
-                              ) : (
-                                <Text style={styles.regModalPrimaryBtnText}>
-                                  {t("register.finish")}
-                                </Text>
-                              )}
-                            </Pressable>
-                          </View>
                         </Animated.View>
                       </View>
                     </ScrollView>
                   </SafeModalArea>
-                </KeyboardAvoidingView>
+                </RegKeyboardWrapper>
               </View>
-            </View>
-      </Modal>
+    </View>
+  );
+
+  useEffect(() => {
+    if (!isFullScreen) return;
+    if (welcomeStep === "phone") {
+      setRegPhoneInputKey((k) => k + 1);
+    }
+    scheduleRegFieldFocus(welcomeStep);
+  }, [isFullScreen, welcomeStep, scheduleRegFieldFocus]);
+
+  return (
+    <>
+      {isFullScreen ? (
+        registrationBody
+      ) : (
+        <Modal
+          visible
+          transparent
+          animationType="none"
+          statusBarTranslucent
+          onShow={() => {
+            if (welcomeStep === "phone") {
+              setRegPhoneInputKey((k) => k + 1);
+            }
+            scheduleRegFieldFocus(welcomeStep);
+          }}
+          onRequestClose={() => {
+            if (welcomeStep === "phone" || welcomeStep === "otp") {
+              if (registrationAbortable) {
+                promptCancelRegistration();
+                return;
+              }
+              closeRegistrationOverlay();
+              return;
+            }
+            handleRegistrationHardwareBack();
+          }}
+        >
+          {registrationBody}
+        </Modal>
+      )}
       <AndroidOtpSmsAutofill
         applyOtp={welcomeStep === "otp"}
         otpLength={OTP_LEN}
         onCode={applySmsAutofillOtp}
+      />
+      <RegisterCancelConfirmModal
+        visible={cancelRegModalVisible}
+        busy={cancelRegBusy}
+        onContinue={resumeRegistrationAfterCancelDismiss}
+        onConfirmCancel={() => void confirmCancelRegistration()}
       />
     </>
   );

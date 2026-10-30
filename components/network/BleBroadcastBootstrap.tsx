@@ -16,7 +16,7 @@ export function BleBroadcastBootstrap() {
 
     const initBle = () => {
       void import("@/lib/ble/taxiBroadcastController").then((m) => {
-        m.resetTaxiBroadcastUiOnMount();
+        void m.bootstrapTaxiBroadcastState();
       });
     };
 

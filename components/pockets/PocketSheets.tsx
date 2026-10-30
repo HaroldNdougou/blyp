@@ -13,16 +13,8 @@ import {
 import type { TFunction } from "i18next";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Alert,
-  Keyboard,
-  Modal,
-  Platform,
-  Pressable,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { Keyboard, Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const MAX_AMOUNT = 999_999;
@@ -35,7 +27,7 @@ export function pocketDisplayName(p: Pocket, t: TFunction): string {
 export function showPocketError(t: TFunction, e: unknown) {
   const msg =
     e instanceof ApiError && e.message ? e.message : t("common.genericError");
-  Alert.alert(t("pockets.errorTitle"), msg);
+  blypAlert(t("pockets.errorTitle"), msg);
 }
 
 function useKeyboardLift(open: boolean): number {

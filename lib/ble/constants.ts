@@ -13,10 +13,23 @@ export const BLYP_BLE_DEMO_ACCOUNT_ID = "BLYP-U-7KQ9XM2A4B";
 export const BLYP_BLE_DEMO_PHONE = "698256896";
 
 /**
- * Sans pub depuis tant de ms → taxi retiré.
- * Court = réactif à l’OFF diffusion (BLE ne peut pas être “0 ms”).
+ * Sans pub depuis tant de ms → pair retiré (selon RSSI — voir selectPeer).
+ * Trop court = salon→chambre impossible (trous de scan / murs).
+ * Proche = OFF diffusion un peu plus lent mais acceptable.
  */
-export const BLYP_PEER_STALE_MS = 1_000;
+export const BLYP_PEER_STALE_MS_NEAR = 18_000;
+export const BLYP_PEER_STALE_MS_FAR = 45_000;
+/** Sous ce RSSI : on garde l’affichage plus longtemps entre deux pubs perdues. */
+export const BLYP_PEER_STALE_RSSI_SPLIT = -82;
+
+/**
+ * Dernière vue valide : garder le pair à l’écran sur Pay tant que le scan tourne
+ * (trous MIUI / murs / ~10 m) même si le sélecteur interne a expiré.
+ */
+export const BLYP_PEER_UI_HOLD_MS = 55_000;
+
+/** Relance scan Android (MIUI) sans vider la sélection. */
+export const BLYP_BLE_SCAN_KICK_MS = 12_000;
 
 /** Seuil très bas : tout signal Blyp valide est capté (pas de filtre « trop loin »). */
 export const BLYP_PEER_MIN_RSSI = -110;

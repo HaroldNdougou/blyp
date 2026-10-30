@@ -14,18 +14,8 @@ import type {
 } from "@/lib/receipts/commerceStampTypes";
 import React, { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export type MoneyReceiptClaimContext = {
@@ -116,7 +106,7 @@ export function MoneyReceiptClaimSheet({
         updatedAt: new Date().toISOString(),
       });
       if (!res.ok) {
-        Alert.alert(
+        blypAlert(
           t("moneyReceipt.claimTitle"),
           t("moneyReceipt.stampDuplicate"),
         );

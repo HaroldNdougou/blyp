@@ -1,10 +1,15 @@
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { CommerceSection } from "@/components/profile/CommerceSection";
+import { ProfileEditSheet } from "@/components/profile/ProfileEditSheet";
+import { SignOutConfirmModal } from "@/components/profile/SignOutConfirmModal";
 import { createProfileStyles } from "@/components/profile/profileStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
 import { resolveBleBroadcastAccount } from "@/lib/ble/broadcastAccount";
+import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
+import { openDepositRoute } from "@/lib/nav/openDeposit";
+import { formatRegistrationFullName } from "@/lib/profile/parseRegistrationFullName";
 import {
   formatCameroonPhoneDisplay,
   formatFcfa,
@@ -17,14 +22,13 @@ import { useFocusEffect } from "@react-navigation/native";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  ScrollView,
-  Switch,
-  Text,
-  View,
-} from "react-native";
+  ensureImageLibraryPermission,
+  pickImagesFromLibrary,
+  warmImageLibraryPermission,
+} from "@/lib/image/pickFromLibrary";
+import { showBlypActionFlash } from "@/lib/ui/blypActionFlash";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, Pressable, ScrollView, Switch, Platform, Text, View } from "react-native";
 import {
   SafeAreaView,
   useSafeAreaInsets,
@@ -36,21 +40,19 @@ import {
   subscribeReceiptsUnread,
 } from "@/lib/receipts/receiptsUnread";
 
-function initialsFromName(first: string | null, last: string | null): string {
-  const a = (first ?? "").trim().charAt(0);
-  const b = (last ?? "").trim().charAt(0);
-  const s = `${a}${b}`.toUpperCase();
-  return s || "?";
-}
-
 export default function ProfileTabScreen() {
   const insets = useSafeAreaInsets();
   const { user, token, signOut, isLoading, refreshUser } = useAuth();
   const [avatarBusy, setAvatarBusy] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const { colors } = useTheme();
   const { t } = useTranslation();
   const styles = useMemo(() => createProfileStyles(colors), [colors]);
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutModalVisible, setSignOutModalVisible] = useState(false);
+  const [profileEditMode, setProfileEditMode] = useState<"name" | "account" | null>(
+    null,
+  );
   const [receiptsUnreadTick, setReceiptsUnreadTick] = useState(0);
   const accountId = String(user?.id ?? "").trim();
   const receiptsUnread = accountId
@@ -70,19 +72,25 @@ export default function ProfileTabScreen() {
     }, [accountId]),
   );
   const [announcePayments, setAnnouncePayments] = useState(false);
+  const [quickPayNotif, setQuickPayNotif] = useState(false);
   const bleBroadcastAccount = useMemo(
     () => resolveBleBroadcastAccount(user),
     [user],
   );
   const broadcast = useTaxiBroadcast(bleBroadcastAccount);
+  const [broadcastActivating, setBroadcastActivating] = useState(false);
   const isPro = user?.activeContext?.type === "commerce";
   const kycStatus = user?.kycStatus ?? "none";
   const kycCtaLabel =
     kycStatus === "rejected"
       ? t("profile.kycCtaUnlock")
       : t("profile.kycCtaVerify");
-  const personalFirst = user?.personalFirstName ?? null;
-  const personalLast = user?.personalLastName ?? null;
+
+  useFocusEffect(
+    useCallback(() => {
+      void warmImageLibraryPermission();
+    }, []),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -100,6 +108,11 @@ export default function ProfileTabScreen() {
         if (!cancelled) setAnnouncePayments(on);
       });
     });
+    void import("@/lib/pay/quickPayNotifPref").then((m) => {
+      void m.hydrateQuickPayNotifPref().then((on) => {
+        if (!cancelled) setQuickPayNotif(on);
+      });
+    });
     return () => {
       cancelled = true;
     };
@@ -107,21 +120,19 @@ export default function ProfileTabScreen() {
 
   const onBroadcastToggle = useCallback(
     async (enabled: boolean) => {
-      const { status, message } = await broadcast.setEnabled(enabled);
-      if (!enabled || status === "broadcasting") return;
-      const msg =
-        status === "denied"
-          ? t("profile.broadcastDenied")
-          : status === "unavailable"
-            ? t("profile.broadcastUnavailable")
-            : status === "powered_off"
-              ? t("profile.broadcastOffBt")
-              : message === "INVALID_ACCOUNT"
-                ? t("profile.broadcastInvalidAccount")
-                : message && __DEV__
-                  ? `${t("profile.broadcastError")}\n${message}`
-                  : t("profile.broadcastError");
-      Alert.alert(t("profile.broadcastLabel"), msg);
+      setBroadcastActivating(true);
+      try {
+        const { status, message } = await broadcast.setEnabled(enabled);
+        if (!enabled || status === "broadcasting") return;
+        showBroadcastFailureAlert(
+          t,
+          t("profile.broadcastLabel"),
+          status,
+          message,
+        );
+      } finally {
+        setBroadcastActivating(false);
+      }
     },
     [broadcast.setEnabled, t],
   );
@@ -133,54 +144,84 @@ export default function ProfileTabScreen() {
     });
   }, []);
 
+  const onQuickPayNotifToggle = useCallback(
+    (enabled: boolean) => {
+      setQuickPayNotif(enabled);
+      void import("@/lib/pay/quickPayNotifPref").then((m) => {
+        void m.setQuickPayNotifPref(enabled).then(async () => {
+          const { syncQuickPayNotif } = await import("@/lib/pay/syncQuickPayNotif");
+          const res = await syncQuickPayNotif();
+          if (!enabled || res.ok) return;
+          setQuickPayNotif(false);
+          void m.setQuickPayNotifPref(false);
+          if (res.reason === "NO_NATIVE") {
+            blypAlert(
+              t("profile.quickPayNotifLabel"),
+              t("profile.quickPayNotifRebuildRequired"),
+            );
+          } else if (res.reason === "NO_NOTIF_PERMISSION") {
+            blypAlert(
+              t("profile.quickPayNotifLabel"),
+              t("profile.quickPayNotifPermissionRequired"),
+            );
+          }
+        });
+      });
+    },
+    [t],
+  );
+
   const onContextChanged = useCallback((_next: "personal" | "commerce") => {
     /* Relance BLE : AuthContext.retarget après le nouveau compte. */
   }, []);
 
   const onChangePhoto = useCallback(async () => {
-    if (!token || avatarBusy) return;
-    setAvatarBusy(true);
+    if (!token || avatarBusy || avatarPickerOpen) return;
+    setAvatarPickerOpen(true);
     try {
-      const { requestImageLibraryPermission } = await import(
-        "@/lib/image/pickFromLibrary"
-      );
-      const { pickImagesFromLibrary } = await import(
-        "@/lib/image/pickFromLibrary"
-      );
-      const granted = await requestImageLibraryPermission();
+      const granted = await ensureImageLibraryPermission();
       if (!granted) return;
       const assets = await pickImagesFromLibrary();
       const asset = assets?.[0];
       if (!asset?.uri) return;
+      setAvatarPickerOpen(false);
+      setAvatarBusy(true);
       const { uploadProfileAvatar } = await import(
         "@/lib/avatar/uploadProfileAvatar"
       );
       await uploadProfileAvatar(token, asset.uri, asset.contentType);
       await refreshUser();
+      showBlypActionFlash(t("profile.photoUpdatedFlash"));
     } catch {
-      Alert.alert(t("profile.title"), t("profile.photoUploadFailed"));
+      blypAlert(t("profile.title"), t("profile.photoUploadFailed"));
     } finally {
       setAvatarBusy(false);
+      setAvatarPickerOpen(false);
     }
-  }, [token, avatarBusy, refreshUser, t]);
+  }, [token, avatarBusy, avatarPickerOpen, refreshUser, t]);
 
   /** Hooks avant tout return — sinon crash « fewer hooks » au logout / session. */
-  if (!isLoading && !token) {
-    return <Redirect href="/" />;
+  if (!isLoading && (!token || user?.needsOnboarding)) {
+    return <Redirect href="/(tabs)/welcome" />;
   }
 
   const phoneDigits = user?.phone.replace(/\D/g, "").slice(-9) ?? "";
   const phoneDisplay = phoneDigits
     ? `+237 ${formatCameroonPhoneDisplay(phoneDigits)}`
     : t("profile.dash");
+  const personalDisplayName = formatRegistrationFullName(
+    user?.personalFirstName ?? user?.firstName,
+    user?.personalLastName ?? user?.lastName,
+  );
   const hasName = isPro
     ? Boolean(user?.firstName?.trim())
-    : Boolean(user?.firstName?.trim() && user?.lastName?.trim());
+    : personalDisplayName.trim().length > 0;
   const displayName = isPro
     ? (user?.firstName ?? "").trim() || t("common.account")
-    : hasName
-      ? `${user!.firstName!.trim()} ${user!.lastName!.trim()}`
-      : t("common.account");
+    : personalDisplayName.trim() || t("common.account");
+  const accountFullName = isPro
+    ? personalDisplayName.trim() || t("profile.dash")
+    : personalDisplayName.trim() || t("profile.dash");
   const accountComplete = Boolean(user && !user.needsOnboarding);
   const appVersion =
     Constants.expoConfig?.version ??
@@ -188,21 +229,17 @@ export default function ProfileTabScreen() {
     t("profile.dash");
 
   const onSignOut = () => {
-    Alert.alert(t("profile.signOutTitle"), t("profile.signOutMessage"), [
-      { text: t("common.cancel"), style: "cancel" },
-      {
-        text: t("profile.signOutConfirm"),
-        style: "destructive",
-        onPress: async () => {
-          setSigningOut(true);
-          try {
-            await signOut();
-          } finally {
-            setSigningOut(false);
-          }
-        },
-      },
-    ]);
+    setSignOutModalVisible(true);
+  };
+
+  const confirmSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      setSignOutModalVisible(false);
+    } finally {
+      setSigningOut(false);
+    }
   };
 
   if (isLoading && !user) {
@@ -216,6 +253,7 @@ export default function ProfileTabScreen() {
   }
 
   return (
+    <>
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <ScrollView
         contentContainerStyle={[
@@ -231,31 +269,62 @@ export default function ProfileTabScreen() {
 
         <View style={styles.hero}>
           <Pressable
-            onPress={onChangePhoto}
-            disabled={!token || avatarBusy}
+            onPress={() => void onChangePhoto()}
+            disabled={!token || avatarBusy || avatarPickerOpen}
             accessibilityRole="button"
             accessibilityLabel={t("profile.changePhoto")}
           >
-            {hasName ? (
-              <PeerAvatar
-                name={displayName}
-                phone={user?.phone ?? null}
-                remoteUrl={user?.avatarUrl}
-                size={84}
-                style={styles.avatar}
-                textStyle={styles.avatarText}
-              />
-            ) : (
-              <View style={styles.avatar}>
-                {avatarBusy ? (
-                  <ActivityIndicator color={colors.accent} />
-                ) : (
-                  <Ionicons name="person" size={36} color={colors.accent} />
-                )}
-              </View>
-            )}
+            <View style={styles.heroAvatarWrap}>
+              {hasName ? (
+                <PeerAvatar
+                  name={displayName}
+                  phone={user?.phone ?? null}
+                  remoteUrl={user?.avatarUrl}
+                  size={84}
+                  style={styles.avatar}
+                  textStyle={styles.avatarText}
+                />
+              ) : (
+                <View style={styles.avatar}>
+                  {!avatarPickerOpen && !avatarBusy ? (
+                    <Ionicons name="person" size={36} color={colors.accent} />
+                  ) : null}
+                </View>
+              )}
+              {avatarPickerOpen || avatarBusy ? (
+                <View
+                  style={[
+                    styles.heroAvatarSpinnerOverlay,
+                    { backgroundColor: colors.overlay },
+                  ]}
+                >
+                  <ActivityIndicator color={colors.accent} size="small" />
+                </View>
+              ) : null}
+            </View>
           </Pressable>
-          <Text style={styles.name}>{displayName}</Text>
+          <View style={styles.nameRow}>
+            <Text style={styles.name} numberOfLines={2}>
+              {displayName}
+            </Text>
+            {accountComplete && !isPro ? (
+              <Pressable
+                style={({ pressed }) => [
+                  styles.nameEditBtn,
+                  pressed && styles.actionBtnPressed,
+                ]}
+                onPress={() => setProfileEditMode("name")}
+                accessibilityRole="button"
+                accessibilityLabel={t("profile.editName")}
+              >
+                <Ionicons
+                  name="pencil-outline"
+                  size={20}
+                  color={colors.textMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
           <View
             style={[
               styles.statusChip,
@@ -297,6 +366,41 @@ export default function ProfileTabScreen() {
             </Text>
             <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
           </View>
+          {accountComplete && !isPro ? (
+            <View style={styles.balanceActions}>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.balanceActionPrimary,
+                  pressed && styles.balanceActionPrimaryPressed,
+                ]}
+                onPress={() => openDepositRoute()}
+                accessibilityRole="button"
+                accessibilityLabel={t("profile.actionTopUp")}
+              >
+                <Text style={styles.balanceActionPrimaryText}>
+                  {t("profile.actionTopUp")}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.balanceActionSecondary,
+                  pressed && styles.balanceActionSecondaryPressed,
+                ]}
+                onPress={() =>
+                  blypAlert(
+                    t("profile.withdrawSoonTitle"),
+                    t("profile.withdrawSoonMessage"),
+                  )
+                }
+                accessibilityRole="button"
+                accessibilityLabel={t("profile.actionWithdraw")}
+              >
+                <Text style={styles.balanceActionSecondaryText}>
+                  {t("profile.actionWithdraw")}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
 
         <CommerceSection styles={styles} onContextChanged={onContextChanged} />
@@ -347,51 +451,40 @@ export default function ProfileTabScreen() {
             style={({ pressed }) => [
               styles.broadcastRow,
               styles.broadcastRowOnline,
-              pressed && !broadcast.busy && styles.actionBtnPressed,
+              pressed && styles.actionBtnPressed,
             ]}
             onPress={() => {
-              if (broadcast.busy) return;
+              if (broadcastActivating) return;
               void onBroadcastToggle(!broadcast.on);
             }}
-            disabled={broadcast.busy}
+            disabled={broadcastActivating}
             accessibilityRole="switch"
-            accessibilityState={{ checked: broadcast.on, disabled: broadcast.busy }}
+            accessibilityState={{
+              checked: broadcast.on,
+              busy: broadcastActivating,
+            }}
             accessibilityLabel={t("profile.broadcastLabel")}
           >
             <View style={styles.broadcastTexts}>
               <Text style={styles.broadcastTitle}>
                 {t("profile.broadcastLabel")}
               </Text>
-              <Text
-                style={[
-                  styles.broadcastHint,
-                  broadcast.on && styles.broadcastHintOn,
-                ]}
-              >
-                {broadcast.on
-                  ? t("profile.broadcastHintOn")
-                  : t("profile.broadcastHintOff")}
-              </Text>
             </View>
-            {broadcast.busy ? (
-              <ActivityIndicator color={colors.accent} size="small" />
-            ) : (
-              <View style={styles.broadcastSwitchWrap} pointerEvents="none">
-                <Switch
-                  value={broadcast.on}
-                  trackColor={{
-                    false: colors.switchTrackOff,
-                    true: colors.switchTrackOn,
-                  }}
-                  thumbColor={
-                    broadcast.on
-                      ? colors.switchThumbOn
-                      : colors.switchThumbOff
-                  }
-                  ios_backgroundColor={colors.switchTrackOff}
-                />
-              </View>
-            )}
+            <View style={styles.broadcastSwitchWrap} pointerEvents="none">
+              <Switch
+                value={broadcast.on}
+                trackColor={{
+                  false: colors.switchTrackOff,
+                  true: colors.switchTrackOn,
+                }}
+                thumbColor={
+                  broadcast.on
+                    ? colors.switchThumbOn
+                    : colors.switchThumbOff
+                }
+                ios_backgroundColor={colors.switchTrackOff}
+              />
+            </View>
           </Pressable>
           <Pressable
             style={({ pressed }) => [
@@ -407,9 +500,6 @@ export default function ProfileTabScreen() {
             <View style={styles.broadcastTexts}>
               <Text style={styles.broadcastTitle}>
                 {t("profile.announcePaymentsLabel")}
-              </Text>
-              <Text style={styles.broadcastHint}>
-                {t("profile.announcePaymentsHint")}
               </Text>
             </View>
             <View style={styles.broadcastSwitchWrap} pointerEvents="none">
@@ -428,9 +518,64 @@ export default function ProfileTabScreen() {
               />
             </View>
           </Pressable>
+          {Platform.OS === "android" ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.broadcastRow,
+              styles.broadcastRowBorder,
+              pressed && styles.actionBtnPressed,
+            ]}
+            onPress={() => onQuickPayNotifToggle(!quickPayNotif)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: quickPayNotif }}
+            accessibilityLabel={t("profile.quickPayNotifLabel")}
+          >
+            <View style={styles.broadcastTexts}>
+              <Text style={styles.broadcastTitle}>
+                {t("profile.quickPayNotifLabel")}
+              </Text>
+            </View>
+            <View style={styles.broadcastSwitchWrap} pointerEvents="none">
+              <Switch
+                value={quickPayNotif}
+                trackColor={{
+                  false: colors.switchTrackOff,
+                  true: colors.switchTrackOn,
+                }}
+                thumbColor={
+                  quickPayNotif
+                    ? colors.switchThumbOn
+                    : colors.switchThumbOff
+                }
+                ios_backgroundColor={colors.switchTrackOff}
+              />
+            </View>
+          </Pressable>
+          ) : null}
         </View>
 
-        <Text style={styles.sectionTitle}>{t("profile.sectionAccount")}</Text>
+        <View style={styles.sectionTitleRow}>
+          <Text style={[styles.sectionTitle, styles.sectionTitleRowLabel]}>
+            {t("profile.sectionAccount")}
+          </Text>
+          {accountComplete && !isPro ? (
+            <Pressable
+              style={({ pressed }) => [
+                styles.sectionEditBtn,
+                pressed && styles.actionBtnPressed,
+              ]}
+              onPress={() => setProfileEditMode("account")}
+              accessibilityRole="button"
+              accessibilityLabel={t("profile.editAccount")}
+            >
+              <Ionicons
+                name="pencil-outline"
+                size={18}
+                color={colors.textMuted}
+              />
+            </Pressable>
+          ) : null}
+        </View>
         <View style={styles.sectionCard}>
           <View style={[styles.row, styles.rowBorder]}>
             <Text style={styles.rowLabel}>{t("profile.phone")}</Text>
@@ -439,18 +584,8 @@ export default function ProfileTabScreen() {
             </Text>
           </View>
           <View style={[styles.row, styles.rowBorder]}>
-            <Text style={styles.rowLabel}>{t("profile.firstName")}</Text>
-            <Text style={styles.rowValue}>
-              {(isPro ? personalFirst : user?.firstName)?.trim() ||
-                t("profile.dash")}
-            </Text>
-          </View>
-          <View style={[styles.row, styles.rowBorder]}>
-            <Text style={styles.rowLabel}>{t("profile.lastName")}</Text>
-            <Text style={styles.rowValue}>
-              {(isPro ? personalLast : user?.lastName)?.trim() ||
-                t("profile.dash")}
-            </Text>
+            <Text style={styles.rowLabel}>{t("profile.fullNameLabel")}</Text>
+            <Text style={styles.rowValue}>{accountFullName}</Text>
           </View>
           <View style={styles.row}>
             <Text style={styles.rowLabel}>{t("profile.accountId")}</Text>
@@ -530,5 +665,19 @@ export default function ProfileTabScreen() {
         </View>
       </ScrollView>
     </SafeAreaView>
+    <SignOutConfirmModal
+      visible={signOutModalVisible}
+      busy={signingOut}
+      onCancel={() => {
+        if (!signingOut) setSignOutModalVisible(false);
+      }}
+      onConfirm={() => void confirmSignOut()}
+    />
+    <ProfileEditSheet
+      visible={profileEditMode != null}
+      mode={profileEditMode ?? "name"}
+      onClose={() => setProfileEditMode(null)}
+    />
+    </>
   );
 }

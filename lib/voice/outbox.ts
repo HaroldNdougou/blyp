@@ -91,6 +91,10 @@ async function sendOne(
       localUri,
     },
   };
+  void import("@/lib/voice/waveformPeaks").then((m) => {
+    m.migrateVoiceWaveformCache(`pending-${job.clientId}`, signed.key);
+    m.prefetchVoiceWaveform(signed.key, localUri);
+  });
   const cache = await import("@/lib/messagesCache");
   const next = cache.commitOptimisticVoice(
     token,

@@ -1,6 +1,6 @@
 import type { TransactionItem } from "@/lib/api/types";
 import { clearHistoryUiCache, rememberHistoryUi } from "@/lib/history/historyUiCache";
-import { getDb, runDbWrite } from "@/lib/db/sqlite";
+import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { fallbackTxReference } from "@/lib/txReference";
 
 type CacheListener = (phone: string, items: TransactionItem[]) => void;
@@ -191,10 +191,8 @@ export function hydrateTransactionsCache(phone: string): Promise<void> {
   const existing = hydratePromises.get(phone);
   if (existing) return existing;
 
-  const p = (async () => {
+  const p = runDbRead(async (db) => {
     if (byPhone.has(phone)) return;
-    const db = await getDb();
-    if (!db) return;
     const rows = await db.getAllAsync<{
       id: string;
       type: string;
@@ -232,13 +230,13 @@ export function hydrateTransactionsCache(phone: string): Promise<void> {
       phone,
     );
     if (meta?.cursor) cursorByPhone.set(phone, meta.cursor);
-  })()
+  })
     .catch(() => {
       /* SQLite indispo / verrou : le sync réseau remplit la RAM */
     })
     .finally(() => {
-    hydratePromises.delete(phone);
-  });
+      hydratePromises.delete(phone);
+    }) as Promise<void>;
 
   hydratePromises.set(phone, p);
   return p;

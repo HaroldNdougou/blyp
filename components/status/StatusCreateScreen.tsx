@@ -33,24 +33,8 @@ import { pushStatusGridLocalPicks } from "@/lib/status/statusGridLocalCache";
 import { router, useFocusEffect } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  ActivityIndicator,
-  Alert,
-  BackHandler,
-  Keyboard,
-  Image as RnImage,
-  Linking,
-  NativeScrollEvent,
-  NativeSyntheticEvent,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-  useWindowDimensions,
-} from "react-native";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import { ActivityIndicator, BackHandler, Keyboard, Image as RnImage, Linking, NativeScrollEvent, NativeSyntheticEvent, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from "react-native";
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -234,7 +218,7 @@ export function StatusCreateScreen() {
   }, [openPhotoCompose, refreshGallery]);
 
   const onComingSoon = useCallback(() => {
-    Alert.alert(t("status.comingSoonTitle"), t("status.comingSoonMessage"));
+    blypAlert(t("status.comingSoonTitle"), t("status.comingSoonMessage"));
   }, [t]);
 
   const resetComposeDraft = useCallback(() => {
@@ -296,7 +280,7 @@ export function StatusCreateScreen() {
         onLeave();
         return;
       }
-      Alert.alert(t("status.discardDraftTitle"), undefined, [
+      blypAlert(t("status.discardDraftTitle"), undefined, [
         { text: t("status.discardDraftStay"), style: "cancel" },
         {
           text: t("status.discardDraftConfirm"),
@@ -379,7 +363,7 @@ export function StatusCreateScreen() {
       finishAfterPublish(post);
     } catch (e) {
       if (__DEV__) console.warn("[status] publish text failed", e);
-      Alert.alert(t("status.createTitle"), publishFailureMessage(e));
+      blypAlert(t("status.createTitle"), publishFailureMessage(e));
     } finally {
       setBusy(false);
     }
@@ -406,7 +390,7 @@ export function StatusCreateScreen() {
       finishAfterPublish(post);
     } catch (e) {
       if (__DEV__) console.warn("[status] publish photo failed", e);
-      Alert.alert(t("status.createTitle"), publishFailureMessage(e));
+      blypAlert(t("status.createTitle"), publishFailureMessage(e));
     } finally {
       setBusy(false);
     }

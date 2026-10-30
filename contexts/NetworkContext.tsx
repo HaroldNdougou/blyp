@@ -1,3 +1,4 @@
+import { ensureNetInfoConfigured } from "@/lib/network/configureNetInfo";
 import {
   getNetInfoBannerKind,
   OFFLINE_BANNER_DELAY_MS,
@@ -40,6 +41,7 @@ export function NetworkProvider({ children }: { children: ReactNode }) {
   const prevBannerRef = useRef<NetworkBannerKind | null>(null);
 
   useEffect(() => {
+    ensureNetInfoConfigured();
     let alive = true;
 
     const applyState = (state: NetInfoState) => {

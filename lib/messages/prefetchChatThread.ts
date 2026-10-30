@@ -27,9 +27,16 @@ export function prefetchChatThreadOnPressIn(opts: {
   });
   runAfterPaint(() => {
     if (opts.phone) {
-      void ensureMessagesSnapshotFromDb(opts.phone, opts.token, cid).then(() => {
-        perfChatOpenLap("sqlite");
-      });
+      void ensureMessagesSnapshotFromDb(opts.phone, opts.token, cid).then(
+        (msgs) => {
+          perfChatOpenLap("sqlite");
+          if (msgs?.length) {
+            void import("@/lib/media/prefetchChatMedia").then((m) =>
+              m.prefetchRecentChatMedia(opts.token, cid, msgs),
+            );
+          }
+        },
+      );
     }
   });
   InteractionManager.runAfterInteractions(() => {

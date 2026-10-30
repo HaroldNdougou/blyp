@@ -9,8 +9,48 @@ type SqliteMod = typeof import("expo-sqlite");
 export type Db = Awaited<ReturnType<SqliteMod["openDatabaseAsync"]>>;
 
 let dbPromise: Promise<Db | null> | null = null;
-/** File d’écritures — une seule withTransactionAsync à la fois. */
-let writeChain: Promise<void> = Promise.resolve();
+/** Une seule opération SQLite à la fois (lecture ou écriture). */
+let dbOpChain: Promise<unknown> = Promise.resolve();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function withBusyRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const max = 6;
+  for (let i = 0; i < max; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/database is locked|SQLITE_BUSY/i.test(msg) || i === max - 1) {
+        throw e;
+      }
+      await sleep(35 * (i + 1));
+    }
+  }
+  throw new Error("sqlite busy retry exhausted");
+}
+
+function enqueueDbOp<T>(fn: (db: Db) => Promise<T>): Promise<T | null> {
+  const task = dbOpChain
+    .then(async () => {
+      const db = await getDb();
+      if (!db) return null;
+      return withBusyRetry(() => fn(db));
+    })
+    .catch((e) => {
+      if (__DEV__) {
+        console.warn("[sqlite]", e instanceof Error ? e.message : e);
+      }
+      return null;
+    });
+  dbOpChain = task.then(
+    () => undefined,
+    () => undefined,
+  );
+  return task;
+}
 
 async function openDb(): Promise<Db | null> {
   if (Platform.OS === "web") return null;
@@ -18,7 +58,7 @@ async function openDb(): Promise<Db | null> {
     const SQLite = await import("expo-sqlite");
     const db = await SQLite.openDatabaseAsync("blyp.db");
     /** Connexion restée ouverte (reload Metro) / checkpoint WAL : attendre au lieu de « database is locked ». */
-    await db.execAsync(`PRAGMA busy_timeout = 4000;`);
+    await db.execAsync(`PRAGMA busy_timeout = 15000;`);
     await db.execAsync(`
       PRAGMA journal_mode = WAL;
       CREATE TABLE IF NOT EXISTS transactions (
@@ -87,6 +127,14 @@ async function openDb(): Promise<Db | null> {
       );
       CREATE INDEX IF NOT EXISTS idx_receipts_account_created
         ON merchant_receipts(accountId, createdAt DESC);
+      CREATE TABLE IF NOT EXISTS media_disk_lru (
+        path TEXT PRIMARY KEY,
+        namespace TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        last_access INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_media_disk_lru_access
+        ON media_disk_lru(last_access ASC);
     `);
     try {
       await db.execAsync(
@@ -137,18 +185,16 @@ export function getDb(): Promise<Db | null> {
 }
 
 /**
- * Exécute `fn` hors concurrence avec les autres écritures DB.
+ * Lecture SQLite — même file que les écritures (évite « database is locked »).
+ */
+export function runDbRead<T>(fn: (db: Db) => Promise<T>): Promise<T | null> {
+  return enqueueDbOp(fn);
+}
+
+/**
+ * Exécute `fn` hors concurrence avec les autres accès DB.
  * À utiliser pour toute mutation (transaction ou runAsync).
  */
 export function runDbWrite<T>(fn: (db: Db) => Promise<T>): Promise<T | null> {
-  const task = writeChain.then(async () => {
-    const db = await getDb();
-    if (!db) return null;
-    return fn(db);
-  });
-  writeChain = task.then(
-    () => undefined,
-    () => undefined,
-  );
-  return task;
+  return enqueueDbOp(fn);
 }

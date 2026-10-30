@@ -374,6 +374,20 @@ export async function confirmProfileAvatar(
   });
 }
 
+export async function updateMeProfile(
+  token: string,
+  input: { fullName: string; phone?: string },
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockUpdateMeProfile(token, input);
+  }
+  return request("/me/profile", {
+    method: "PUT",
+    token,
+    body: JSON.stringify(input),
+  });
+}
+
 export async function presignKycDocument(
   token: string,
   docType: KycDocType,
@@ -529,6 +543,18 @@ export async function setOnboardingProfile(
     method: "POST",
     token,
     body: JSON.stringify({ firstName, lastName }),
+  });
+}
+
+export async function cancelRegistration(
+  token: string,
+): Promise<{ cancelled: true }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockCancelRegistration(token);
+  }
+  return request("/auth/registration", {
+    method: "DELETE",
+    token,
   });
 }
 
