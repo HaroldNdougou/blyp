@@ -1,6 +1,5 @@
 /**
- * Proches à qui l’on envoie souvent des messages money — index RAM (comme quickAmounts).
- * Source : snapshot transactions (MONEY_SEND des 14 derniers jours), top 3 par nombre d’envois.
+ * Proches payés souvent — top 3 (14 jours), sans messagerie.
  * Jamais de réseau / SQLite sur Pay.
  */
 import type { TransactionItem } from "@/lib/api/types";
@@ -65,7 +64,8 @@ export function rebuildRegularRecipients(
   const since = new Date(Date.now() - WINDOW_MS).toISOString();
   let seen = 0;
   for (const tx of items ?? []) {
-    if (tx.type !== "sent" || tx.kind !== "MONEY_SEND") continue;
+    if (tx.type !== "sent") continue;
+    if (tx.kind === "MONEY_SEND") continue;
     if (String(tx.createdAt ?? "") < since) continue;
     seen += 1;
     if (seen > LOOKBACK_SENT) break;

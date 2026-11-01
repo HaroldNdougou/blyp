@@ -101,20 +101,13 @@ type PayRecipient = {
   accountId: string | null;
   name: string;
   phoneDigits: string;
-  /** Proche fréquent : envoi par message money (pas BLE). */
-  viaMoneyMessage?: boolean;
 };
-
-function newMoneyClientId() {
-  return `c-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 function regularToRecipient(r: RegularRecipient): PayRecipient {
   return {
     accountId: null,
     name: r.name,
     phoneDigits: r.phone,
-    viaMoneyMessage: true,
   };
 }
 
@@ -463,11 +456,6 @@ export default function PayHomeScreen() {
     string | null
   >(null);
   const selectedRegularRef = useRef<RegularRecipient | null>(null);
-  /** conversationId résolu en fond dès la sélection (cache → sinon POST). */
-  const regularConvRef = useRef<{
-    phone: string;
-    promise: Promise<string>;
-  } | null>(null);
 
   useEffect(() => {
     if (!userPhone) return;
@@ -489,42 +477,6 @@ export default function PayHomeScreen() {
       setSelectedRegularPhone(null);
     }
   }, [regulars]);
-
-  const resolveRegularConversation = useCallback(
-    (phone: string): Promise<string> => {
-      const hit = regularConvRef.current;
-      if (hit && hit.phone === phone) return hit.promise;
-      const access = token;
-      const promise = (async () => {
-        if (!access) throw new ApiError(t("common.genericError"), 401);
-        const cache = await import("@/lib/messagesCache");
-        const convs = cache.getConversationsSnapshot(access) ?? [];
-        const cached = convs.find(
-          (c) =>
-            String(c.peerPhone ?? "")
-              .replace(/\D/g, "")
-              .slice(-9) === phone,
-        );
-        if (cached) return cached.id;
-        if (isDemoPhone(phone)) throw new ApiError(t("demo.readOnly"), 400);
-        const api = await import("@/lib/api/client");
-        const { conversation } = await api.openConversation(access, phone);
-        cache.setConversationsSnapshot(access, [
-          conversation,
-          ...convs.filter((c) => c.id !== conversation.id),
-        ]);
-        return conversation.id;
-      })();
-      promise.catch(() => {
-        if (regularConvRef.current?.promise === promise) {
-          regularConvRef.current = null;
-        }
-      });
-      regularConvRef.current = { phone, promise };
-      return promise;
-    },
-    [token, t],
-  );
 
   useEffect(() => {
     const apply = () => {
@@ -574,7 +526,6 @@ export default function PayHomeScreen() {
     useState<PayOutcomeSheetData | null>(null);
   const payPinFailedRef = useRef(0);
   /** Une clé par ouverture PIN : double tap / retry réseau = un seul débit. */
-  const moneyIdemRef = useRef<string | null>(null);
   const balance = user?.balanceFcfa ?? 0;
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
   /** null = fermé ; même UI que la connexion rapide, message selon le contexte. */
@@ -790,12 +741,7 @@ export default function PayHomeScreen() {
   const continueToPayPin = useCallback(
     (n: number, to: PayRecipient) => {
       payRecipientAtPinRef.current = to;
-      if (to.viaMoneyMessage) {
-        moneyIdemRef.current = newMoneyClientId();
-        void resolveRegularConversation(to.phoneDigits).catch(() => {});
-      } else {
-        recipientRef.current = to;
-      }
+      recipientRef.current = to;
       payPinFailedRef.current = 0;
       setPayPinErrorLine(null);
       setPayPinSelection(undefined);
@@ -818,12 +764,12 @@ export default function PayHomeScreen() {
         setPayPinModalVisible(true);
       })();
     },
-    [t, resolveRegularConversation],
+    [t],
   );
 
   const openPayPinForAmount = useCallback(
     (n: number, to: PayRecipient) => {
-      if (!to.accountId && !to.viaMoneyMessage) {
+      if (!to.accountId && to.phoneDigits.length !== 9) {
         blypAlert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
         return;
       }
@@ -860,7 +806,6 @@ export default function PayHomeScreen() {
         return;
       }
       if (
-        !to.viaMoneyMessage &&
         spendCategoryRef.current === "soa_car" &&
         to.accountId
       ) {
@@ -1001,11 +946,10 @@ export default function PayHomeScreen() {
       selectedRegularRef.current = r;
       setSelectedRegularPhone(r.phone);
       warmPayApi();
-      void resolveRegularConversation(r.phone).catch(() => {});
       const n = payAmountFcfaRef.current;
       if (n != null && n > 0) handlePayRef.current(n);
     },
-    [warmPayApi, resolveRegularConversation],
+    [warmPayApi],
   );
 
   const selectedRegularLabel = useMemo(() => {
@@ -1123,43 +1067,20 @@ export default function PayHomeScreen() {
         reference: string | null;
       };
       let txKind = "PAYMENT";
-      if (to.viaMoneyMessage) {
-        const conversationId = await resolveRegularConversation(
-          to.phoneDigits,
-        );
-        const idem = moneyIdemRef.current ?? newMoneyClientId();
-        moneyIdemRef.current = idem;
-        const res = await api.sendMoneyMessage(
-          token,
-          conversationId,
-          payPendingAmount,
-          newMoneyClientId(),
-          idem,
-          pin,
-        );
-        payRes = {
-          balanceFcfa: res.balanceFcfa,
-          transactionId: res.message.moneyTransfer?.transferId ?? null,
-          reference: null,
-        };
-        txKind = "MONEY_SEND";
-        void import("@/lib/messagesCache").then((m) => {
-          m.upsertPushedMessage(token, res.message);
-        });
+      const seatForPay = pendingSoaSeatRef.current;
+      payRes = await api.pay(
+        token,
+        payPendingAmount,
+        to.name,
+        to.phoneDigits || null,
+        pin,
+        to.accountId,
+        seatForPay,
+      );
+      pendingSoaSeatRef.current = null;
+      if (selectedRegularRef.current?.phone === to.phoneDigits) {
         selectedRegularRef.current = null;
         setSelectedRegularPhone(null);
-      } else {
-        const seatForPay = pendingSoaSeatRef.current;
-        payRes = await api.pay(
-          token,
-          payPendingAmount,
-          to.name,
-          to.phoneDigits || null,
-          pin,
-          to.accountId,
-          seatForPay,
-        );
-        pendingSoaSeatRef.current = null;
       }
       if (payPinFocusTimerRef.current) {
         clearTimeout(payPinFocusTimerRef.current);
@@ -1202,16 +1123,14 @@ export default function PayHomeScreen() {
         amountFcfa: payPendingAmount,
         recipientName: to.name,
         copy:
-          to.viaMoneyMessage || spendCategoryRef.current === "other"
-            ? "transfer"
-            : "payment",
+          spendCategoryRef.current === "other" ? "transfer" : "payment",
       });
       if (to.accountId && to.name) {
         void import("@/lib/peers/displayNameCache").then((m) => {
           m.rememberPeerDisplayName(to.accountId!, to.name);
         });
       }
-      const cat = to.viaMoneyMessage ? null : spendCategoryRef.current;
+      const cat = spendCategoryRef.current;
       if (cat) {
         void import("@/lib/peers/peerCategoryCache").then((m) => {
           m.rememberPeerCategory(to.accountId ?? "", cat, to.phoneDigits);
@@ -1281,7 +1200,7 @@ export default function PayHomeScreen() {
             e.status === 502 ||
             e.status === 503 ||
             e.status === 504);
-        if (networkDown && to && !to.viaMoneyMessage) {
+        if (networkDown && to) {
           payOfflinePendingRef.current = {
             amountFcfa: payPendingAmount,
             recipientName: to.name,
@@ -1300,7 +1219,6 @@ export default function PayHomeScreen() {
         setPayOutcomeSheet({
           kind: "error",
           title:
-            payRecipientAtPinRef.current?.viaMoneyMessage ||
             spendCategoryRef.current === "other"
               ? t("pay.transferTitle")
               : t("pay.paymentTitle"),
@@ -1322,7 +1240,6 @@ export default function PayHomeScreen() {
       schedulePayPinFieldFocus,
       t,
       userPhone,
-      resolveRegularConversation,
     ],
   );
 
@@ -1512,12 +1429,12 @@ export default function PayHomeScreen() {
                     style={styles.receiveNearbyRow}
                     onPress={() => {
                       if (payHandoff) return;
-                      void onReceiveNearbyToggle(!receiveBroadcast.on);
+                      void onReceiveNearbyToggle(!receiveBroadcast.wantOn);
                     }}
                     disabled={payHandoff}
                     accessibilityRole="switch"
                     accessibilityState={{
-                      checked: receiveBroadcast.on,
+                      checked: receiveBroadcast.wantOn,
                       disabled: payHandoff,
                     }}
                     accessibilityLabel={t("pay.receiveNearbyLabel")}
@@ -1528,7 +1445,7 @@ export default function PayHomeScreen() {
                     ) : (
                       <ReceiveNearbyGlyph
                         color={
-                          receiveBroadcast.on
+                          receiveBroadcast.wantOn
                             ? colors.accent
                             : colors.textMuted
                         }
@@ -1643,7 +1560,6 @@ export default function PayHomeScreen() {
                 <Text style={styles.payPinModalSub}>
                   <Trans
                     i18nKey={
-                      payRecipientAtPinRef.current?.viaMoneyMessage ||
                       spendCategory === "other"
                         ? "pay.pinConfirmTransfer"
                         : "pay.pinConfirmPayment"

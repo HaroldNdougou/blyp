@@ -1,5 +1,6 @@
 import type { TaxiBroadcastAccount } from "@/lib/ble/taxiBroadcastController";
 import {
+  attemptTaxiBroadcastRecovery,
   getTaxiBroadcastSnapshot,
   setTaxiBroadcastEnabled,
   subscribeTaxiBroadcast,
@@ -14,7 +15,7 @@ export type TaxiBroadcastSetResult = {
 
 /**
  * Interrupteur diffusion taxi / commerce — état global partagé (Commerce + Profil).
- * Arrière-plan : foreground service Android (notif « En ligne »).
+ * `wantOn` = intent utilisateur (reste actif sauf coupure manuelle).
  */
 export function useTaxiBroadcast(account: TaxiBroadcastAccount) {
   const [snap, setSnap] = useState(getTaxiBroadcastSnapshot);
@@ -27,5 +28,19 @@ export function useTaxiBroadcast(account: TaxiBroadcastAccount) {
     [account.accountId, account.phone, account.category],
   );
 
-  return { on: snap.on, status: snap.status, busy: snap.busy, setEnabled };
+  const retryRecovery = useCallback(
+    (): Promise<TaxiBroadcastSetResult> =>
+      attemptTaxiBroadcastRecovery({ forcePrompt: true }),
+    [],
+  );
+
+  return {
+    on: snap.on,
+    wantOn: snap.wantOn,
+    interrupted: snap.interrupted,
+    status: snap.status,
+    busy: snap.busy,
+    setEnabled,
+    retryRecovery,
+  };
 }

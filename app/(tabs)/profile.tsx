@@ -150,7 +150,7 @@ export default function ProfileTabScreen() {
       void import("@/lib/pay/quickPayNotifPref").then((m) => {
         void m.setQuickPayNotifPref(enabled).then(async () => {
           const { syncQuickPayNotif } = await import("@/lib/pay/syncQuickPayNotif");
-          const res = await syncQuickPayNotif();
+          const res = await syncQuickPayNotif({ interactive: true });
           if (!enabled || res.ok) return;
           setQuickPayNotif(false);
           void m.setQuickPayNotifPref(false);
@@ -455,13 +455,13 @@ export default function ProfileTabScreen() {
             ]}
             onPress={() => {
               if (broadcastActivating) return;
-              void onBroadcastToggle(!broadcast.on);
+              void onBroadcastToggle(!broadcast.wantOn);
             }}
             disabled={broadcastActivating}
             accessibilityRole="switch"
             accessibilityState={{
-              checked: broadcast.on,
-              busy: broadcastActivating,
+              checked: broadcast.wantOn,
+              busy: broadcastActivating || broadcast.busy,
             }}
             accessibilityLabel={t("profile.broadcastLabel")}
           >
@@ -472,13 +472,13 @@ export default function ProfileTabScreen() {
             </View>
             <View style={styles.broadcastSwitchWrap} pointerEvents="none">
               <Switch
-                value={broadcast.on}
+                value={broadcast.wantOn}
                 trackColor={{
                   false: colors.switchTrackOff,
                   true: colors.switchTrackOn,
                 }}
                 thumbColor={
-                  broadcast.on
+                  broadcast.wantOn
                     ? colors.switchThumbOn
                     : colors.switchThumbOff
                 }

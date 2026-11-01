@@ -300,6 +300,12 @@ export default {
       "Invalid Blyp account for broadcast. Sign in again or contact support.",
     broadcastOffBt:
       "Turn on Bluetooth to broadcast. If the system prompt did not appear, open Bluetooth settings.",
+    broadcastReactivate: "Turn broadcasting back on",
+    broadcastInterruptedTitle: "Broadcast interrupted",
+    broadcastInterruptedBody:
+      "You are still “Online”, but the phone stopped broadcasting. Tap Turn back on or open Blyp.",
+    broadcastInterruptedSpeech:
+      "Attention. Your Blyp broadcast was interrupted. Open the app to turn it back on.",
     appName: "Blyp Pay",
     signOut: "Sign out",
     signOutTitle: "Sign out",
@@ -539,6 +545,7 @@ export default {
     onlineLabel: "Online",
     onlineOn: "Online",
     onlineOff: "Offline",
+    onlineReconnecting: "Online…",
     onlineNotificationTitle: "Blyp — Online",
     onlineNotificationBody: "Broadcasting · visible for payments",
     onlineNotificationStop: "Stop",

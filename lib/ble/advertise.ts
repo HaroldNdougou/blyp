@@ -82,15 +82,16 @@ async function hardNativeStop(
 }
 
 export async function startTaxiBroadcast(
-  input: StartAdvertiseInput,
+  input: StartAdvertiseInput & { forcePrompt?: boolean },
 ): Promise<StartAdvertiseResult> {
   warmBleAdvertiserModule();
   await withTimeout(waitTaxiBroadcastStopped(), 250, undefined);
 
+  const forcePrompt = input.forcePrompt ?? true;
   const [adv, radio] = await Promise.all([
     loadAdvertiser(),
     withTimeout(
-      prepareBleRadio({ advertise: true, forcePrompt: true }),
+      prepareBleRadio({ advertise: true, forcePrompt }),
       10_000,
       "denied" as const,
     ),

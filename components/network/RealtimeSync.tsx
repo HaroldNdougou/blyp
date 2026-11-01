@@ -2,10 +2,6 @@ import {
   DEV_BACKGROUND_BOOT_MS,
   DEV_METRO_LITE,
 } from "@/lib/perf/devMetroLite";
-import { kickImageOutbox } from "@/lib/image/outbox";
-import { kickMoneyOutbox } from "@/lib/messages/moneyOutbox";
-import { kickTextOutbox } from "@/lib/messages/textOutbox";
-import { kickVoiceOutbox } from "@/lib/voice/outbox";
 import { useAuth } from "@/contexts/authContextBase";
 import { useNetwork } from "@/contexts/NetworkContext";
 import { useEffect, useRef } from "react";
@@ -62,11 +58,6 @@ export function RealtimeSync() {
           await syncTransactionsFromNetwork(token, phone);
           if (cancelled) return;
           await drainOfflineQueue({ token, phone });
-          if (cancelled) return;
-          kickTextOutbox(token);
-          kickVoiceOutbox(token);
-          kickImageOutbox(token);
-          kickMoneyOutbox(token);
         } catch {
           /* silencieux */
         }

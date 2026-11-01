@@ -12,7 +12,8 @@ export function ensureNetInfoConfigured(): void {
   NetInfo.configure({
     reachabilityUrl: `${API_BASE_URL}/health`,
     reachabilityMethod: "GET",
-    reachabilityRequestTimeout: 10_000,
+    /** Court : ne pas bloquer le thread réseau des dizaines de secondes hors-ligne. */
+    reachabilityRequestTimeout: 4_000,
     reachabilityTest: async (response) =>
       response.status >= 200 && response.status < 300,
     useNativeReachability: false,

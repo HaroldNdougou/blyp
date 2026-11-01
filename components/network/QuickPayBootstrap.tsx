@@ -8,7 +8,7 @@ import { bindQuickPayNearbyCommerceWatcher } from "@/lib/pay/quickPayNearbyWatch
 import { syncQuickPayNativeRuntime } from "@/lib/pay/syncQuickPayNativeSecrets";
 import { syncQuickPayNotif } from "@/lib/pay/syncQuickPayNotif";
 import { useAuth } from "@/contexts/authContextBase";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { AppState, InteractionManager, Platform } from "react-native";
 
 function drainNativeQuickPayPending(): void {
@@ -20,23 +20,31 @@ function drainNativeQuickPayPending(): void {
 /** Notif persistante + sync secrets natifs (Android). */
 export function QuickPayBootstrap() {
   const { token, user, updateBalance, refreshUser } = useAuth();
+  const notifRestoredForTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (Platform.OS !== "web" && token) {
-      const task = InteractionManager.runAfterInteractions(() => {
-        void syncQuickPayNotif();
-        void syncQuickPayNativeRuntime({
-          balanceFcfa: user?.balanceFcfa,
-          phone: user?.phone,
-        });
-      });
-      return () => task.cancel?.();
-    }
-    if (Platform.OS !== "web" && !token) {
+    if (Platform.OS === "web") return;
+    if (!token) {
+      notifRestoredForTokenRef.current = null;
       void import("@/lib/pay/syncQuickPayNotif").then((m) =>
         m.stopQuickPayNotifIfNeeded(),
       );
+      return;
     }
+    if (notifRestoredForTokenRef.current === token) return;
+    notifRestoredForTokenRef.current = token;
+    const task = InteractionManager.runAfterInteractions(() => {
+      void syncQuickPayNotif({ interactive: false });
+    });
+    return () => task.cancel?.();
+  }, [token]);
+
+  useEffect(() => {
+    if (Platform.OS === "web" || !token) return;
+    void syncQuickPayNativeRuntime({
+      balanceFcfa: user?.balanceFcfa,
+      phone: user?.phone,
+    });
   }, [token, user?.balanceFcfa, user?.phone]);
 
   useEffect(() => {

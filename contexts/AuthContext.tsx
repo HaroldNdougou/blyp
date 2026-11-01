@@ -33,17 +33,8 @@ function hydrateTxCache(phone: string) {
     });
 }
 
-function hydrateMessagesCache(phone: string, token?: string | null) {
-  void import("@/lib/messagesCache")
-    .then((m) => m.hydrateMessagesCache(phone, token))
-    .catch(() => {
-      /* SQLite / race au reload — best effort */
-    });
-}
-
-function hydrateLocalCaches(phone: string, token?: string | null) {
+function hydrateLocalCaches(phone: string, _token?: string | null) {
   hydrateTxCache(phone);
-  hydrateMessagesCache(phone, token);
 }
 
 async function clearTxCaches() {
@@ -133,7 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await hydrateAuthSession();
         if (!alive) return;
 
-        let tok = getAccessToken();
+        const tok = getAccessToken();
         const refresh = getRefreshToken();
         const snap = getUserSnapshot();
 
@@ -142,26 +133,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const deferSessionRefresh =
-          DEV_BACKGROUND_BOOT_MS > 0 && Boolean(tok || snap);
-
-        if (refresh && !deferSessionRefresh) {
-          const api = await import("@/lib/api/client");
-          await api.ensureSessionFresh();
-          if (!alive) return;
-          tok = getAccessToken();
-        }
-
-        if (!tok && !getRefreshToken() && !deferSessionRefresh) {
-          await clearAuthSession();
-          await clearTxCaches();
-          if (alive) {
-            setToken(null);
-            setUser(null);
-            setIsLoading(false);
-          }
-          return;
-        }
+        /** Release : jamais attendre le refresh réseau avant de masquer le splash (session locale d’abord). */
+        const deferSessionRefresh = DEV_BACKGROUND_BOOT_MS > 0;
 
         if (alive) {
           setToken(tok);
@@ -169,7 +142,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
 
-        if (snap?.phone && tok) hydrateLocalCaches(snap.phone, tok);
+        if (snap?.phone) hydrateLocalCaches(snap.phone, tok);
 
         const refreshProfile = () => {
           if (!alive) return;
@@ -265,16 +238,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       /* best effort */
     }
     try {
-      const { clearQuickPayNotifPref } = await import(
-        "@/lib/pay/quickPayNotifPref"
-      );
       const { clearQuickPayRecipient } = await import(
         "@/lib/pay/quickPayRecipient"
       );
       const { stopQuickPayNotifNative } = await import(
         "@/lib/pay/quickPayNotifNative"
       );
-      await clearQuickPayNotifPref();
       await clearQuickPayRecipient();
       await stopQuickPayNotifNative();
       const { clearQuickPayNativeRuntime } = await import(
@@ -290,8 +259,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
     await clearTransactionPinVault();
     await clearTxCaches();
-    const { clearAllMessagesSnapshots } = await import("@/lib/messagesCache");
-    clearAllMessagesSnapshots();
     const { resetAggressiveWarm } = await import("@/lib/perf/aggressiveWarm");
     resetAggressiveWarm();
     setToken(null);

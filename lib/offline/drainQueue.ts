@@ -53,18 +53,4 @@ export async function drainOfflineQueue(opts: {
       await bumpOfflineOpAttempt(op.id);
     }
   }
-  try {
-    const { hydrateMessagesCache } = await import("@/lib/messagesCache");
-    await hydrateMessagesCache(opts.phone, opts.token);
-    const { kickVoiceOutbox } = await import("@/lib/voice/outbox");
-    const { kickImageOutbox } = await import("@/lib/image/outbox");
-    kickVoiceOutbox(opts.token);
-    kickImageOutbox(opts.token);
-    const { kickMoneyOutbox } = await import("@/lib/messages/moneyOutbox");
-    kickMoneyOutbox(opts.token);
-    const { kickTextOutbox } = await import("@/lib/messages/textOutbox");
-    kickTextOutbox(opts.token);
-  } catch {
-    /* vocaux : prochain reconnect */
-  }
 }

@@ -23,15 +23,6 @@ function warmJsModules(token: string | null): void {
   });
   prefetchModule(() => import("@/components/pay/PayRegisterOverlay"));
   prefetchModule(() => import("@/app/(tabs)/pay"));
-  prefetchModule(() => import("@/app/(tabs)/index"));
-  prefetchModule(() => import("@/components/messages/ConversationsScreen"));
-  prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
-  prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));
-  prefetchModule(() => import("@/app/chat/[id]"));
-  prefetchModule(() => import("@/lib/messages/prefetchChatThread"));
-  prefetchModuleThen(() => import("@/lib/messages/chatSend"), (m) =>
-    m.prefetchChatMessaging(),
-  );
   prefetchModuleThen(() => import("@/lib/image/pickFromLibrary"), (m) =>
     m.warmImageLibraryPermission(),
   );
@@ -50,7 +41,6 @@ export function runAggressiveWarm(opts: {
   const { token, phone } = opts;
 
   if (__DEV__) {
-    /** Metro + Redmi : pas de flood chunks / SQLite / réseau ici (voir eagerRoutes). */
     return;
   }
 
@@ -73,8 +63,6 @@ export function runAggressiveWarm(opts: {
           );
           ensureHistoryUiRows(phone, snap);
         }
-        const { hydrateMessagesCache } = await import("@/lib/messagesCache");
-        await hydrateMessagesCache(phone, token);
         const { hydrateSpendCategories } = await import(
           "@/lib/peers/peerCategoryCache"
         );
@@ -102,45 +90,6 @@ export function runAggressiveWarm(opts: {
           "@/lib/sync/transactionsSync"
         );
         await syncTransactionsFromNetwork(token, phone);
-      } catch {
-        /* best effort */
-      }
-      try {
-        const api = await import("@/lib/api/client");
-        const cache = await import("@/lib/messagesCache");
-        const { items } = await api.listConversations(token);
-        cache.setConversationsSnapshot(token, items);
-        for (const c of items.slice(0, 5)) {
-          const {
-            items: msgs,
-            peerLastReadAt,
-            peerLastDeliveredAt,
-          } = await api.listMessages(token, c.id, { limit: 40 });
-          const prev = cache.getMessagesSnapshot(token, c.id) ?? [];
-          const { mergeRecentThreadPull } = await import(
-            "@/lib/messages/mergeThreadPull"
-          );
-          cache.applyServerMessagesSnapshot(
-            token,
-            c.id,
-            mergeRecentThreadPull(prev, msgs),
-          );
-          cache.setReceiptsSnapshot(c.id, {
-            peerLastReadAt: peerLastReadAt ?? null,
-            peerLastDeliveredAt: peerLastDeliveredAt ?? null,
-          });
-          const { markThreadMessagesPulled } = await import(
-            "@/lib/messages/threadPullGate"
-          );
-          markThreadMessagesPulled(c.id);
-          const snap = cache.getMessagesSnapshot(token, c.id);
-          if (snap?.length) {
-            const { prefetchRecentChatMedia } = await import(
-              "@/lib/media/prefetchChatMedia"
-            );
-            prefetchRecentChatMedia(token, c.id, snap);
-          }
-        }
       } catch {
         /* best effort */
       }

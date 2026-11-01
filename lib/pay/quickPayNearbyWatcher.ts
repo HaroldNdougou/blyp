@@ -55,7 +55,7 @@ export function bindQuickPayNearbyCommerceWatcher(user: ApiUser | null): () => v
 
   const pushNotif = async (recipient: QuickPayRecipient | null) => {
     await rememberQuickPayRecipient(recipient);
-    await syncQuickPayNotif();
+    await syncQuickPayNotif({ interactive: false });
     if (recipient) {
       await syncQuickPayNativeRuntime({
         balanceFcfa: user?.balanceFcfa,

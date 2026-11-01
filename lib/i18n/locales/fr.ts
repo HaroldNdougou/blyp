@@ -304,6 +304,12 @@ export default {
       "Compte Blyp invalide pour la diffusion. Reconnecte-toi ou contacte le support.",
     broadcastOffBt:
       "Allume le Bluetooth pour diffuser. Si la fenêtre système n’apparaît pas, ouvre les réglages Bluetooth.",
+    broadcastReactivate: "Réactiver la diffusion",
+    broadcastInterruptedTitle: "Diffusion interrompue",
+    broadcastInterruptedBody:
+      "Tu es toujours « En ligne », mais le téléphone a coupé la diffusion. Appuie sur Réactiver ou ouvre Blyp.",
+    broadcastInterruptedSpeech:
+      "Attention. Ta diffusion Blyp est interrompue. Ouvre l’application pour réactiver.",
     appName: "Blyp Pay",
     signOut: "Se déconnecter",
     signOutTitle: "Déconnexion",
@@ -546,6 +552,7 @@ export default {
     onlineLabel: "En ligne",
     onlineOn: "En ligne",
     onlineOff: "Hors ligne",
+    onlineReconnecting: "En ligne…",
     onlineNotificationTitle: "Blyp — En ligne",
     onlineNotificationBody: "Diffusion active · visible pour les paiements",
     onlineNotificationStop: "Arrêter",

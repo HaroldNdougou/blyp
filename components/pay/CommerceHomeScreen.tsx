@@ -274,31 +274,40 @@ export function CommerceHomeScreen() {
           style={styles.onlineRow}
           onPress={() => {
             if (onlineActivating) return;
-            void onBroadcastToggle(!broadcast.on);
+            void onBroadcastToggle(!broadcast.wantOn);
           }}
           disabled={onlineActivating}
           accessibilityRole="switch"
           accessibilityState={{
-            checked: broadcast.on,
-            busy: onlineActivating,
+            checked: broadcast.wantOn,
+            busy: onlineActivating || broadcast.busy,
           }}
           accessibilityLabel={t("commerce.onlineLabel")}
           hitSlop={{ top: 8, bottom: 8, left: 12, right: 8 }}
         >
           <Text
-            style={[styles.onlineLabel, broadcast.on && styles.onlineLabelOn]}
+            style={[
+              styles.onlineLabel,
+              broadcast.wantOn && styles.onlineLabelOn,
+            ]}
           >
-            {broadcast.on ? t("commerce.onlineOn") : t("commerce.onlineOff")}
+            {broadcast.busy
+              ? t("commerce.onlineReconnecting")
+              : broadcast.wantOn
+                ? broadcast.on
+                  ? t("commerce.onlineOn")
+                  : t("commerce.onlineReconnecting")
+                : t("commerce.onlineOff")}
           </Text>
           <View style={styles.onlineSwitchWrap} pointerEvents="none">
             <Switch
-              value={broadcast.on}
+              value={broadcast.wantOn}
               trackColor={{
                 false: colors.switchTrackOff,
                 true: colors.switchTrackOn,
               }}
               thumbColor={
-                broadcast.on ? colors.switchThumbOn : colors.switchThumbOff
+                broadcast.wantOn ? colors.switchThumbOn : colors.switchThumbOff
               }
               ios_backgroundColor={colors.switchTrackOff}
             />

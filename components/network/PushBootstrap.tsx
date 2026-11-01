@@ -4,23 +4,6 @@ import {
   parsePushData,
   softHydrateAfterPaymentPush,
 } from "@/lib/push/handleIncoming";
-import {
-  ingestIncomingPush,
-  ingestSilentChatPush,
-  isViewingConversation,
-  notifyConversationReceipt,
-  notifyMessageDeleted,
-  notifyMessageReaction,
-  notifyMoneyClaimed,
-  notifyMoneyTray,
-  parseConversationReceiptPush,
-  parseMessagePush,
-  parseMessageDeletedPush,
-  parseMessageReactionPush,
-  parseMoneyClaimedPush,
-  parseMoneyTrayPush,
-  startMessageLiveBridge,
-} from "@/lib/messages/live";
 import { useRouter } from "expo-router";
 import { useEffect, useRef } from "react";
 import {
@@ -36,8 +19,7 @@ import { DEV_BACKGROUND_BOOT_MS } from "@/lib/perf/devMetroLite";
 const BOOT_DELAY_MS = DEV_BACKGROUND_BOOT_MS > 0 ? DEV_BACKGROUND_BOOT_MS : 400;
 
 /**
- * Push Expo — bootstrap après interactions (jamais splash).
- * Réception soft : hydrate cache ; tap → home.
+ * Push Expo — paiements wallet uniquement (MVP sans messagerie).
  */
 export function PushBootstrap() {
   const { token, user, refreshUser, applyIncomingPayment } = useAuth();
@@ -47,7 +29,6 @@ export function PushBootstrap() {
 
   useEffect(() => {
     if (Platform.OS === "web") return;
-    startMessageLiveBridge();
     const payMod = (
       NativeModules as { BlypPaymentAnnounce?: object }
     ).BlypPaymentAnnounce;
@@ -63,7 +44,6 @@ export function PushBootstrap() {
         },
       );
     }
-    /** Pref annonce — hydrate RAM après frame, jamais splash. */
     const announceTimer = setTimeout(() => {
       InteractionManager.runAfterInteractions(() => {
         void import("@/lib/push/announcePref").then((m) => {
@@ -91,105 +71,32 @@ export function PushBootstrap() {
     let cancelled = false;
     const bootTimer = setTimeout(() => {
       void import("expo-notifications").then((Notifications) => {
-      if (cancelled) return;
-      Notifications.setNotificationHandler({
-        handleNotification: async (notification) => {
-          const raw = notification.request.content.data as Record<
-            string,
-            unknown
-          >;
-          if (ingestSilentChatPush(raw)) {
+        if (cancelled) return;
+        Notifications.setNotificationHandler({
+          handleNotification: async (notification) => {
+            const raw = notification.request.content.data as Record<
+              string,
+              unknown
+            >;
+            const data = parsePushData(raw);
+            if (data) {
+              return {
+                shouldShowAlert: true,
+                shouldPlaySound: true,
+                shouldSetBadge: false,
+                shouldShowBanner: true,
+                shouldShowList: true,
+              };
+            }
             return {
-              shouldShowAlert: false,
-              shouldPlaySound: false,
+              shouldShowAlert: true,
+              shouldPlaySound: true,
               shouldSetBadge: false,
-              shouldShowBanner: false,
-              shouldShowList: false,
+              shouldShowBanner: true,
+              shouldShowList: true,
             };
-          }
-          const tray = parseMoneyTrayPush(raw);
-          if (tray && tray.kind !== "claimed") {
-            notifyMoneyTray(tray);
-            const hide =
-              Platform.OS === "android" ||
-              isViewingConversation(tray.conversationId);
-            return {
-              shouldShowAlert: !hide,
-              shouldPlaySound: !hide,
-              shouldSetBadge: false,
-              shouldShowBanner: !hide,
-              shouldShowList: !hide,
-            };
-          }
-          const claimed = parseMoneyClaimedPush(raw);
-          if (claimed) {
-            notifyMoneyClaimed(claimed);
-            const hide =
-              Platform.OS === "android" ||
-              isViewingConversation(claimed.conversationId);
-            return {
-              shouldShowAlert: !hide,
-              shouldPlaySound: !hide,
-              shouldSetBadge: false,
-              shouldShowBanner: !hide,
-              shouldShowList: !hide,
-            };
-          }
-          const receipt = parseConversationReceiptPush(raw);
-          if (receipt) {
-            notifyConversationReceipt(receipt);
-            return {
-              shouldShowAlert: false,
-              shouldPlaySound: false,
-              shouldSetBadge: false,
-              shouldShowBanner: false,
-              shouldShowList: false,
-            };
-          }
-          const reaction = parseMessageReactionPush(raw);
-          if (reaction) {
-            notifyMessageReaction(reaction);
-            return {
-              shouldShowAlert: false,
-              shouldPlaySound: false,
-              shouldSetBadge: false,
-              shouldShowBanner: false,
-              shouldShowList: false,
-            };
-          }
-          const deleted = parseMessageDeletedPush(raw);
-          if (deleted) {
-            notifyMessageDeleted(deleted);
-            return {
-              shouldShowAlert: false,
-              shouldPlaySound: false,
-              shouldSetBadge: false,
-              shouldShowBanner: false,
-              shouldShowList: false,
-            };
-          }
-          const message = parseMessagePush(raw);
-          if (message) {
-            ingestIncomingPush(raw);
-            const hide =
-              message.silent || isViewingConversation(message.conversationId);
-            return {
-              shouldShowAlert: !hide,
-              shouldPlaySound: !hide,
-              shouldSetBadge: false,
-              shouldShowBanner: !hide,
-              shouldShowList: !hide,
-            };
-          }
-          return {
-            shouldShowAlert: true,
-            shouldPlaySound: true,
-            shouldSetBadge: false,
-            shouldShowBanner: true,
-            shouldShowList: true,
-          };
-        },
-      });
+          },
+        });
       });
     }, BOOT_DELAY_MS);
 
@@ -199,7 +106,6 @@ export function PushBootstrap() {
     };
   }, []);
 
-  /** Enregistrement token — dès session (pas bloqué par onboarding). */
   useEffect(() => {
     if (!token) {
       registeredFor.current = null;
@@ -238,232 +144,63 @@ export function PushBootstrap() {
 
     const bootTimer = setTimeout(() => {
       void import("expo-notifications").then((Notifications) => {
-      if (cancelled) return;
+        if (cancelled) return;
 
-      subReceived = Notifications.addNotificationReceivedListener((n) => {
-        const raw = n.request.content.data as Record<string, unknown>;
-        if (ingestSilentChatPush(raw)) return;
-        const tray = parseMoneyTrayPush(raw);
-        if (tray && tray.kind !== "claimed") {
-          notifyMoneyTray(tray);
-          return;
-        }
-        const claimed = parseMoneyClaimedPush(raw);
-        if (claimed) {
-          notifyMoneyClaimed(claimed);
-          return;
-        }
-        const receipt = parseConversationReceiptPush(raw);
-        if (receipt) {
-          notifyConversationReceipt(receipt);
-          return;
-        }
-        const reaction = parseMessageReactionPush(raw);
-        if (reaction) {
-          notifyMessageReaction(reaction);
-          return;
-        }
-        const deletedMsg = parseMessageDeletedPush(raw);
-        if (deletedMsg) {
-          notifyMessageDeleted(deletedMsg);
-          return;
-        }
-        const incoming = parseMessagePush(raw);
-        if (incoming) {
-          ingestIncomingPush(raw);
-          return;
-        }
-        const data = parsePushData(raw);
-        if (!data) return;
-        applyIncomingPayment(data);
-        softHydrateAfterPaymentPush({ token, phone, refreshUser });
-        void import("@/lib/push/announcePayment").then((m) => {
-          void m.maybeAnnouncePaymentReceived(data);
-        });
-      });
-
-      subResponse = Notifications.addNotificationResponseReceivedListener(
-        (response) => {
-          const raw = response.notification.request.content.data as Record<
-            string,
-            unknown
-          >;
-          if (ingestSilentChatPush(raw)) return;
-          const trayTap = parseMoneyTrayPush(raw);
-          if (trayTap && trayTap.kind !== "claimed") {
-            notifyMoneyTray(trayTap);
-            try {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: trayTap.conversationId,
-                  transferId: trayTap.transferId,
-                },
-              });
-            } catch {
-              /* ignore */
-            }
-            return;
-          }
-          const claimedTap = parseMoneyClaimedPush(raw);
-          if (claimedTap) {
-            notifyMoneyClaimed(claimedTap);
-            try {
-              router.push({
-                pathname: "/chat/[id]",
-                params: {
-                  id: claimedTap.conversationId,
-                  transferId: claimedTap.transferId,
-                },
-              });
-            } catch {
-              /* ignore */
-            }
-            return;
-          }
-          const receiptTap = parseConversationReceiptPush(raw);
-          if (receiptTap) {
-            notifyConversationReceipt(receiptTap);
-            return;
-          }
-          const reactionTap = parseMessageReactionPush(raw);
-          if (reactionTap) {
-            notifyMessageReaction(reactionTap);
-            return;
-          }
-          const deletedTap = parseMessageDeletedPush(raw);
-          if (deletedTap) {
-            notifyMessageDeleted(deletedTap);
-            return;
-          }
-          const incoming = parseMessagePush(raw);
-          if (incoming) {
-            ingestIncomingPush(raw);
-            try {
-              router.push(
-                `/chat/${encodeURIComponent(incoming.conversationId)}`,
-              );
-            } catch {
-              /* ignore */
-            }
-            return;
-          }
+        subReceived = Notifications.addNotificationReceivedListener((n) => {
+          const raw = n.request.content.data as Record<string, unknown>;
           const data = parsePushData(raw);
           if (!data) return;
           applyIncomingPayment(data);
-          openHomeFromPush(router);
           softHydrateAfterPaymentPush({ token, phone, refreshUser });
           void import("@/lib/push/announcePayment").then((m) => {
             void m.maybeAnnouncePaymentReceived(data);
           });
-        },
-      );
+        });
 
-      void Notifications.getLastNotificationResponseAsync().then(async (last) => {
-        if (cancelled || !last) return;
-        const raw = last.notification.request.content.data as Record<
-          string,
-          unknown
-        >;
-        const trayOpen = parseMoneyTrayPush(raw);
-        if (trayOpen && trayOpen.kind !== "claimed") {
-          const id =
-            last.notification.request.identifier ||
-            `${trayOpen.kind}:${trayOpen.transferId}`;
-          try {
-            const SecureStore = await import("expo-secure-store");
-            const key = "blyp_push_last_response";
-            const prev = await SecureStore.getItemAsync(key);
-            if (prev === id) return;
-            await SecureStore.setItemAsync(key, id);
-          } catch {
-            /* ignore */
-          }
-          if (cancelled) return;
-          notifyMoneyTray(trayOpen);
-          try {
-            router.push({
-              pathname: "/chat/[id]",
-              params: {
-                id: trayOpen.conversationId,
-                transferId: trayOpen.transferId,
-              },
+        subResponse = Notifications.addNotificationResponseReceivedListener(
+          (response) => {
+            const raw = response.notification.request.content.data as Record<
+              string,
+              unknown
+            >;
+            const data = parsePushData(raw);
+            if (!data) return;
+            applyIncomingPayment(data);
+            openHomeFromPush(router);
+            softHydrateAfterPaymentPush({ token, phone, refreshUser });
+            void import("@/lib/push/announcePayment").then((m) => {
+              void m.maybeAnnouncePaymentReceived(data);
             });
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        const claimedOpen = parseMoneyClaimedPush(raw);
-        if (claimedOpen) {
-          const id =
-            last.notification.request.identifier || claimedOpen.transferId;
-          try {
-            const SecureStore = await import("expo-secure-store");
-            const key = "blyp_push_last_response";
-            const prev = await SecureStore.getItemAsync(key);
-            if (prev === id) return;
-            await SecureStore.setItemAsync(key, id);
-          } catch {
-            /* ignore */
-          }
-          if (cancelled) return;
-          notifyMoneyClaimed(claimedOpen);
-          try {
-            router.push({
-              pathname: "/chat/[id]",
-              params: {
-                id: claimedOpen.conversationId,
-                transferId: claimedOpen.transferId,
-              },
-            });
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        const incoming = parseMessagePush(raw);
-        if (incoming) {
-          const id = last.notification.request.identifier || incoming.messageId;
-          ingestIncomingPush(raw);
-          try {
-            const SecureStore = await import("expo-secure-store");
-            const key = "blyp_push_last_response";
-            const prev = await SecureStore.getItemAsync(key);
-            if (prev === id) return;
-            await SecureStore.setItemAsync(key, id);
-          } catch {
-            /* ignore */
-          }
-          if (cancelled) return;
-          try {
-            router.push(
-              `/chat/${encodeURIComponent(incoming.conversationId)}`,
-            );
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-        const data = parsePushData(raw);
-        if (!data) return;
-        const id =
-          last.notification.request.identifier ||
-          String(data.transactionId ?? "");
-        try {
-          const SecureStore = await import("expo-secure-store");
-          const key = "blyp_push_last_response";
-          const prev = await SecureStore.getItemAsync(key);
-          if (prev === id) return;
-          await SecureStore.setItemAsync(key, id);
-        } catch {
-          /* ignore dedupe failure */
-        }
-        if (cancelled) return;
-        applyIncomingPayment(data);
-        openHomeFromPush(router);
-        softHydrateAfterPaymentPush({ token, phone, refreshUser });
-      });
+          },
+        );
+
+        void Notifications.getLastNotificationResponseAsync().then(
+          async (last) => {
+            if (cancelled || !last) return;
+            const raw = last.notification.request.content.data as Record<
+              string,
+              unknown
+            >;
+            const data = parsePushData(raw);
+            if (!data) return;
+            const id =
+              last.notification.request.identifier ||
+              String(data.transactionId ?? "");
+            try {
+              const SecureStore = await import("expo-secure-store");
+              const key = "blyp_push_last_response";
+              const prev = await SecureStore.getItemAsync(key);
+              if (prev === id) return;
+              await SecureStore.setItemAsync(key, id);
+            } catch {
+              /* ignore */
+            }
+            if (cancelled) return;
+            applyIncomingPayment(data);
+            openHomeFromPush(router);
+            softHydrateAfterPaymentPush({ token, phone, refreshUser });
+          },
+        );
       });
     }, BOOT_DELAY_MS);
 
@@ -475,7 +212,6 @@ export function PushBootstrap() {
     };
   }, [token, phone, refreshUser, applyIncomingPayment, router]);
 
-  /** Re-register au retour foreground (token FCM parfois rotaté). */
   useEffect(() => {
     if (!token) return;
     const sub = AppState.addEventListener("change", (state) => {

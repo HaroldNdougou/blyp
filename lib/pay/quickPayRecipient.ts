@@ -51,7 +51,9 @@ export async function rememberQuickPayRecipient(
     } catch {
       /* ignore */
     }
-    void import("@/lib/pay/syncQuickPayNotif").then((m) => m.syncQuickPayNotif());
+    void import("@/lib/pay/syncQuickPayNotif").then((m) =>
+      m.syncQuickPayNotif({ interactive: false }),
+    );
     return;
   }
   const next: QuickPayRecipient = {
@@ -67,7 +69,9 @@ export async function rememberQuickPayRecipient(
   } catch {
     /* ignore */
   }
-  void import("@/lib/pay/syncQuickPayNotif").then((m) => m.syncQuickPayNotif());
+  void import("@/lib/pay/syncQuickPayNotif").then((m) =>
+    m.syncQuickPayNotif({ interactive: false }),
+  );
   void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) =>
     m.syncQuickPayNativeRuntime(),
   );

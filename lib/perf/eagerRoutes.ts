@@ -9,8 +9,6 @@ import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
 if (!DEV_METRO_LITE) {
   prefetchModule(() => import("@/app/(tabs)/pay"));
   prefetchModule(() => import("@/components/pay/PayHomeScreen"));
-  prefetchModule(() => import("@/app/(tabs)/index"));
-  prefetchModule(() => import("@/components/messages/ConversationsScreen"));
   prefetchModule(() => import("@/app/deposit"));
   prefetchModule(() => import("@/app/(tabs)/history"));
   prefetchModule(() => import("@/components/history/HistoryScreen"));
@@ -21,25 +19,6 @@ if (!DEV_METRO_LITE) {
     },
   );
   prefetchModule(() => import("@/app/(tabs)/profile"));
-  prefetchModule(() => import("@/app/actus"));
-  prefetchModule(() => import("@/components/status/ActusScreen"));
-  prefetchModule(() => import("@/app/status/mine"));
-  prefetchModule(() => import("@/app/chat/[id]"));
-  prefetchModule(() => import("@/components/messages/ChatThreadScreen"));
-  prefetchModule(() => import("@/components/messages/ChatThreadScreenBody"));
-  prefetchModuleThen(() => import("@/lib/messages/chatSounds"), (m) =>
-    m.prefetchChatSounds(),
-  );
-  prefetchModuleThen(
-    () => import("@/lib/messages/chatLongPressHaptic"),
-    (m) => m.prefetchChatLongPressHaptic(),
-  );
-  prefetchModuleThen(() => import("@/lib/messages/chatSend"), (m) =>
-    m.prefetchChatMessaging(),
-  );
-  prefetchModule(() => import("@/lib/messages/chatRealtimeLink"));
   prefetchModule(() => import("@/lib/image/pickFromLibrary"));
-  prefetchModule(() => import("@/app/status/create"));
-  prefetchModule(() => import("@/app/status/view"));
   floodAllTabs(null);
 }

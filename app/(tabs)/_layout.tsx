@@ -1,7 +1,6 @@
 import "@/lib/perf/eagerRoutes";
 import { floodAllTabs } from "@/lib/perf/floodAllTabs";
 import { AnimatedTabBarButton } from "@/components/tabs/AnimatedTabBarButton";
-import { CommentDollarTabIcon } from "@/components/tabs/CommentDollarTabIcon";
 import {
   CashTabIcon,
   NineDotKeypadIcon,
@@ -10,7 +9,6 @@ import {
 } from "@/components/tabs/TabBarIcons";
 import { useAuth } from "@/contexts/authContextBase";
 import { useTheme } from "@/contexts/ThemeContext";
-import { getTotalUnread, subscribeUnread } from "@/lib/messages/unread";
 import {
   getReceiptsUnreadCount,
   hydrateReceiptsUnread,
@@ -34,15 +32,12 @@ export default function TabLayout() {
   const { colors } = useTheme();
   const signedIn = Boolean(token);
   const isPro = user?.activeContext?.type === "commerce";
-  const [unreadTick, setUnreadTick] = useState(0);
   const [receiptsUnreadTick, setReceiptsUnreadTick] = useState(0);
-  const tabUnread = getTotalUnread();
   const accountId = String(user?.id ?? "").trim();
   const receiptsUnread = accountId
     ? getReceiptsUnreadCount(accountId)
     : 0;
 
-  useEffect(() => subscribeUnread(() => setUnreadTick((n) => n + 1)), []);
   useEffect(
     () => subscribeReceiptsUnread(() => setReceiptsUnreadTick((n) => n + 1)),
     [],
@@ -124,19 +119,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="index"
         options={{
-          tabBarButton: (props) =>
-            signedIn ? (
-              <AnimatedTabBarButton {...props} routeName="index" />
-            ) : null,
-          tabBarIcon: ({ color }) => (
-            <View>
-              <CommentDollarTabIcon color={color} />
-              <CountBadge
-                count={tabUnread}
-                style={{ position: "absolute", top: -5, right: -8 }}
-              />
-            </View>
-          ),
+          href: null,
         }}
       />
       <Tabs.Screen

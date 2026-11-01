@@ -88,6 +88,22 @@ function readJwtExpMs(accessToken: string): number | null {
 /** Un seul refresh à la fois — évite rotation concurrente (famille révoquée côté AWS). */
 let refreshInFlight: Promise<boolean> | null = null;
 
+const REFRESH_FETCH_TIMEOUT_MS = 8_000;
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
  * Rafraîchit access (+ refresh si rotation) ; met à jour le stockage sécurisé.
  * Appelé depuis `request` sur 401, sans repasser par `request` (évite boucle).
@@ -104,11 +120,15 @@ async function refreshSessionTokens(): Promise<boolean> {
         data = (await loadMock()).mockRefreshSession(refresh);
       } else {
         const url = `${API_BASE_URL}/auth/refresh`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refreshToken: refresh }),
-        });
+        const res = await fetchWithTimeout(
+          url,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refreshToken: refresh }),
+          },
+          REFRESH_FETCH_TIMEOUT_MS,
+        );
         const body = await parseJson(res);
         if (!res.ok) {
           throw new ApiError(

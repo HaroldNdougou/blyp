@@ -11,7 +11,6 @@ import { QuickPayBootstrap } from "@/components/network/QuickPayBootstrap";
 import { QuickPayHost } from "@/components/pay/QuickPayHost";
 import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { PushBootstrap } from "@/components/network/PushBootstrap";
-import { ChatRealtimeBootstrap } from "@/components/network/ChatRealtimeBootstrap";
 import { RealtimeSync } from "@/components/network/RealtimeSync";
 import { stackScreenOptions } from "@/lib/perf/instantMotion";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
@@ -119,46 +118,6 @@ function RootShell() {
             animationDuration: 0,
           }}
         />
-        <Stack.Screen name="new-chat" />
-        <Stack.Screen name="actus" />
-        <Stack.Screen
-          name="status/create"
-          options={{
-            presentation: "modal",
-            animation: "slide_from_bottom",
-          }}
-        />
-        <Stack.Screen
-          name="status/view"
-          options={{
-            animation: "none",
-            animationDuration: 0,
-            contentStyle: { backgroundColor: "#000000" },
-          }}
-        />
-        <Stack.Screen
-          name="status/mine"
-          options={{
-            animation: "slide_from_right",
-          }}
-        />
-        <Stack.Screen
-          name="status/edit/[id]"
-          options={{
-            presentation: "modal",
-            animation: "slide_from_bottom",
-          }}
-        />
-        <Stack.Screen name="forward" />
-        <Stack.Screen
-          name="chat/[id]"
-          options={{
-            animation: "none",
-            animationDuration: 0,
-            gestureEnabled: true,
-            fullScreenGestureEnabled: false,
-          }}
-        />
         <Stack.Screen name="pocket/[id]" />
         <Stack.Screen name="kyc" />
         <Stack.Screen name="documents" />
@@ -195,7 +154,6 @@ export default function RootLayout() {
           <NetworkProvider>
             <AuthProvider>
               <RealtimeSync />
-              <ChatRealtimeBootstrap />
               <PushBootstrap />
               <BleBroadcastBootstrap />
               <QuickPayBootstrap />

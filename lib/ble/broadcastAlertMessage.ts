@@ -1,9 +1,9 @@
 import type { BleAdvertiseStatus } from "@/lib/ble/types";
+import { attemptTaxiBroadcastRecovery } from "@/lib/ble/taxiBroadcastController";
 import { openBleAppSettings } from "@/lib/ble/openBleSettings";
 import { blypAlert } from "@/lib/ui/blypAlert";
 import type { TFunction } from "i18next";
 
-/** Message Alert pour échec diffusion (En ligne / Profil). */
 export function broadcastFailureAlertMessage(
   t: TFunction,
   status: BleAdvertiseStatus,
@@ -17,9 +17,9 @@ export function broadcastFailureAlertMessage(
     return t("profile.broadcastTimeout");
   }
   if (message && __DEV__) {
-    return `${t("profile.broadcastError")}\n${message}`;
+    return `${t("profile.broadcastInterruptedBody")}\n${message}`;
   }
-  return t("profile.broadcastError");
+  return t("profile.broadcastInterruptedBody");
 }
 
 function shouldOfferSettings(status: BleAdvertiseStatus, message?: string): boolean {
@@ -31,7 +31,6 @@ function shouldOfferSettings(status: BleAdvertiseStatus, message?: string): bool
   );
 }
 
-/** Alerte après échec « En ligne » — bouton réglages si permissions / BT / GPS. */
 export function showBroadcastFailureAlert(
   t: TFunction,
   title: string,
@@ -39,17 +38,24 @@ export function showBroadcastFailureAlert(
   message?: string,
 ): void {
   const body = broadcastFailureAlertMessage(t, status, message);
-  if (!shouldOfferSettings(status, message)) {
-    blypAlert(title, body);
-    return;
-  }
-  blypAlert(title, body, [
-    { text: t("common.cancel"), style: "cancel" },
+  const buttons = [
+    { text: t("common.cancel"), style: "cancel" as const },
+    ...(shouldOfferSettings(status, message)
+      ? [
+          {
+            text: t("messages.openAppSettings"),
+            onPress: () => {
+              void openBleAppSettings();
+            },
+          },
+        ]
+      : []),
     {
-      text: t("messages.openAppSettings"),
+      text: t("profile.broadcastReactivate"),
       onPress: () => {
-        void openBleAppSettings();
+        void attemptTaxiBroadcastRecovery({ forcePrompt: true });
       },
     },
-  ]);
+  ];
+  blypAlert(title, body, buttons);
 }
