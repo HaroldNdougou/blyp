@@ -39,3 +39,15 @@ export function isTransactionPinInvalidError(e: unknown): boolean {
     (m.includes("transaction pin") && m.includes("invalid"))
   );
 }
+
+/** Échec liaison / timeout / gateway — pas une erreur métier PIN ou solde. */
+export function isApiNetworkFailure(e: unknown): boolean {
+  return (
+    e instanceof ApiError &&
+    (e.status === 0 ||
+      e.status === 408 ||
+      e.status === 502 ||
+      e.status === 503 ||
+      e.status === 504)
+  );
+}

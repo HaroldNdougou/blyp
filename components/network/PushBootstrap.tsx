@@ -1,3 +1,4 @@
+import { dispatchPaymentReceived } from "@/lib/pay/paymentRealtimeBridge";
 import { useAuth } from "@/contexts/authContextBase";
 import {
   openHomeFromPush,
@@ -39,8 +40,7 @@ export function PushBootstrap() {
         (raw: Record<string, unknown>) => {
           const data = parsePushData(raw);
           if (!data) return;
-          applyIncomingPayment(data);
-          softHydrateAfterPaymentPush({ token, phone, refreshUser });
+          dispatchPaymentReceived(data);
         },
       );
     }

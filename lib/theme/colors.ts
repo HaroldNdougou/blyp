@@ -96,6 +96,15 @@ export type ThemeColors = {
   statusAddBadgePlus: string;
   /** Barre basse composition statut texte (semi-transparente). */
   statusTextFooterBar: string;
+  /** Écran encaissement — mode caisse sans connexion. */
+  offlineCashierShellBackground: string;
+  offlineCashierShellBorder: string;
+  offlineCashierBannerBackground: string;
+  offlineCashierBannerText: string;
+  offlineCashierExitBackground: string;
+  offlineCashierExitBorder: string;
+  offlineCashierExitText: string;
+  offlineCashierRingBorder: string;
 };
 
 const accent = "#5dc705";
@@ -184,6 +193,14 @@ export const lightColors: ThemeColors = {
   statusProgressTrack: "rgba(255,255,255,0.35)",
   statusAddBadgePlus: "#000000",
   statusTextFooterBar: "rgba(0,0,0,0.24)",
+  offlineCashierShellBackground: "#FFF8E8",
+  offlineCashierShellBorder: "#E65100",
+  offlineCashierBannerBackground: "#E65100",
+  offlineCashierBannerText: "#FFFFFF",
+  offlineCashierExitBackground: "#FFFFFF",
+  offlineCashierExitBorder: "#E65100",
+  offlineCashierExitText: "#BF360C",
+  offlineCashierRingBorder: "#FF9800",
 };
 
 export const darkColors: ThemeColors = {
@@ -269,6 +286,14 @@ export const darkColors: ThemeColors = {
   statusProgressTrack: "rgba(255,255,255,0.35)",
   statusAddBadgePlus: "#000000",
   statusTextFooterBar: "rgba(0,0,0,0.32)",
+  offlineCashierShellBackground: "#2A1F12",
+  offlineCashierShellBorder: "#FF9800",
+  offlineCashierBannerBackground: "#E65100",
+  offlineCashierBannerText: "#FFFFFF",
+  offlineCashierExitBackground: "#1C1C1E",
+  offlineCashierExitBorder: "#FF9800",
+  offlineCashierExitText: "#FFB74D",
+  offlineCashierRingBorder: "#FF9800",
 };
 
 export function getThemeColors(scheme: ColorScheme | null | undefined): ThemeColors {

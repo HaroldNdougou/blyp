@@ -2,6 +2,7 @@
  * Prefetch : modules UI après parse ; hydrate SQLite tôt ;
  * client API / sync réseau seulement APRÈS le 1er frame (ne pas voler Pay).
  */
+import { DEV_METRO_LITE } from "@/lib/perf/devMetroLite";
 import { floodAllTabs } from "@/lib/perf/floodAllTabs";
 import { prefetchModule, prefetchModuleThen } from "@/lib/perf/prefetchModule";
 import { InteractionManager } from "react-native";
@@ -9,25 +10,10 @@ import { InteractionManager } from "react-native";
 let warmed = false;
 
 function warmJsModules(token: string | null): void {
-  prefetchModule(() => import("@/app/deposit"));
-  prefetchModule(() => import("@/app/(tabs)/history"));
-  prefetchModule(() => import("@/components/history/HistoryScreen"));
-  prefetchModuleThen(
-    () => import("@/components/history/preloadHistory"),
-    (m) => {
-      void m.preloadHistoryScreen();
-    },
-  );
-  prefetchModuleThen(() => import("@expo/vector-icons"), (m) => {
-    void m.Ionicons.loadFont().catch(() => {});
-  });
   prefetchModule(() => import("@/components/pay/PayRegisterOverlay"));
   prefetchModule(() => import("@/app/(tabs)/pay"));
-  prefetchModuleThen(() => import("@/lib/image/pickFromLibrary"), (m) =>
-    m.warmImageLibraryPermission(),
-  );
   if (token) {
-    prefetchModule(() => import("@/app/(tabs)/profile"));
+    prefetchModule(() => import("@/components/pay/CommerceHomeScreen"));
   }
 }
 
@@ -46,6 +32,21 @@ export function runAggressiveWarm(opts: {
 
   warmJsModules(token);
   floodAllTabs(token);
+  if (!DEV_METRO_LITE) {
+    prefetchModule(() => import("@/app/deposit"));
+    prefetchModule(() => import("@/app/(tabs)/history"));
+    prefetchModule(() => import("@/components/history/HistoryScreen"));
+    prefetchModuleThen(
+      () => import("@/components/history/preloadHistory"),
+      (m) => {
+        void m.preloadHistoryScreen();
+      },
+    );
+    prefetchModule(() => import("@/app/(tabs)/profile"));
+    prefetchModuleThen(() => import("@/lib/image/pickFromLibrary"), (m) =>
+      m.warmImageLibraryPermission(),
+    );
+  }
 
   if (token && phone) {
     void import("@/lib/media/lruDiskCache").then((m) =>
@@ -89,7 +90,7 @@ export function runAggressiveWarm(opts: {
         const { syncTransactionsFromNetwork } = await import(
           "@/lib/sync/transactionsSync"
         );
-        await syncTransactionsFromNetwork(token, phone);
+        await syncTransactionsFromNetwork(token, phone, { reason: "warm" });
       } catch {
         /* best effort */
       }

@@ -7,17 +7,16 @@ import { useNetwork } from "@/contexts/NetworkContext";
 import { useEffect, useRef } from "react";
 import { AppState, InteractionManager, type AppStateStatus } from "react-native";
 
-const POLL_MS = 45_000;
+/** Filet sync solde / historique — pas le chemin pay (push + delta local d’abord). */
+const POLL_MS = 180_000;
 /** Juste après 1er frame Pay — sync fond sans délai « prudent ». */
 const BOOT_DELAY_MS = DEV_BACKGROUND_BOOT_MS > 0 ? DEV_BACKGROUND_BOOT_MS : 120;
 
 /**
- * Sync fond (filet) — le push Expo couvre l’instantané « paiement reçu » :
+ * Sync fond (filet) — le push couvre l’instantané « paiement reçu » :
  * - boot différé (après 1er frame Pay)
- * - retour foreground
- * - reconnect réseau
- * - poll léger app active
- * + drain file offline.
+ * - retour foreground / reconnect (throttle global 3 min)
+ * - poll rare app active
  */
 export function RealtimeSync() {
   const { reconnectGeneration } = useNetwork();
@@ -42,22 +41,18 @@ export function RealtimeSync() {
 
     let cancelled = false;
 
-    const run = (reason: string) => {
+    const run = (reason: "boot" | "poll" | "foreground" | "reconnect") => {
       void (async () => {
         try {
-          const [{ syncTransactionsFromNetwork }, { drainOfflineQueue }] =
-            await Promise.all([
-              import("@/lib/sync/transactionsSync"),
-              import("@/lib/offline/drainQueue"),
-            ]);
+          const { syncTransactionsFromNetwork } = await import(
+            "@/lib/sync/transactionsSync"
+          );
           if (cancelled) return;
           if (reason === "reconnect" || reason === "foreground") {
             await refreshUser();
           }
           if (cancelled) return;
-          await syncTransactionsFromNetwork(token, phone);
-          if (cancelled) return;
-          await drainOfflineQueue({ token, phone });
+          await syncTransactionsFromNetwork(token, phone, { reason });
         } catch {
           /* silencieux */
         }
@@ -95,7 +90,7 @@ export function RealtimeSync() {
 
     return () => {
       cancelled = true;
-      bootTask.cancel();
+      bootTask.cancel?.();
       sub.remove();
       clearInterval(poll);
     };

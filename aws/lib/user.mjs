@@ -88,6 +88,7 @@ export function userToApi(profile, walletOrBalance = 0) {
           ? Number(profile.kycLevel)
           : 1
         : 0,
+    smallPayWithoutPinEnabled: profile.smallPayWithoutPinEnabled === true,
   };
 }
 
@@ -510,6 +511,58 @@ export async function deleteIncompleteUserAccount(userId) {
   await doc.send(
     new TransactWriteCommand({
       TransactItems: transactItems,
+    }),
+  );
+}
+
+export async function setSmallPayWithoutPinEnabled(userId, enabled) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression:
+        "SET smallPayWithoutPinEnabled = :e, updatedAt = :now",
+      ConditionExpression: "attribute_exists(PK)",
+      ExpressionAttributeValues: {
+        ":e": enabled === true,
+        ":now": now,
+      },
+    }),
+  );
+}
+
+export async function updateSmallPayDailyStats(userId, stats) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression:
+        "SET smallPayStatsDay = :d, smallPayStatsCount = :c, smallPayStatsSumFcfa = :s, smallPayPeriodWithoutPinSumFcfa = :p, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":d": stats.smallPayStatsDay,
+        ":c": stats.smallPayStatsCount,
+        ":s": stats.smallPayStatsSumFcfa,
+        ":p": stats.smallPayPeriodWithoutPinSumFcfa,
+        ":now": now,
+      },
+    }),
+  );
+}
+
+export async function resetSmallPayPeriodWithoutPin(userId) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression:
+        "SET smallPayPeriodWithoutPinSumFcfa = :z, updatedAt = :now",
+      ExpressionAttributeValues: {
+        ":z": 0,
+        ":now": now,
+      },
     }),
   );
 }

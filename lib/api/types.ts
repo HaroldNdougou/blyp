@@ -51,6 +51,8 @@ export type ApiUser = {
   kycStatus?: KycStatus;
   /** 0 = téléphone seul, 1 = identité vérifiée. */
   kycLevel?: number;
+  /** Opt-in : paiements sous 500 F sans saisie PIN (serveur valide). */
+  smallPayWithoutPinEnabled?: boolean;
 };
 
 export type TransactionItem = {

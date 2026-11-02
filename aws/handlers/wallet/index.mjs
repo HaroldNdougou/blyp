@@ -15,6 +15,13 @@ import {
 import { verifyAccessToken } from "../../lib/jwt.mjs";
 import { verifyTransactionPin, getTransactionPinPepper } from "../../lib/pin.mjs";
 import {
+  evaluateSmallPayPinSkip,
+  isSmallPayAmount,
+  smallPayStatsAfterSuccess,
+} from "../../lib/smallPay.mjs";
+import { updateSmallPayDailyStats, resetSmallPayPeriodWithoutPin } from "../../lib/user.mjs";
+import { warmWalletLedger } from "../../lib/walletWarm.mjs";
+import {
   getPawapayConfig,
   pawapayInitiateDeposit,
   pawapayGetDepositStatus,
@@ -234,6 +241,11 @@ async function handlePay(userId, body, event) {
       ? Math.floor(Number(soaSeatRaw))
       : null;
   const transactionPin = String(body?.transactionPin ?? "").replace(/\D/g, "");
+  const cashierSessionRaw = body?.cashierSession;
+  const cashierSession =
+    cashierSessionRaw != null && cashierSessionRaw !== ""
+      ? Math.floor(Number(cashierSessionRaw)) >>> 0
+      : null;
   const idempotencyKey = getIdempotencyKey(event);
 
   if (!Number.isFinite(amount) || amount <= 0) {
@@ -241,9 +253,6 @@ async function handlePay(userId, body, event) {
   }
   if (!isValidTxAmount(amount)) {
     return badRequest(`Montant invalide (max ${MAX_TX_AMOUNT_FCFA.toLocaleString("fr-FR")} FCFA)`);
-  }
-  if (transactionPin.length !== 4) {
-    return badRequest("Code PIN de transaction requis (4 chiffres)");
   }
   if (!String(recipientAccountId ?? "").trim()) {
     return badRequest("Destinataire invalide (accountId requis)");
@@ -262,14 +271,41 @@ async function handlePay(userId, body, event) {
         : `Plafond ${kycMax.toLocaleString("fr-FR")} FCFA — vérifiez votre identité dans Profil`,
     );
   }
-  if (
-    !verifyTransactionPin(
-      transactionPin,
-      profile.transactionPinHash,
-      getTransactionPinPepper(),
-    )
-  ) {
-    return badRequest("Code PIN incorrect");
+
+  const pinSkip = evaluateSmallPayPinSkip(profile, amount);
+  const pinRequired = !pinSkip.allowSkipPin;
+  let pinAuthenticated = false;
+
+  if (pinRequired) {
+    if (transactionPin.length !== 4) {
+      if (pinSkip.requirePinForLimit && isSmallPayAmount(amount)) {
+        return badRequest(
+          "Plafond paiements sans code atteint — saisissez votre PIN",
+        );
+      }
+      return badRequest("Code PIN de transaction requis (4 chiffres)");
+    }
+    if (
+      !verifyTransactionPin(
+        transactionPin,
+        profile.transactionPinHash,
+        getTransactionPinPepper(),
+      )
+    ) {
+      return badRequest("Code PIN incorrect");
+    }
+    pinAuthenticated = true;
+  } else if (transactionPin.length === 4) {
+    if (
+      !verifyTransactionPin(
+        transactionPin,
+        profile.transactionPinHash,
+        getTransactionPinPepper(),
+      )
+    ) {
+      return badRequest("Code PIN incorrect");
+    }
+    pinAuthenticated = true;
   }
 
   const result = await executePayment(
@@ -284,6 +320,8 @@ async function handlePay(userId, body, event) {
         soaSeatNumber != null && Number.isFinite(soaSeatNumber)
           ? soaSeatNumber
           : null,
+      payerProfile: profile,
+      cashierSession,
     },
   );
 
@@ -312,10 +350,20 @@ async function handlePay(userId, body, event) {
     return badRequest("Ce siège est déjà payé");
   }
 
+  if (pinAuthenticated && !result.reused) {
+    void resetSmallPayPeriodWithoutPin(userId).catch(() => {});
+  } else if (pinSkip.allowSkipPin && !result.reused) {
+    void updateSmallPayDailyStats(
+      userId,
+      smallPayStatsAfterSuccess(profile, amount),
+    ).catch(() => {});
+  }
+
   return ok({
     balanceFcfa: result.balanceFcfa,
     transactionId: result.transactionId ?? null,
     reference: result.reference ?? null,
+    paymentReceipt: result.paymentReceipt ?? null,
   });
 }
 
@@ -400,6 +448,11 @@ async function handleTransactions(userId, event) {
 }
 
 export async function handler(event) {
+  if (event?.source === "aws.events" || event?.warm === true) {
+    await warmWalletLedger();
+    return ok({ warm: true });
+  }
+
   const method = event.requestContext?.http?.method ?? event.httpMethod;
   const path = normalizeApiPath(event);
 

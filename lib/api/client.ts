@@ -89,6 +89,9 @@ function readJwtExpMs(accessToken: string): number | null {
 let refreshInFlight: Promise<boolean> | null = null;
 
 const REFRESH_FETCH_TIMEOUT_MS = 8_000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+/** Paiement : échec visible vite si réseau mort (évite spinner 30–60 s). */
+export const PAYMENT_REQUEST_TIMEOUT_MS = 12_000;
 
 async function fetchWithTimeout(
   url: string,
@@ -191,9 +194,16 @@ async function request<T>(
     token?: string | null;
     /** Évite une boucle après un refresh déjà tenté sur cette chaîne d’appels. */
     skipAuthRefresh?: boolean;
+    timeoutMs?: number;
   } = {},
 ): Promise<T> {
-  const { token: tokenOpt, skipAuthRefresh, headers: hdr, ...rest } = options;
+  const {
+    token: tokenOpt,
+    skipAuthRefresh,
+    headers: hdr,
+    timeoutMs,
+    ...rest
+  } = options;
   const headers = new Headers(hdr);
   headers.set("Content-Type", "application/json");
   const token = Object.prototype.hasOwnProperty.call(options, "token")
@@ -206,10 +216,14 @@ async function request<T>(
   const url = `${API_BASE_URL}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, {
-      ...rest,
-      headers,
-    });
+    res = await fetchWithTimeout(
+      url,
+      {
+        ...rest,
+        headers,
+      },
+      timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+    );
   } catch (cause) {
     throw new ApiError(networkUnreachableMessage(cause), 0);
   }
@@ -632,18 +646,34 @@ export async function getDepositIntentStatus(
   );
 }
 
+export async function setSmallPayWithoutPin(
+  token: string,
+  enabled: boolean,
+): Promise<{ user: ApiUser }> {
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockSetSmallPayWithoutPin(token, enabled);
+  }
+  return request("/me/small-pay-without-pin", {
+    method: "PUT",
+    token,
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export async function pay(
   token: string,
   amount: number,
   recipientName: string,
   recipientPhone: string | null,
-  transactionPin: string,
+  transactionPin: string | null,
   recipientAccountId?: string | null,
   soaSeatNumber?: number | null,
+  opts?: { idempotencyKey?: string; cashierSession?: number | null },
 ): Promise<{
   balanceFcfa: number;
   transactionId: string | null;
   reference: string | null;
+  paymentReceipt?: import("@/lib/pay/paymentReceipt").CommercePaymentReceipt | null;
 }> {
   if (USE_MOCK_API) {
     const m = await loadMock();
@@ -652,20 +682,30 @@ export async function pay(
       amount,
       recipientName,
       recipientPhone,
-      transactionPin,
+      transactionPin ?? "",
       recipientAccountId,
       soaSeatNumber,
     );
   }
+  const headers: Record<string, string> = {};
+  const idem = opts?.idempotencyKey?.trim();
+  if (idem) headers["Idempotency-Key"] = idem;
   return request("/payments/pay", {
     method: "POST",
     token,
+    timeoutMs: PAYMENT_REQUEST_TIMEOUT_MS,
+    headers,
     body: JSON.stringify({
       amount,
       recipientName,
       recipientPhone,
       recipientAccountId,
-      transactionPin,
+      ...(transactionPin && transactionPin.length === 4
+        ? { transactionPin }
+        : {}),
+      ...(opts?.cashierSession != null
+        ? { cashierSession: Math.floor(opts.cashierSession) >>> 0 }
+        : {}),
       soaSeatNumber:
         soaSeatNumber != null && Number.isFinite(soaSeatNumber)
           ? soaSeatNumber

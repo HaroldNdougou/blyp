@@ -124,13 +124,15 @@ async function readRawOnce(): Promise<string | null> {
   return nativeMemorySessionJson;
 }
 
-/** SecureStore peut échouer transient au cold start — retry court avant « déconnecté ». */
+/** SecureStore peut échouer transient au cold start — 1ère lecture rapide, retries en fond. */
 async function readRaw(): Promise<string | null> {
-  const attempts = Platform.OS === "web" ? 1 : 3;
+  const first = await readRawOnce();
+  if (first) return first;
+  const attempts = Platform.OS === "web" ? 0 : 2;
   for (let i = 0; i < attempts; i += 1) {
+    await sleep(40 * (i + 1));
     const raw = await readRawOnce();
     if (raw) return raw;
-    if (i < attempts - 1) await sleep(40 * (i + 1));
   }
   return null;
 }

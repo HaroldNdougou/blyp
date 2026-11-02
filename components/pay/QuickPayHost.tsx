@@ -1,4 +1,5 @@
 import { useAuth } from "@/contexts/authContextBase";
+import { useNetwork } from "@/contexts/NetworkContext";
 import { waitForAppActive } from "@/lib/app/waitForAppActive";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { executeStandardQuickPay } from "@/lib/pay/executeStandardQuickPay";
@@ -20,6 +21,7 @@ import { InteractionManager, Platform } from "react-native";
 export function QuickPayHost() {
   const { t, i18n } = useTranslation();
   const { token, user, updateBalance, refreshUser } = useAuth();
+  const network = useNetwork();
   const phone = user?.phone ?? "";
   const balance = user?.balanceFcfa ?? 0;
   const busyRef = useRef(false);
@@ -36,6 +38,11 @@ export function QuickPayHost() {
           to,
           pin,
           updateBalance,
+          network: {
+            isOffline: network.isOffline,
+            isConnected: network.isConnected,
+            isInternetReachable: network.isInternetReachable,
+          },
         });
         if (res.ok) {
           showBlypActionFlash(t("common.paymentSentFlash"));
@@ -57,7 +64,7 @@ export function QuickPayHost() {
         void clearQuickPayNotifHighlight();
       }
     },
-    [token, phone, updateBalance, refreshUser, t, i18n.language],
+    [token, phone, updateBalance, refreshUser, t, i18n.language, network],
   );
 
   const beginQuickPay = useCallback(

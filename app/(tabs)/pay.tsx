@@ -1,7 +1,14 @@
-import { CommerceHomeScreen } from "@/components/pay/CommerceHomeScreen";
-import PayHomeScreen from "@/components/pay/PayHomeScreen";
+import { PayColdShell } from "@/components/pay/PayColdShell";
 import { useAuth } from "@/contexts/authContextBase";
 import { Redirect } from "expo-router";
+import React, { lazy, Suspense } from "react";
+
+const PayHomeScreen = lazy(() => import("@/components/pay/PayHomeScreen"));
+const CommerceHomeScreen = lazy(() =>
+  import("@/components/pay/CommerceHomeScreen").then((m) => ({
+    default: m.CommerceHomeScreen,
+  })),
+);
 
 /** Onglet Pay (perso) ou encaissement (mode commerce). */
 export default function PayTabScreen() {
@@ -10,7 +17,15 @@ export default function PayTabScreen() {
     return <Redirect href="/(tabs)/welcome" />;
   }
   if (user?.activeContext?.type === "commerce") {
-    return <CommerceHomeScreen />;
+    return (
+      <Suspense fallback={<PayColdShell />}>
+        <CommerceHomeScreen />
+      </Suspense>
+    );
   }
-  return <PayHomeScreen />;
+  return (
+    <Suspense fallback={<PayColdShell />}>
+      <PayHomeScreen />
+    </Suspense>
+  );
 }

@@ -30,7 +30,9 @@ type Ctx = {
 function syncLedgerLater(token: string, phone: string) {
   InteractionManager.runAfterInteractions(() => {
     void import("@/lib/sync/transactionsSync")
-      .then((m) => m.syncTransactionsFromNetwork(token, phone))
+      .then((m) =>
+        m.syncTransactionsFromNetwork(token, phone, { reason: "pocket" }),
+      )
       .catch(() => {});
   });
 }

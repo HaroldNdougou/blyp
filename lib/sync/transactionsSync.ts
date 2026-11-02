@@ -7,6 +7,24 @@ import {
   setTransactionsSnapshot,
 } from "@/lib/transactionsCache";
 import { fallbackTxReference } from "@/lib/txReference";
+import {
+  markTransactionsNetworkSyncDone,
+  shouldSyncTransactions,
+  type TxSyncReason,
+} from "@/lib/sync/transactionsPullGate";
+
+const BYPASS_THROTTLE: ReadonlySet<TxSyncReason> = new Set([
+  "pay",
+  "push",
+  "context_switch",
+  "commerce_create",
+]);
+
+export type { TxSyncReason };
+
+export type SyncTransactionsOptions = {
+  reason?: TxSyncReason;
+};
 
 function withReferences(items: TransactionItem[]): TransactionItem[] {
   return items
@@ -33,11 +51,10 @@ function withReferences(items: TransactionItem[]): TransactionItem[] {
     .filter((t): t is TransactionItem => t !== null);
 }
 
-/**
- * Sync réseau → SQLite/RAM.
- * Avec curseur : delta only (point 1). Sans curseur / full : replace.
- */
-export async function syncTransactionsFromNetwork(
+let syncInFlight: Promise<TransactionItem[]> | null = null;
+let syncInFlightKey = "";
+
+async function runNetworkSync(
   token: string,
   phone: string,
 ): Promise<TransactionItem[]> {
@@ -53,6 +70,7 @@ export async function syncTransactionsFromNetwork(
       );
       const normalized = withReferences(items);
       if (delta && normalized.length === 0) {
+        markTransactionsNetworkSyncDone();
         return cached;
       }
       if (delta) {
@@ -61,7 +79,7 @@ export async function syncTransactionsFromNetwork(
         else if (merged[0]?.createdAt) {
           await setSyncCursor(phone, merged[0].createdAt);
         }
-        /** Même ref RAM si rien n’a changé — évite re-render onglet Transactions. */
+        markTransactionsNetworkSyncDone();
         return getTransactionsSnapshot(phone) ?? merged;
       }
     }
@@ -73,8 +91,44 @@ export async function syncTransactionsFromNetwork(
     else if (normalized[0]?.createdAt) {
       await setSyncCursor(phone, normalized[0].createdAt);
     }
+    markTransactionsNetworkSyncDone();
     return getTransactionsSnapshot(phone) ?? normalized;
   } catch {
     return getTransactionsSnapshot(phone) ?? [];
   }
+}
+
+/**
+ * Sync réseau → SQLite/RAM.
+ * Gate + une seule sync à la fois (sauf raisons `pay` / `push` / … qui bypass le throttle).
+ */
+export async function syncTransactionsFromNetwork(
+  token: string,
+  phone: string,
+  opts?: SyncTransactionsOptions,
+): Promise<TransactionItem[]> {
+  const reason: TxSyncReason = opts?.reason ?? "boot";
+  const cached = getTransactionsSnapshot(phone) ?? [];
+
+  if (!shouldSyncTransactions(reason)) {
+    return cached;
+  }
+
+  if (BYPASS_THROTTLE.has(reason)) {
+    return runNetworkSync(token, phone);
+  }
+
+  const key = `${phone}:${token.slice(0, 8)}`;
+  if (syncInFlight && syncInFlightKey === key) {
+    return syncInFlight;
+  }
+
+  syncInFlightKey = key;
+  syncInFlight = runNetworkSync(token, phone).finally(() => {
+    if (syncInFlightKey === key) {
+      syncInFlight = null;
+      syncInFlightKey = "";
+    }
+  });
+  return syncInFlight;
 }

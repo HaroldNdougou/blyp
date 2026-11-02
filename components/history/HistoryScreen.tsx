@@ -344,7 +344,9 @@ export default function HistoryScreen() {
         const syncNet = () => {
           void (async () => {
             try {
-              const items = await syncTransactionsFromNetwork(token, phone);
+              const items = await syncTransactionsFromNetwork(token, phone, {
+                reason: "history",
+              });
               if (cancelled) return;
               applySnapshot(items);
               setError(null);

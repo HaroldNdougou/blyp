@@ -30,6 +30,12 @@ Parameters:
     Default: ""
     Description: Pepper PIN transaction (vide = même valeur que OtpPepper)
 
+  PayReceiptEd25519PrivateKeyPem:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: PEM Ed25519 preuve paiement commerce (pair lib/pay/paymentReceiptEd25519PublicKey.ts)
+
   SmsProvider:
     Type: String
     Default: ""
@@ -98,9 +104,17 @@ Parameters:
     NoEcho: true
     Default: ""
 
+  WalletProvisionedConcurrency:
+    Type: Number
+    Default: 5
+    MinValue: 0
+    MaxValue: 10
+    Description: Lambda wallet provisionnée (0 = ping seul ; quota compte AWS)
+
 Conditions:
   IsProd: !Equals [!Ref Stage, prod]
   HasPinPepper: !Not [!Equals [!Ref TransactionPinPepper, ""]]
+  HasWalletPC: !Not [!Equals [!Ref WalletProvisionedConcurrency, 0]]
 
 Globals:
   Function:
@@ -148,6 +162,9 @@ Resources:
     Properties:
       TableName: !Sub "blyp-${Stage}"
       BillingMode: PAY_PER_REQUEST
+      WarmThroughput:
+        ReadUnitsPerSecond: 12000
+        WriteUnitsPerSecond: 4000
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -341,6 +358,12 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /me/profile
             Method: PUT
+        MeSmallPayWithoutPin:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/small-pay-without-pin
+            Method: PUT
         MeDeviceTokenPut:
           Type: HttpApi
           Properties:
@@ -410,6 +433,11 @@ Resources:
       CodeUri: ../aws/
       Handler: handlers/wallet/index.handler
       Timeout: 20
+      AutoPublishAlias: live
+      ProvisionedConcurrencyConfig: !If
+        - HasWalletPC
+        - ProvisionedConcurrentExecutions: !Ref WalletProvisionedConcurrency
+        - !Ref AWS::NoValue
       Environment:
         Variables:
           JWT_SECRET: !Ref JwtSecret
@@ -418,16 +446,24 @@ Resources:
             - HasPinPepper
             - !Ref TransactionPinPepper
             - !Ref OtpPepper
+          PAY_RECEIPT_PEPPER: !Ref OtpPepper
+          PAY_RECEIPT_ED25519_PRIVATE_KEY_PEM: !Ref PayReceiptEd25519PrivateKeyPem
           DEPOSIT_MODE: !Ref DepositMode
           PAWAPAY_API_TOKEN: !Ref PawapayApiToken
           PAWAPAY_API_BASE_URL: !Ref PawapayApiBaseUrl
           PAWAPAY_DEPOSIT_CURRENCY: XAF
           PUSH_QUEUE_URL: !Ref PushQueue
+          REALTIME_WS_API_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt PushQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/${Stage}/POST/@connections/*"
       Events:
         WalletDeposit:
           Type: HttpApi
@@ -489,6 +525,25 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /pockets/{id}/transactions
             Method: GET
+
+  WalletWarmSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Lambda wallet + lecture Dynamo toutes les 1 min
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: WalletWarmTarget
+          Arn: !Sub "${WalletFunction.Arn}:live"
+          Input: '{"warm":true}'
+
+  WalletWarmInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Sub "${WalletFunction.Arn}:live"
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt WalletWarmSchedule.Arn
 
   WebhookFunction:
     Type: AWS::Serverless::Function

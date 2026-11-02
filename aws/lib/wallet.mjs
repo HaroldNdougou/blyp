@@ -97,10 +97,12 @@ export async function getPayIdempotencyResult(userId, idempotencyKey) {
     : transactionId
       ? resolveTxReference({ transactionId })
       : null;
+  const paymentReceipt = res.Item.paymentReceipt ?? null;
   return {
     balanceFcfa: Number(res.Item.balanceFcfa),
     transactionId,
     reference,
+    paymentReceipt,
   };
 }
 
@@ -466,25 +468,32 @@ export async function executePayment(
     return { error: "AMOUNT_INVALID" };
   }
 
-  if (idempotencyKey) {
-    const cached = await getPayIdempotencyResult(userId, idempotencyKey);
-    if (cached) return { ...cached, reused: true };
+  const accountId = String(recipientAccountId ?? "").trim().toUpperCase();
+  if (!accountId) {
+    return { error: "RECIPIENT_REQUIRED" };
   }
+
+  const idemPromise = idempotencyKey
+    ? getPayIdempotencyResult(userId, idempotencyKey)
+    : Promise.resolve(null);
 
   const { resolvePayTarget, getCommerceRecord, commercePk } = await import(
     "./commerce.mjs"
   );
   const { resolveAccountId } = await import("./accountId.mjs");
-  const { getUserProfile, getUserApiPayload } = await import("./user.mjs");
 
-  const payerProfile = await getUserProfile(userId);
+  const [cached, target] = await Promise.all([
+    idemPromise,
+    resolvePayTarget(accountId),
+  ]);
+  if (cached) return { ...cached, reused: true };
+
+  const payerProfile =
+    paymentMeta?.payerProfile ?? (await getUserProfile(userId));
   if (!payerProfile) return { error: "USER_NOT_FOUND" };
 
-  const payerAccountId = resolveAccountId(payerProfile);
-  const activeType =
-    payerProfile.activeContextType === "commerce" ? "commerce" : "personal";
   const activeCommerceId =
-    activeType === "commerce" && payerProfile.activeCommerceId
+    payerProfile.activeContextType === "commerce" && payerProfile.activeCommerceId
       ? String(payerProfile.activeCommerceId)
       : null;
 
@@ -493,17 +502,6 @@ export async function executePayment(
     return { error: "PAY_FROM_COMMERCE_FORBIDDEN" };
   }
 
-  const balanceBefore = await getUserBalance(userId);
-  if (balanceBefore < amount) {
-    return { error: "INSUFFICIENT_BALANCE" };
-  }
-
-  const accountId = String(recipientAccountId ?? "").trim().toUpperCase();
-  if (!accountId) {
-    return { error: "RECIPIENT_REQUIRED" };
-  }
-
-  const target = await resolvePayTarget(accountId);
   if (!target) {
     return { error: "RECIPIENT_NOT_FOUND" };
   }
@@ -539,9 +537,8 @@ export async function executePayment(
     recipientPhone != null ? String(recipientPhone).replace(/\D/g, "").slice(-9) : null;
 
   if (target.type === "commerce") {
-    const rec = await getCommerceRecord(target.ownerUserId, target.commerceId);
-    if (rec?.name) counterpartyName = String(rec.name);
-    if (rec?.phoneDigits) counterpartyPhone = String(rec.phoneDigits);
+    if (commerceRec?.name) counterpartyName = String(commerceRec.name);
+    if (commerceRec?.phoneDigits) counterpartyPhone = String(commerceRec.phoneDigits);
   } else {
     const payeeProfile = await getUserProfile(target.userId);
     if (payeeProfile) {
@@ -697,24 +694,8 @@ export async function executePayment(
     throw err;
   }
 
-  const me = await getUserApiPayload(userId);
-  const balanceFcfa = me?.balanceFcfa ?? (await getUserBalance(userId));
-
-  if (idempotencyKey) {
-    await doc.send(
-      new PutCommand({
-        TableName: getTableName(),
-        Item: {
-          PK: userPk(userId),
-          SK: payIdemSk(idempotencyKey),
-          balanceFcfa,
-          transactionId: txId,
-          reference,
-          createdAt: now,
-        },
-      }),
-    );
-  }
+  const me = await getUserBalance(userId);
+  const balanceFcfa = me;
 
   if (
     target.type === "commerce" &&
@@ -741,16 +722,15 @@ export async function executePayment(
     }
   }
 
-  /** Push destinataire — async SQS, jamais bloquant pour le payeur. */
+  /** Push destinataire — WS immédiat + file FCM (secours). */
   try {
-    const { enqueuePaymentReceivedPush } = await import("./pushQueue.mjs");
     const fromName =
       String(payerProfile.firstName ?? "").trim() ||
       String(payerProfile.lastName ?? "").trim() ||
       "Blyp";
     const recipientUserId =
       target.type === "commerce" ? target.ownerUserId : target.userId;
-    void enqueuePaymentReceivedPush({
+    const pushPayload = {
       recipientUserId,
       transactionId: receiveTxId,
       amountFcfa: amount,
@@ -758,17 +738,64 @@ export async function executePayment(
       contextType: target.type === "commerce" ? "commerce" : "personal",
       commerceId:
         target.type === "commerce" ? target.commerceId : null,
-    }).catch((err) => {
+    };
+    void import("./realtimeWs.mjs")
+      .then(({ postRealtimeToUser }) =>
+        postRealtimeToUser(recipientUserId, {
+          type: "payment_received",
+          transactionId: receiveTxId,
+          amountFcfa: amount,
+          fromName,
+          contextType: pushPayload.contextType,
+          commerceId: pushPayload.commerceId,
+        }),
+      )
+      .catch((err) => {
+        console.warn("[wallet] realtime pay notify failed", err?.message ?? err);
+      });
+    const { enqueuePaymentReceivedPush } = await import("./pushQueue.mjs");
+    void enqueuePaymentReceivedPush(pushPayload).catch((err) => {
       console.warn("[wallet] push enqueue failed", err?.message ?? err);
     });
   } catch (err) {
     console.warn("[wallet] push enqueue import failed", err?.message ?? err);
   }
 
+  let paymentReceipt = null;
+  if (target.type === "commerce") {
+    const { buildCommercePaymentReceipt } = await import("./paymentReceipt.mjs");
+    paymentReceipt = buildCommercePaymentReceipt({
+      transactionId: receiveTxId,
+      reference: receiveReference,
+      amountFcfa: amount,
+      recipientAccountId: accountId,
+      commerceId: target.commerceId,
+      cashierSession: paymentMeta?.cashierSession ?? null,
+    });
+  }
+
+  if (idempotencyKey) {
+    await doc.send(
+      new PutCommand({
+        TableName: getTableName(),
+        Item: {
+          PK: userPk(userId),
+          SK: payIdemSk(idempotencyKey),
+          balanceFcfa,
+          transactionId: txId,
+          reference,
+          paymentReceipt,
+          createdAt: now,
+        },
+      }),
+    );
+  }
+
   return {
     balanceFcfa,
     transactionId: txId,
     reference,
+    paymentReceipt,
     reused: false,
     counterpartyName,
     counterpartyPhone,

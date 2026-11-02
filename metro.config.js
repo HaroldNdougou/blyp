@@ -30,4 +30,16 @@ config.transformer.getTransformOptions = async () => ({
   },
 });
 
+/** Référence / archive : jamais dans le bundle app. */
+const blockList = [
+  ...(Array.isArray(config.resolver.blockList)
+    ? config.resolver.blockList
+    : config.resolver.blockList
+      ? [config.resolver.blockList]
+      : []),
+  /docs\/archive\/.*/,
+  /[/\\]archived[/\\].*/,
+];
+config.resolver.blockList = blockList;
+
 module.exports = config;

@@ -17,6 +17,7 @@ import {
   statusPostSortMs,
 } from "@/lib/status/statusPostOrder";
 import { makeTxReference } from "@/lib/txReference";
+import { buildMockCommercePaymentReceiptSync } from "@/lib/pay/paymentReceipt";
 import { parseRegistrationFullName } from "@/lib/profile/parseRegistrationFullName";
 import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
 import type {
@@ -56,6 +57,7 @@ let sessionToken: string | null = null;
 let sessionRefreshToken: string | null = null;
 let sessionPhone: string | null = null;
 let mockTransactionPinPlain: string | null = null;
+let mockSmallPayWithoutPin = false;
 let mockFirstName: string | null = null;
 let mockLastName: string | null = null;
 let mockSessionUserId: string | null = null;
@@ -131,6 +133,7 @@ function mockUserFromState(): ApiUser {
     avatarUrl: mockAvatarUri,
     kycStatus: mockKycStatus,
     kycLevel: mockKycStatus === "approved" ? 1 : 0,
+    smallPayWithoutPinEnabled: mockSmallPayWithoutPin,
   };
 }
 
@@ -266,6 +269,18 @@ export function mockSetOnboardingTransactionPin(
     throw new ApiError("Code PIN déjà défini", 400);
   }
   mockTransactionPinPlain = d;
+  return { user: mockUserFromState() };
+}
+
+export function mockSetSmallPayWithoutPin(
+  token: string,
+  enabled: boolean,
+): { user: ApiUser } {
+  assertSession(token);
+  if (mockTransactionPinPlain == null) {
+    throw new ApiError("Définissez votre PIN avant d’activer cette option", 400);
+  }
+  mockSmallPayWithoutPin = enabled === true;
   return { user: mockUserFromState() };
 }
 
@@ -745,19 +760,30 @@ export function mockPay(
   balanceFcfa: number;
   transactionId: string | null;
   reference: string | null;
+  paymentReceipt?: import("@/lib/pay/paymentReceipt").CommercePaymentReceipt | null;
 } {
   assertSession(token);
   const pin = String(transactionPin ?? "").replace(/\D/g, "");
-  if (pin.length !== 4) {
-    throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
-  }
-  if (mockTransactionPinPlain == null) {
+  const smallSkip =
+    mockSmallPayWithoutPin &&
+    Number.isFinite(amount) &&
+    amount > 0 &&
+    amount <= 499 &&
+    pin.length === 0;
+  if (!smallSkip) {
+    if (pin.length !== 4) {
+      throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
+    }
+    if (mockTransactionPinPlain == null) {
+      throw new ApiError("Complétez votre inscription (code PIN) pour payer", 403);
+    }
+    if (pin !== mockTransactionPinPlain) {
+      throw new ApiError("Code PIN incorrect", 400, {
+        code: API_ERROR_TRANSACTION_PIN_INVALID,
+      });
+    }
+  } else if (mockTransactionPinPlain == null) {
     throw new ApiError("Complétez votre inscription (code PIN) pour payer", 403);
-  }
-  if (pin !== mockTransactionPinPlain) {
-    throw new ApiError("Code PIN incorrect", 400, {
-      code: API_ERROR_TRANSACTION_PIN_INVALID,
-    });
   }
   if (mockActiveContext.type === "commerce") {
     throw new ApiError("Passez en mode perso pour payer", 400);
@@ -810,10 +836,24 @@ export function mockPay(
   };
   transactions = [row, ...transactions];
 
+  let paymentReceipt = null;
+  if (recipientCommerce) {
+    const receiveTxId = `mock-rcv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    paymentReceipt = buildMockCommercePaymentReceiptSync({
+      transactionId: receiveTxId,
+      reference: makeTxReference("PAYMENT"),
+      amountFcfa: amount,
+      recipientAccountId: accountId,
+      commerceId: recipientCommerce.id,
+      cashierSession: null,
+    });
+  }
+
   return {
     balanceFcfa: mockUserFromState().balanceFcfa,
     transactionId,
     reference,
+    paymentReceipt,
   };
 }
 

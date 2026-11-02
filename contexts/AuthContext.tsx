@@ -282,6 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       transactionId?: string;
       contextType?: string;
       commerceId?: string;
+      fromName?: string;
     }) => {
       const amount = Math.floor(Number(data.amountFcfa) || 0);
       if (amount <= 0) return;
@@ -331,6 +332,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         commerceId: isCommerce ? commerceId : undefined,
         contextType: isCommerce ? "commerce" : "personal",
       });
+      const userPhone = getUserSnapshot()?.phone;
+      if (txId && userPhone) {
+        void import("@/lib/transactionsCache").then((cache) => {
+          const refMod = import("@/lib/txReference");
+          void refMod.then((r) => {
+            cache.mergeTransactionsDelta(userPhone, [
+              {
+                id: txId,
+                reference: r.fallbackTxReference(txId),
+                type: "received",
+                kind: "PAYMENT",
+                amountFcfa: amount,
+                counterpartyName:
+                  String(data.fromName ?? "").trim() || "—",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          });
+        });
+      }
     },
     [],
   );
@@ -375,7 +396,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { user: me } = await api.setActiveContext(t, input);
       await applyUser(me);
       void import("@/lib/sync/transactionsSync").then((m) => {
-        void m.syncTransactionsFromNetwork(t, me.phone);
+        void m.syncTransactionsFromNetwork(t, me.phone, {
+          reason: "context_switch",
+        });
       });
 
       if (wasBroadcasting) {
@@ -442,7 +465,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await applyUser(res.user);
       void resetTxForPhone(res.user.phone);
       void import("@/lib/sync/transactionsSync").then((m) => {
-        void m.syncTransactionsFromNetwork(t, res.user.phone);
+        void m.syncTransactionsFromNetwork(t, res.user.phone, {
+          reason: "commerce_create",
+        });
       });
       if (wasBroadcasting) {
         void import("@/lib/ble/broadcastAccount").then(

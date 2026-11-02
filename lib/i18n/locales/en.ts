@@ -272,6 +272,9 @@ export default {
     quickPayNotifLabel: "Pay from notification",
     quickPayNotifHint:
       "Persistent notification · 50, 100, 200 or 500 F to your last Pay recipient",
+    smallPayWithoutPinLabel: "Small amounts without PIN",
+    smallPayWithoutPinHint:
+      "Under 500 F · max 2,000 F/day and 5,000 F without PIN before PIN is required again",
     quickPayNotifTitle: "Blyp — Quick pay",
     quickPayNotifBodyTo: "To {{name}} · pick an amount",
     quickPayNotifBodyEmpty:
@@ -549,6 +552,29 @@ export default {
     onlineNotificationTitle: "Blyp — Online",
     onlineNotificationBody: "Broadcasting · visible for payments",
     onlineNotificationStop: "Stop",
+    offlineCashierBanner: "Offline cashier mode",
+    offlineCashierBannerHint:
+      "Closed checkout: the customer connects directly to your phone (Bluetooth). Final amounts appear after Blyp sync.",
+    offlineCashierExitCta: "Leave offline mode",
+    offlineCashierExitA11y: "Turn off offline cashier mode",
+    offlineCashierOfferTitle: "No Internet connection",
+    offlineCashierOfferMessage:
+      "You can’t turn on “Online” without Internet. You can keep taking payments in offline cashier mode:\n\n• Customers pay with the Blyp app (they need a connection).\n• Your screen shows synced takings until you reconnect.\n• Don’t leave this mode until the network is back, or you won’t be able to take payments normally.\n• Any amount not confirmed by the server will be dropped at sync.",
+    offlineCashierOfferPrimary: "Work offline",
+    offlineCashierOfferCancel: "Cancel",
+    offlineCashierAlreadyTitle: "Offline mode already on",
+    offlineCashierAlreadyMessage:
+      "You’re already in offline cashier mode. Restore Internet to go “Online”, or use the orange button at the bottom to leave this mode.",
+    offlineCashierDisableBlockedTitle: "Connection required",
+    offlineCashierDisableBlockedMessage:
+      "Without Internet you can’t go online or leave offline mode. Restore your connection, then turn off this mode or enable “Online”.",
+    offlineCashierDisableBlockedOk: "OK",
+    offlineCashierPendingSync: "{{amount}} pending server confirmation",
+    offlineCashierPendingBadge:
+      "Pending (unconfirmed): {{amount}} — not final takings yet",
+    offlineCashierRejectTitle: "Payment not confirmed",
+    offlineCashierRejectMessage:
+      "One or more offline amounts were not confirmed by Blyp after sync. They are not included in your balance.",
   },
   soaCar: {
     seatTitle: "Choose your seat",

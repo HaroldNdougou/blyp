@@ -43,6 +43,7 @@ import {
   putOtpVerifyCache,
   setOtpCooldown,
   setTransactionPin,
+  setSmallPayWithoutPinEnabled,
   updateProfileNames,
   touchAvatarUpdated,
   deleteIncompleteUserAccount,
@@ -279,6 +280,18 @@ async function handleMe(userId) {
   const user = await getUserApiPayload(userId);
   if (!user) return unauthorized("Utilisateur introuvable");
   return ok(user);
+}
+
+async function handleSmallPayWithoutPin(userId, body) {
+  const profile = await getUserProfile(userId);
+  if (!profile) return unauthorized("Utilisateur introuvable");
+  if (!profile.transactionPinHash) {
+    return badRequest("Définissez votre PIN avant d’activer cette option");
+  }
+  const enabled = body?.enabled === true;
+  await setSmallPayWithoutPinEnabled(userId, enabled);
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
 }
 
 async function handleAvatarPresign(userId, body) {
@@ -723,6 +736,14 @@ export async function handler(event, context) {
       const body = parseJsonBody(event);
       if (body === null) return badRequest("Corps JSON invalide");
       return await handleUpdateMeProfile(auth.userId, body);
+    }
+
+    if (method === "PUT" && path === "/me/small-pay-without-pin") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleSmallPayWithoutPin(auth.userId, body);
     }
 
     if (method === "PUT" && path === "/me/context") {

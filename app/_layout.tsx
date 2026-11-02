@@ -12,6 +12,7 @@ import { QuickPayHost } from "@/components/pay/QuickPayHost";
 import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { PushBootstrap } from "@/components/network/PushBootstrap";
 import { RealtimeSync } from "@/components/network/RealtimeSync";
+import { WalletRealtimeBootstrap } from "@/components/network/WalletRealtimeBootstrap";
 import { stackScreenOptions } from "@/lib/perf/instantMotion";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { getSplashBackground } from "@/lib/theme/splash";
@@ -56,7 +57,7 @@ function SplashGate({ children }: { children: ReactNode }) {
     if (isLoading || __DEV__) return;
     const t = setTimeout(() => {
       setShellReady((prev) => prev || true);
-    }, 700);
+    }, 350);
     return () => clearTimeout(t);
   }, [isLoading]);
 
@@ -154,6 +155,7 @@ export default function RootLayout() {
           <NetworkProvider>
             <AuthProvider>
               <RealtimeSync />
+              <WalletRealtimeBootstrap />
               <PushBootstrap />
               <BleBroadcastBootstrap />
               <QuickPayBootstrap />

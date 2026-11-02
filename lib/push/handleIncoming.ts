@@ -28,7 +28,7 @@ export function softHydrateAfterPaymentPush(opts: {
         const { syncTransactionsFromNetwork } = await import(
           "@/lib/sync/transactionsSync"
         );
-        await syncTransactionsFromNetwork(token, phone);
+        await syncTransactionsFromNetwork(token, phone, { reason: "push" });
       } catch {
         /* ignore */
       }

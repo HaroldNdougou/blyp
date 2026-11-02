@@ -276,6 +276,9 @@ export default {
     quickPayNotifLabel: "Payer depuis la notification",
     quickPayNotifHint:
       "Notif persistante · 50, 100, 200 ou 500 F vers ton dernier destinataire Pay",
+    smallPayWithoutPinLabel: "Petits montants sans code",
+    smallPayWithoutPinHint:
+      "En dessous de 500 F · max 2 000 F/jour et 5 000 F sans code avant de redemander le PIN",
     quickPayNotifTitle: "Blyp — Paiement rapide",
     quickPayNotifBodyTo: "Vers {{name}} · choisis un montant",
     quickPayNotifBodyEmpty:
@@ -556,6 +559,29 @@ export default {
     onlineNotificationTitle: "Blyp — En ligne",
     onlineNotificationBody: "Diffusion active · visible pour les paiements",
     onlineNotificationStop: "Arrêter",
+    offlineCashierBanner: "Mode caisse sans connexion",
+    offlineCashierBannerHint:
+      "Caisse fermée : le client doit se connecter en direct à votre téléphone (Bluetooth). Les montants définitifs arrivent après synchro Blyp.",
+    offlineCashierExitCta: "Quitter le mode sans connexion",
+    offlineCashierExitA11y: "Désactiver le mode caisse sans connexion",
+    offlineCashierOfferTitle: "Pas de connexion Internet",
+    offlineCashierOfferMessage:
+      "Impossible d’activer « En ligne » sans Internet. Vous pouvez continuer à encaisser en mode caisse sans connexion :\n\n• Les clients paient via l’app Blyp (connexion requise côté client).\n• Votre écran affiche les encaissements déjà synchronisés ; le reste arrive à la reconnexion.\n• Ne quittez ce mode sans connexion que lorsque le réseau est rétabli, sinon vous ne pourrez plus encaisser normalement.\n• Toute fraude ou montant non confirmé par le serveur sera rejeté à la synchro.",
+    offlineCashierOfferPrimary: "Travailler sans connexion",
+    offlineCashierOfferCancel: "Annuler",
+    offlineCashierAlreadyTitle: "Mode sans connexion actif",
+    offlineCashierAlreadyMessage:
+      "Vous encaissez déjà en mode caisse sans connexion. Rétablissez Internet pour repasser « En ligne » ou quittez ce mode avec le bouton orange en bas.",
+    offlineCashierDisableBlockedTitle: "Connexion requise",
+    offlineCashierDisableBlockedMessage:
+      "Sans Internet, vous ne pouvez ni encaisser en ligne ni quitter le mode sans connexion. Rétablissez la connexion, puis désactivez ce mode ou activez « En ligne ».",
+    offlineCashierDisableBlockedOk: "Compris",
+    offlineCashierPendingSync: "{{amount}} en attente de confirmation serveur",
+    offlineCashierPendingBadge:
+      "En attente (non confirmé) : {{amount}} — pas encore encaissé définitif",
+    offlineCashierRejectTitle: "Paiement non confirmé",
+    offlineCashierRejectMessage:
+      "Un ou plusieurs montants reçus hors ligne n’ont pas été confirmés par Blyp après synchronisation. Ils ne sont pas comptés dans votre solde.",
   },
   soaCar: {
     seatTitle: "Choisir votre siège",

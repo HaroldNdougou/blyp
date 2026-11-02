@@ -1,5 +1,7 @@
 import type { QuickPayRecipient } from "@/lib/pay/quickPayRecipient";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
+import i18n from "@/lib/i18n";
+import { isLikelyOfflineNow } from "@/lib/network/isLikelyOffline";
 import { fallbackTxReference } from "@/lib/txReference";
 
 export type QuickPayExecuteResult =
@@ -13,11 +15,23 @@ export async function executeStandardQuickPay(opts: {
   to: QuickPayRecipient;
   pin: string;
   updateBalance: (balanceFcfa: number) => void;
+  network?: {
+    isOffline: boolean;
+    isConnected: boolean | null;
+    isInternetReachable: boolean | null;
+  };
 }): Promise<QuickPayExecuteResult> {
   const amount = Math.floor(opts.amountFcfa);
   if (amount <= 0 || !opts.token) return { ok: false, reason: "NO_TOKEN" };
   if (!opts.to.accountId) return { ok: false, reason: "NO_RECIPIENT" };
 
+  if (opts.network && isLikelyOfflineNow(opts.network)) {
+    return {
+      ok: false,
+      reason: "API",
+      message: i18n.t("network.requestFailed"),
+    };
+  }
   try {
     const api = await import("@/lib/api/client");
     const payRes = await api.pay(
@@ -28,6 +42,13 @@ export async function executeStandardQuickPay(opts: {
       opts.pin,
       opts.to.accountId,
       undefined,
+      {
+        cashierSession: (
+          await import("@/lib/ble/deliverReceiptViaCashierGatt").then((m) =>
+            m.readCashierSessionViaGatt(opts.to.accountId),
+          )
+        ),
+      },
     );
     opts.updateBalance(payRes.balanceFcfa);
     const paidAt = new Date().toISOString();
@@ -58,6 +79,12 @@ export async function executeStandardQuickPay(opts: {
     void import("@/lib/security/transactionPinVault").then((m) => {
       void m.saveTransactionPinVault(opts.pin);
     });
+    void import("@/lib/pay/relayCommercePaymentReceiptBle").then((m) =>
+      m.relayCommercePaymentReceiptBleDeferred({
+        receipt: payRes.paymentReceipt,
+        merchantAccountId: opts.to.accountId,
+      }),
+    );
     void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) => {
       void m.syncQuickPayNativeRuntime({
         pin: opts.pin,

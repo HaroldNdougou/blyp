@@ -43,6 +43,7 @@ import {
 export default function ProfileTabScreen() {
   const insets = useSafeAreaInsets();
   const { user, token, signOut, isLoading, refreshUser } = useAuth();
+  const [smallPayWithoutPin, setSmallPayWithoutPin] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const { colors } = useTheme();
@@ -102,6 +103,10 @@ export default function ProfileTabScreen() {
   );
 
   useEffect(() => {
+    setSmallPayWithoutPin(user?.smallPayWithoutPinEnabled === true);
+  }, [user?.smallPayWithoutPinEnabled]);
+
+  useEffect(() => {
     let cancelled = false;
     void import("@/lib/push/announcePref").then((m) => {
       void m.hydrateAnnouncePaymentsPref().then((on) => {
@@ -143,6 +148,29 @@ export default function ProfileTabScreen() {
       void m.setAnnouncePaymentsPref(enabled);
     });
   }, []);
+
+  const onSmallPayWithoutPinToggle = useCallback(
+    (enabled: boolean) => {
+      if (!token) return;
+      setSmallPayWithoutPin(enabled);
+      void (async () => {
+        try {
+          const { setSmallPayWithoutPin: apiSet } = await import(
+            "@/lib/api/client"
+          );
+          await apiSet(token, enabled);
+          await refreshUser();
+        } catch (e) {
+          setSmallPayWithoutPin(!enabled);
+          blypAlert(
+            t("profile.smallPayWithoutPinLabel"),
+            e instanceof Error ? e.message : t("common.genericError"),
+          );
+        }
+      })();
+    },
+    [token, refreshUser, t],
+  );
 
   const onQuickPayNotifToggle = useCallback(
     (enabled: boolean) => {
@@ -511,6 +539,41 @@ export default function ProfileTabScreen() {
                 }}
                 thumbColor={
                   announcePayments
+                    ? colors.switchThumbOn
+                    : colors.switchThumbOff
+                }
+                ios_backgroundColor={colors.switchTrackOff}
+              />
+            </View>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [
+              styles.broadcastRow,
+              styles.broadcastRowBorder,
+              pressed && styles.actionBtnPressed,
+            ]}
+            onPress={() => onSmallPayWithoutPinToggle(!smallPayWithoutPin)}
+            accessibilityRole="switch"
+            accessibilityState={{ checked: smallPayWithoutPin }}
+            accessibilityLabel={t("profile.smallPayWithoutPinLabel")}
+          >
+            <View style={styles.broadcastTexts}>
+              <Text style={styles.broadcastTitle}>
+                {t("profile.smallPayWithoutPinLabel")}
+              </Text>
+              <Text style={styles.broadcastHint}>
+                {t("profile.smallPayWithoutPinHint")}
+              </Text>
+            </View>
+            <View style={styles.broadcastSwitchWrap} pointerEvents="none">
+              <Switch
+                value={smallPayWithoutPin}
+                trackColor={{
+                  false: colors.switchTrackOff,
+                  true: colors.switchTrackOn,
+                }}
+                thumbColor={
+                  smallPayWithoutPin
                     ? colors.switchThumbOn
                     : colors.switchThumbOff
                 }

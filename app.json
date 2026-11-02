@@ -148,6 +148,7 @@
         }
       ],
       "./plugins/withBleBroadcastForeground.js",
+      "./plugins/withClosedCashierGatt.js",
       "./plugins/withPaymentAnnounceBackground.js",
       "./plugins/withQuickPayNotif.js",
       "./plugins/withReadContacts.js",

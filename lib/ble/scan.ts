@@ -23,6 +23,18 @@ import {
 } from "@/lib/ble/consent";
 import { isPayScanFocused } from "@/lib/ble/payScanGate";
 import { isQuickPayBleScanActive } from "@/lib/pay/quickPayBleScanGate";
+import { isCommerceReceiptScanActive } from "@/lib/commerce/commerceReceiptScanGate";
+import {
+  parseBlePayReceiptFromScan,
+  type ParsedBlePayReceipt,
+} from "@/lib/ble/payReceiptPayload";
+import {
+  parseCashierSessionFromScan,
+  parsePayReceiptChunkFromScan,
+  type ParsedCashierSessionAd,
+  type PayReceiptChunkFrame,
+} from "@/lib/ble/payReceiptChunkCodec";
+import { rememberCashierSession } from "@/lib/commerce/payerCashierSessionCache";
 import { withTimeout } from "@/lib/ble/timeout";
 import { prepareBleRadio } from "@/lib/ble/prepareRadio";
 import { isBleBroadcasting } from "@/lib/ble/radioMode";
@@ -43,6 +55,12 @@ let devLogLeft = 40;
 const hexLogged = new Set<string>();
 const peerListeners = new Set<PeerListener>();
 const statusListeners = new Set<StatusListener>();
+type ReceiptListener = (payload: ParsedBlePayReceipt) => void;
+const receiptListeners = new Set<ReceiptListener>();
+type ChunkListener = (frame: PayReceiptChunkFrame) => void;
+const chunkListeners = new Set<ChunkListener>();
+type SessionListener = (ad: ParsedCashierSessionAd) => void;
+const sessionListeners = new Set<SessionListener>();
 let lastStatus: BleScanStatus = "idle";
 let lastScanStartAt = 0;
 let lastValidPeer: BleTaxiPeer | null = null;
@@ -239,6 +257,25 @@ function onDevice(error: BleError | null, device: Device | null) {
     });
   }
 
+  const sessionAd = parseCashierSessionFromScan({
+    manufacturerData: device.manufacturerData,
+    rawScanRecord: rawScan,
+  });
+  if (sessionAd) {
+    rememberCashierSession(sessionAd);
+    for (const l of sessionListeners) l(sessionAd);
+  }
+
+  if (isCommerceReceiptScanActive() || chunkListeners.size > 0) {
+    const chunk = parsePayReceiptChunkFromScan({
+      manufacturerData: device.manufacturerData,
+      rawScanRecord: rawScan,
+    });
+    if (chunk) {
+      for (const l of chunkListeners) l(chunk);
+    }
+  }
+
   const parsed = resolveTaxiFromScan({
     localName: device.localName,
     name: device.name,
@@ -247,6 +284,7 @@ function onDevice(error: BleError | null, device: Device | null) {
     serviceUUIDs: device.serviceUUIDs,
     rssi: device.rssi,
   });
+
   if (!parsed) return;
 
   const now = Date.now();
@@ -262,6 +300,29 @@ function onDevice(error: BleError | null, device: Device | null) {
     lastValidPeer = sighting;
   }
   publishSelection(applyUiHold(selected));
+}
+
+export function subscribeBlePayReceiptChunk(
+  listener: ChunkListener,
+): () => void {
+  chunkListeners.add(listener);
+  return () => chunkListeners.delete(listener);
+}
+
+export function subscribeBleCashierSession(
+  listener: SessionListener,
+): () => void {
+  sessionListeners.add(listener);
+  return () => sessionListeners.delete(listener);
+}
+
+export function subscribeBlePayReceipt(
+  listener: ReceiptListener,
+): () => void {
+  receiptListeners.add(listener);
+  return () => {
+    receiptListeners.delete(listener);
+  };
 }
 
 export function subscribeBleTaxiPeer(listener: PeerListener): () => void {
@@ -316,7 +377,12 @@ function haltScanEngine() {
 export async function startTaxiScan(opts?: {
   forcePrompt?: boolean;
 }): Promise<BleScanStatus> {
-  if (!opts?.forcePrompt && !isPayScanFocused() && !isQuickPayBleScanActive()) {
+  if (
+    !opts?.forcePrompt &&
+    !isPayScanFocused() &&
+    !isQuickPayBleScanActive() &&
+    !isCommerceReceiptScanActive()
+  ) {
     return lastStatus;
   }
   if (isBleBroadcasting()) {
