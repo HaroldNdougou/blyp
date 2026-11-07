@@ -27,8 +27,10 @@ export async function signAccessToken(userId, sessionFamilyId, devicePublicKey =
 }
 
 /** @returns {{ userId: string, sessionFamilyId: string | null, devicePublicKey: string | null }} */
-export async function parseAccessToken(token) {
-  const { payload } = await jwtVerify(token, getSecretKey());
+export async function parseAccessToken(token, { clockToleranceSec = 0 } = {}) {
+  const { payload } = await jwtVerify(token, getSecretKey(), {
+    clockTolerance: clockToleranceSec,
+  });
   const sub = payload.sub;
   if (!sub || typeof sub !== "string") {
     throw new Error("INVALID_TOKEN");

@@ -118,10 +118,11 @@ async function requireUserId(event) {
   const token = getBearerToken(event);
   if (!token) return { error: unauthorized() };
   try {
-    const { userId, devicePublicKey } = await resolveAccessSession(token);
     const method = event.requestContext?.http?.method ?? event.httpMethod;
     const path = normalizeApiPath(event);
-    if (isSensitiveRoute(method, path)) {
+    const signedRoute = isSensitiveRoute(method, path);
+    const { userId, devicePublicKey } = await resolveAccessSession(token, { signedRoute });
+    if (signedRoute) {
       const st = checkRequestProof(event, devicePublicKey, method, path);
       if (st !== "ok") {
         return {
