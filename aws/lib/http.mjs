@@ -18,12 +18,12 @@ export function badRequest(message, extra = {}) {
   return jsonResponse(400, { error: message, ...extra });
 }
 
-export function unauthorized(message = "Non autorisé") {
-  return jsonResponse(401, { error: message });
+export function unauthorized(message = "Non autorisé", extra = {}) {
+  return jsonResponse(401, { error: message, ...extra });
 }
 
-export function forbidden(message) {
-  return jsonResponse(403, { error: message });
+export function forbidden(message, extra = {}) {
+  return jsonResponse(403, { error: message, ...extra });
 }
 
 export function notFound(message = "Introuvable") {

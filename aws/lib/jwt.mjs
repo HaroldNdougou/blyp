@@ -11,8 +11,14 @@ function getSecretKey() {
   return new TextEncoder().encode(secret);
 }
 
-export async function signAccessToken(userId) {
-  return new SignJWT({ typ: "access" })
+/** `devicePublicKey` : clé appareil liée au jeton (preuve exigée sur les actions d’argent). */
+export async function signAccessToken(userId, sessionFamilyId, devicePublicKey = null) {
+  const fid = String(sessionFamilyId ?? "").trim();
+  const dpk = String(devicePublicKey ?? "").trim();
+  const claims = { typ: "access" };
+  if (fid) claims.sfn = fid;
+  if (dpk) claims.dpk = dpk;
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuedAt()
@@ -20,11 +26,21 @@ export async function signAccessToken(userId) {
     .sign(getSecretKey());
 }
 
-export async function verifyAccessToken(token) {
+/** @returns {{ userId: string, sessionFamilyId: string | null, devicePublicKey: string | null }} */
+export async function parseAccessToken(token) {
   const { payload } = await jwtVerify(token, getSecretKey());
   const sub = payload.sub;
   if (!sub || typeof sub !== "string") {
     throw new Error("INVALID_TOKEN");
   }
-  return sub;
+  const sfn = payload.sfn;
+  const sessionFamilyId =
+    typeof sfn === "string" && sfn.trim() ? sfn.trim() : null;
+  const dpk = typeof payload.dpk === "string" && payload.dpk.trim() ? payload.dpk.trim() : null;
+  return { userId: sub, sessionFamilyId, devicePublicKey: dpk };
+}
+
+export async function verifyAccessToken(token) {
+  const { userId } = await parseAccessToken(token);
+  return userId;
 }

@@ -1,4 +1,5 @@
-import { verifyAccessToken } from "../../lib/jwt.mjs";
+import { resolveUserIdFromAccessToken } from "../../lib/authSession.mjs";
+import { decodeClientBody } from "../../lib/blypWsFrame.mjs";
 import {
   markConversationPresence,
   markConversationTyping,
@@ -21,7 +22,7 @@ export async function handler(event) {
     if (route === "$connect") {
       const token = String(event?.queryStringParameters?.token ?? "").trim();
       if (!token) return wsResponse(401, "Unauthorized");
-      const userId = await verifyAccessToken(token);
+      const userId = await resolveUserIdFromAccessToken(token);
       await registerWsConnection(userId, connectionId);
       return wsResponse(200, "Connected");
     }
@@ -58,6 +59,19 @@ export async function handler(event) {
 
       if (action === "ping") {
         await postPayloadToConnection(connectionId, { type: "pong" });
+        return wsResponse(200);
+      }
+
+      if (action === "push_check") {
+        const deviceId = String(body.deviceId ?? "").trim();
+        if (!deviceId) return wsResponse(400);
+        const { listDeviceTokens } = await import("../../lib/devices.mjs");
+        const devices = await listDeviceTokens(userId);
+        if (!devices.some((d) => d.deviceId === deviceId)) {
+          await postPayloadToConnection(connectionId, {
+            type: "push_register_needed",
+          });
+        }
         return wsResponse(200);
       }
 

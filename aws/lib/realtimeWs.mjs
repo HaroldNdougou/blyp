@@ -8,6 +8,7 @@ import {
   PutCommand,
   QueryCommand,
 } from "@aws-sdk/lib-dynamodb";
+import { encodeServerPayload } from "./blypWsFrame.mjs";
 import { getDocClient, getTableName } from "./dynamodb.mjs";
 
 const doc = getDocClient();

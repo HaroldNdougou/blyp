@@ -64,9 +64,12 @@ export async function sendPaymentReceivedPush(msg) {
 
   const fromName = String(msg?.fromName ?? "").trim() || "Blyp";
   const amountLabel = formatAmountFr(amountFcfa);
-  const body = `${amountLabel}F reçus de ${fromName}`;
+  const amountShort = `${amountLabel}F`;
   const isCommerce = msg?.contextType === "commerce";
-  const title = isCommerce ? "Paiement reçu" : "Transfert reçu";
+  const title = `${amountShort} reçus`;
+  const body = isCommerce
+    ? `Paiement de ${amountShort} reçu de ${fromName}`
+    : `Transfert de ${amountShort} reçu de ${fromName}`;
 
   const data = {
     type: "payment_received",

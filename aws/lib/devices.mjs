@@ -53,7 +53,7 @@ export async function upsertDeviceToken(userId, input) {
   if (deviceId) {
     const existing = await listDeviceTokens(userId);
     for (const d of existing) {
-      if (d.deviceId === deviceId && d.SK !== sk) {
+      if ((d.deviceId === deviceId || d.token === token) && d.SK !== sk) {
         await doc.send(
           new DeleteCommand({
             TableName: getTableName(),
@@ -90,6 +90,7 @@ export async function deleteDeviceTokenByValue(userId, token) {
   const t = String(token ?? "").trim();
   if (!isValidExpoPushToken(t)) return { ok: true };
   const devices = await listDeviceTokens(userId);
+  let removed = 0;
   for (const d of devices) {
     if (d.token !== t || !d.SK) continue;
     await doc.send(
@@ -98,6 +99,16 @@ export async function deleteDeviceTokenByValue(userId, token) {
         Key: { PK: userPk(userId), SK: d.SK },
       }),
     );
+    removed += 1;
+  }
+  if (removed > 0) {
+    /** Téléphone encore connecté en temps réel → il se réinscrit tout de suite. */
+    try {
+      const { postRealtimeToUser } = await import("./realtimeWs.mjs");
+      await postRealtimeToUser(userId, { type: "push_register_needed" });
+    } catch {
+      /* filet : vérification hebdo côté app */
+    }
   }
   return { ok: true };
 }

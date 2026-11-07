@@ -12,7 +12,17 @@ import {
   serviceUnavailable,
   unauthorized,
 } from "../../lib/http.mjs";
-import { verifyAccessToken } from "../../lib/jwt.mjs";
+import { resolveAccessSession } from "../../lib/authSession.mjs";
+import {
+  checkRequestProof,
+  isSensitiveRoute,
+  DEVICE_PROOF_INVALID_CODE,
+  DEVICE_CLOCK_SKEW_CODE,
+} from "../../lib/deviceKey.mjs";
+import {
+  isSessionReplacedError,
+  sessionReplacedUnauthorized,
+} from "../../lib/sessionErrors.mjs";
 import { verifyTransactionPin, getTransactionPinPepper } from "../../lib/pin.mjs";
 import {
   evaluateSmallPayPinSkip,
@@ -47,7 +57,7 @@ import {
   updateDepositIntent,
 } from "../../lib/wallet.mjs";
 import { maxTxFcfaForProfile } from "../../lib/kyc.mjs";
-import { getUserBalance, getUserProfile } from "../../lib/user.mjs";
+import { getUserBalance, getUserProfile, isPayBlocked } from "../../lib/user.mjs";
 import {
   createPocket,
   deletePocket,
@@ -62,9 +72,25 @@ async function requireUserId(event) {
   const token = event.headers?.authorization ?? event.headers?.Authorization;
   if (!token?.startsWith("Bearer ")) return { error: unauthorized() };
   try {
-    const userId = await verifyAccessToken(token.slice(7).trim());
+    const { userId, devicePublicKey } = await resolveAccessSession(token.slice(7).trim());
+    const method = event.requestContext?.http?.method ?? event.httpMethod;
+    const path = normalizeApiPath(event);
+    if (isSensitiveRoute(method, path)) {
+      const st = checkRequestProof(event, devicePublicKey, method, path);
+      if (st !== "ok") {
+        return {
+          error: forbidden("Signature de l’appareil invalide", {
+            code: st === "skew" ? DEVICE_CLOCK_SKEW_CODE : DEVICE_PROOF_INVALID_CODE,
+            serverTime: Date.now(),
+          }),
+        };
+      }
+    }
     return { userId };
-  } catch {
+  } catch (err) {
+    if (isSessionReplacedError(err)) {
+      return { error: sessionReplacedUnauthorized() };
+    }
     return { error: unauthorized("Session invalide") };
   }
 }
@@ -95,7 +121,11 @@ async function syncRemotePawapayStatus(intent) {
 async function handleDeposit(userId, event, body) {
   const { min, max } = depositLimits();
   const amount = parseInt(String(body?.amount), 10);
-  const idempotencyKey = getIdempotencyKey(event);
+  const idempotencyKey =
+    getIdempotencyKey(event) ||
+    (body?.idempotencyKey != null && String(body.idempotencyKey).trim()
+      ? String(body.idempotencyKey).trim().slice(0, 128)
+      : null);
 
   if (!Number.isFinite(amount) || amount < min || amount > max) {
     return badRequest(`Montant invalide (${min}–${max} FCFA)`);
@@ -246,7 +276,11 @@ async function handlePay(userId, body, event) {
     cashierSessionRaw != null && cashierSessionRaw !== ""
       ? Math.floor(Number(cashierSessionRaw)) >>> 0
       : null;
-  const idempotencyKey = getIdempotencyKey(event);
+  const idempotencyKey =
+    getIdempotencyKey(event) ||
+    (body?.idempotencyKey != null && String(body.idempotencyKey).trim()
+      ? String(body.idempotencyKey).trim().slice(0, 128)
+      : null);
 
   if (!Number.isFinite(amount) || amount <= 0) {
     return badRequest("Montant invalide");
@@ -262,6 +296,11 @@ async function handlePay(userId, body, event) {
   if (!profile) return notFound("Utilisateur introuvable");
   if (!profile.transactionPinHash) {
     return forbidden("Complétez votre inscription (code PIN) pour payer");
+  }
+  if (isPayBlocked(profile)) {
+    return forbidden("Paiements suspendus sur ce compte — contactez Blyp", {
+      code: "PAY_BLOCKED",
+    });
   }
   const kycMax = maxTxFcfaForProfile(profile);
   if (amount > kycMax) {

@@ -12,8 +12,13 @@ import {
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { getDocClient, getTableName, ttlFromNowMs } from "./dynamodb.mjs";
 import { signAccessToken } from "./jwt.mjs";
+import { userPk } from "./user.mjs";
+import { listDeviceTokens } from "./devices.mjs";
+import { checkRefreshProof, deviceKeyRequired, parseDevicePublicKey } from "./deviceKey.mjs";
 
 const doc = getDocClient();
+
+const AUTH_SESSION_SK = "AUTH_SESSION";
 
 /** 180 jours — session persistante jusqu’à désinstall / logout / vol de jeton. */
 export const REFRESH_TTL_MS = 180 * 24 * 60 * 60 * 1000;
@@ -34,7 +39,7 @@ function newRefreshRaw() {
   return randomBytes(32).toString("base64url");
 }
 
-async function putRefreshSession({ userId, familyId, tokenHash, expiresAt }) {
+async function putRefreshSession({ userId, familyId, tokenHash, expiresAt, devicePublicKey = null }) {
   const now = new Date().toISOString();
   await doc.send(
     new PutCommand({
@@ -47,6 +52,7 @@ async function putRefreshSession({ userId, familyId, tokenHash, expiresAt }) {
         tokenHash,
         createdAt: now,
         expiresAt,
+        ...(devicePublicKey ? { devicePublicKey } : {}),
         entityType: "REFRESH",
       },
     }),
@@ -114,22 +120,80 @@ async function revokeFamily(familyId) {
   }
 }
 
-/** Après OTP vérifié : access court + refresh long. */
-export async function issueAuthSession(userId) {
-  const accessToken = await signAccessToken(userId);
+async function getAuthSessionItem(userId) {
+  const res = await doc.send(
+    new GetCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: AUTH_SESSION_SK },
+    }),
+  );
+  return res.Item ?? null;
+}
+
+export async function getActiveSessionFamilyId(userId) {
+  const item = await getAuthSessionItem(userId);
+  const fid = String(item?.activeFamilyId ?? "").trim();
+  return fid || null;
+}
+
+async function setActiveSessionFamily(userId, familyId) {
+  await doc.send(
+    new PutCommand({
+      TableName: getTableName(),
+      Item: {
+        PK: userPk(userId),
+        SK: AUTH_SESSION_SK,
+        activeFamilyId: familyId,
+        updatedAt: new Date().toISOString(),
+      },
+    }),
+  );
+}
+
+async function revokePreviousUserSession(userId) {
+  const item = await getAuthSessionItem(userId);
+  const prev = String(item?.activeFamilyId ?? "").trim();
+  if (prev) await revokeFamily(prev);
+}
+
+async function purgePushTokensForUser(userId) {
+  const devices = await listDeviceTokens(userId);
+  for (const d of devices) {
+    if (!d.SK) continue;
+    await doc.send(
+      new DeleteCommand({
+        TableName: getTableName(),
+        Key: { PK: userPk(userId), SK: d.SK },
+      }),
+    );
+  }
+}
+
+/** Après OTP vérifié : access court + refresh long, liés à la clé appareil si fournie. */
+export async function issueAuthSession(userId, devicePublicKeyRaw = null) {
+  const devicePublicKey = parseDevicePublicKey(devicePublicKeyRaw)
+    ? String(devicePublicKeyRaw).trim()
+    : null;
+  await revokePreviousUserSession(userId);
+  await purgePushTokensForUser(userId);
+
   const refreshToken = newRefreshRaw();
   const tokenHash = hashRefreshToken(refreshToken);
   const familyId = randomUUID();
   const expiresAt = ttlFromNowMs(REFRESH_TTL_MS);
-  await putRefreshSession({ userId, familyId, tokenHash, expiresAt });
+  await putRefreshSession({ userId, familyId, tokenHash, expiresAt, devicePublicKey });
+  await setActiveSessionFamily(userId, familyId);
+  const accessToken = await signAccessToken(userId, familyId, devicePublicKey);
   return { token: accessToken, refreshToken };
 }
 
 /**
  * Rotation : invalide l’ancien refresh, émet access + refresh neufs.
- * @returns {{ token: string, refreshToken: string } | null}
+ * Session liée à une clé appareil ⇒ preuve signée obligatoire (refresh volé inutile ailleurs).
+ * Session historique sans clé ⇒ adopte la clé fournie si sa preuve est valide (migration silencieuse).
+ * @returns {{ token: string, refreshToken: string } | { replaced: true } | { badProof: true } | { clockSkew: true } | null}
  */
-export async function rotateAuthSession(refreshTokenRaw) {
+export async function rotateAuthSession(refreshTokenRaw, deviceProof = null) {
   const raw = String(refreshTokenRaw ?? "").trim();
   if (!raw || raw.length < 20) return null;
 
@@ -156,6 +220,26 @@ export async function rotateAuthSession(refreshTokenRaw) {
     return null;
   }
 
+  const activeFamilyId = await getActiveSessionFamilyId(item.userId);
+  if (activeFamilyId && item.familyId !== activeFamilyId) {
+    return { replaced: true };
+  }
+
+  let devicePublicKey = String(item.devicePublicKey ?? "").trim() || null;
+  if (devicePublicKey) {
+    const st = checkRefreshProof(devicePublicKey, raw, deviceProof);
+    if (st === "skew") return { clockSkew: true };
+    if (st !== "ok") return { badProof: true };
+  } else {
+    if (deviceKeyRequired()) return { badProof: true };
+    const offered = String(deviceProof?.publicKey ?? "").trim();
+    if (offered && parseDevicePublicKey(offered)) {
+      const st = checkRefreshProof(offered, raw, deviceProof);
+      if (st === "skew") return { clockSkew: true };
+      if (st === "ok") devicePublicKey = offered;
+    }
+  }
+
   /** Marque révoqué avant rotation — réutilisation concurrente ⇒ famille tuée. */
   try {
     await doc.send(
@@ -177,7 +261,6 @@ export async function rotateAuthSession(refreshTokenRaw) {
 
   await deleteRefreshSession(tokenHash, item.familyId);
 
-  const accessToken = await signAccessToken(item.userId);
   const nextRaw = newRefreshRaw();
   const nextHash = hashRefreshToken(nextRaw);
   const expiresAt = ttlFromNowMs(REFRESH_TTL_MS);
@@ -186,7 +269,9 @@ export async function rotateAuthSession(refreshTokenRaw) {
     familyId: item.familyId,
     tokenHash: nextHash,
     expiresAt,
+    devicePublicKey,
   });
 
+  const accessToken = await signAccessToken(item.userId, item.familyId, devicePublicKey);
   return { token: accessToken, refreshToken: nextRaw };
 }

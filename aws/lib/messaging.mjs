@@ -15,6 +15,7 @@ import {
   getUserProfile,
   userPk,
 } from "./user.mjs";
+import { resolveAccountId } from "./accountId.mjs";
 import { isValidTxAmount } from "./wallet.mjs";
 
 const doc = getDocClient();

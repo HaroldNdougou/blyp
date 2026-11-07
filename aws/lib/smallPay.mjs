@@ -1,5 +1,5 @@
-/** Montant strictement inférieur à 500 FCFA — paiement sans PIN si opt-in. */
-export const SMALL_PAY_MAX_FCFA = 499;
+/** Montant ≤ 1 000 FCFA — paiement sans PIN si opt-in. */
+export const SMALL_PAY_MAX_FCFA = 1_000;
 
 /** Cumul sans PIN par jour (UTC). */
 export const SMALL_PAY_DAILY_MAX_SUM_FCFA = 2_000;

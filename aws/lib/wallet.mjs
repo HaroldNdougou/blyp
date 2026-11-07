@@ -732,6 +732,7 @@ export async function executePayment(
       target.type === "commerce" ? target.ownerUserId : target.userId;
     const pushPayload = {
       recipientUserId,
+      payerUserId: userId,
       transactionId: receiveTxId,
       amountFcfa: amount,
       fromName,
@@ -739,56 +740,85 @@ export async function executePayment(
       commerceId:
         target.type === "commerce" ? target.commerceId : null,
     };
-    void import("./realtimeWs.mjs")
-      .then(({ postRealtimeToUser }) =>
-        postRealtimeToUser(recipientUserId, {
-          type: "payment_received",
-          transactionId: receiveTxId,
-          amountFcfa: amount,
-          fromName,
-          contextType: pushPayload.contextType,
-          commerceId: pushPayload.commerceId,
-        }),
-      )
-      .catch((err) => {
-        console.warn("[wallet] realtime pay notify failed", err?.message ?? err);
+    const isCommercePay = pushPayload.contextType === "commerce";
+    const notifyRecipient = recipientUserId && recipientUserId !== userId;
+    if (notifyRecipient) {
+      void import("./realtimeWs.mjs")
+        .then(({ postRealtimeToUser }) =>
+          postRealtimeToUser(recipientUserId, {
+            type: "payment_received",
+            transactionId: receiveTxId,
+            amountFcfa: amount,
+            fromName,
+            contextType: pushPayload.contextType,
+            commerceId: pushPayload.commerceId,
+          }),
+        )
+        .catch((err) => {
+          console.warn("[wallet] realtime pay notify failed", err?.message ?? err);
+        });
+    }
+    if (isCommercePay && notifyRecipient) {
+      void import("./pushSend.mjs")
+        .then(({ sendPaymentReceivedPush }) =>
+          sendPaymentReceivedPush(pushPayload),
+        )
+        .catch((err) => {
+          console.warn("[wallet] commerce push send failed", err?.message ?? err);
+        });
+    } else if (!isCommercePay && notifyRecipient) {
+      const { enqueuePaymentReceivedPush } = await import("./pushQueue.mjs");
+      void enqueuePaymentReceivedPush(pushPayload).catch((err) => {
+        console.warn("[wallet] push enqueue failed", err?.message ?? err);
       });
-    const { enqueuePaymentReceivedPush } = await import("./pushQueue.mjs");
-    void enqueuePaymentReceivedPush(pushPayload).catch((err) => {
-      console.warn("[wallet] push enqueue failed", err?.message ?? err);
-    });
+    }
   } catch (err) {
     console.warn("[wallet] push enqueue import failed", err?.message ?? err);
   }
 
   let paymentReceipt = null;
   if (target.type === "commerce") {
-    const { buildCommercePaymentReceipt } = await import("./paymentReceipt.mjs");
-    paymentReceipt = buildCommercePaymentReceipt({
-      transactionId: receiveTxId,
-      reference: receiveReference,
-      amountFcfa: amount,
-      recipientAccountId: accountId,
-      commerceId: target.commerceId,
-      cashierSession: paymentMeta?.cashierSession ?? null,
-    });
+    try {
+      const { buildCommercePaymentReceipt } = await import("./paymentReceipt.mjs");
+      paymentReceipt = await buildCommercePaymentReceipt({
+        transactionId: receiveTxId,
+        reference: receiveReference,
+        amountFcfa: amount,
+        recipientAccountId: accountId,
+        commerceId: target.commerceId,
+        cashierSession: paymentMeta?.cashierSession ?? null,
+      });
+    } catch (err) {
+      console.error(
+        "[wallet] payment receipt sign failed",
+        err?.message ?? err,
+      );
+      paymentReceipt = null;
+    }
   }
 
   if (idempotencyKey) {
-    await doc.send(
-      new PutCommand({
-        TableName: getTableName(),
-        Item: {
-          PK: userPk(userId),
-          SK: payIdemSk(idempotencyKey),
-          balanceFcfa,
-          transactionId: txId,
-          reference,
-          paymentReceipt,
-          createdAt: now,
-        },
-      }),
-    );
+    try {
+      await doc.send(
+        new PutCommand({
+          TableName: getTableName(),
+          Item: {
+            PK: userPk(userId),
+            SK: payIdemSk(idempotencyKey),
+            balanceFcfa,
+            transactionId: txId,
+            reference,
+            paymentReceipt,
+            createdAt: now,
+          },
+        }),
+      );
+    } catch (err) {
+      console.error(
+        "[wallet] pay idempotency finalize failed",
+        err?.message ?? err,
+      );
+    }
   }
 
   return {

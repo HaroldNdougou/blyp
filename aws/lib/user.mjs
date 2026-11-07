@@ -41,6 +41,10 @@ function getOnboardingStep(profile) {
   return null;
 }
 
+export function isPayBlocked(profile) {
+  return profile?.payBlocked === true;
+}
+
 export function userToApi(profile, walletOrBalance = 0) {
   const onboardingStep = getOnboardingStep(profile);
   const wallet =
@@ -68,6 +72,8 @@ export function userToApi(profile, walletOrBalance = 0) {
       wallet.personalBalanceFcfa ?? wallet.balanceFcfa ?? 0,
     needsOnboarding: onboardingStep != null,
     onboardingStep,
+    /** Paiements sortants bloqués par Blyp (fraude, litige…). */
+    payBlocked: isPayBlocked(profile),
     firstName: wallet.displayFirstName ?? profile.firstName ?? null,
     lastName: wallet.displayLastName ?? profile.lastName ?? null,
     /** Noms du profil perso (inchangés en mode pro). */
@@ -89,6 +95,11 @@ export function userToApi(profile, walletOrBalance = 0) {
           : 1
         : 0,
     smallPayWithoutPinEnabled: profile.smallPayWithoutPinEnabled === true,
+    smallPayStatsDay: profile.smallPayStatsDay ?? null,
+    smallPayStatsSumFcfa: Number(profile.smallPayStatsSumFcfa ?? 0),
+    smallPayPeriodWithoutPinSumFcfa: Number(
+      profile.smallPayPeriodWithoutPinSumFcfa ?? 0,
+    ),
   };
 }
 

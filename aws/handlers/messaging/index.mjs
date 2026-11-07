@@ -10,12 +10,16 @@ import {
   serverError,
   unauthorized,
 } from "../../lib/http.mjs";
-import { verifyAccessToken } from "../../lib/jwt.mjs";
+import { resolveUserIdFromAccessToken } from "../../lib/authSession.mjs";
+import {
+  isSessionReplacedError,
+  sessionReplacedUnauthorized,
+} from "../../lib/sessionErrors.mjs";
 import {
   getTransactionPinPepper,
   verifyTransactionPin,
 } from "../../lib/pin.mjs";
-import { getUserProfile } from "../../lib/user.mjs";
+import { getUserProfile, isPayBlocked } from "../../lib/user.mjs";
 import {
   claimMoneyTransfer,
   listConversations,
@@ -65,9 +69,12 @@ async function requireUserId(event) {
   const token = event.headers?.authorization ?? event.headers?.Authorization;
   if (!token?.startsWith("Bearer ")) return { error: unauthorized() };
   try {
-    const userId = await verifyAccessToken(token.slice(7).trim());
+    const userId = await resolveUserIdFromAccessToken(token.slice(7).trim());
     return { userId };
-  } catch {
+  } catch (err) {
+    if (isSessionReplacedError(err)) {
+      return { error: sessionReplacedUnauthorized() };
+    }
     return { error: unauthorized("Session invalide") };
   }
 }
@@ -469,6 +476,11 @@ export async function handler(event) {
           if (!profile) return notFound("Utilisateur introuvable");
           if (!profile.transactionPinHash) {
             return forbidden("Complétez votre inscription (code PIN) pour payer");
+          }
+          if (isPayBlocked(profile)) {
+            return forbidden("Paiements suspendus sur ce compte — contactez Blyp", {
+              code: "PAY_BLOCKED",
+            });
           }
           if (
             !verifyTransactionPin(

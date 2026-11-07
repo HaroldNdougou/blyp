@@ -1,4 +1,8 @@
-import { createPrivateKey, createPublicKey, sign, verify } from "node:crypto";
+import { createPublicKey, sign, verify } from "node:crypto";
+import {
+  ensurePayReceiptPrivateKeyLoaded,
+  getPayReceiptPrivateKeyOrNull,
+} from "./payReceiptSecret.mjs";
 
 /** Doit correspondre à lib/pay/paymentReceiptEd25519PublicKey.ts */
 const PAY_RECEIPT_ED25519_PUBLIC_KEY_B64 =
@@ -9,7 +13,6 @@ export const PAY_RECEIPT_TTL_MS = 60_000;
 export const PAY_RECEIPT_VERSION = 2;
 export const PAY_RECEIPT_BLE_VERSION = 2;
 
-let privateKeyObj = null;
 let publicKeyObj = null;
 
 function sortedJson(obj) {
@@ -20,13 +23,7 @@ function sortedJson(obj) {
 }
 
 function getPrivateKey() {
-  if (privateKeyObj) return privateKeyObj;
-  const pem = String(process.env.PAY_RECEIPT_ED25519_PRIVATE_KEY_PEM ?? "")
-    .trim()
-    .replace(/\\n/g, "\n");
-  if (!pem) return null;
-  privateKeyObj = createPrivateKey(pem);
-  return privateKeyObj;
+  return getPayReceiptPrivateKeyOrNull();
 }
 
 function getPublicKey() {
@@ -58,6 +55,12 @@ export function signReceiptBody(bodyWithoutSig) {
 export function verifyCommercePaymentReceipt(receipt) {
   if (!receipt || receipt.v !== PAY_RECEIPT_VERSION) return false;
   if (Date.now() > Number(receipt.expiresAt)) return false;
+  return verifyCommercePaymentReceiptSignature(receipt);
+}
+
+/** Vérifie la signature sans contrôle d’expiration (encaissement / anti-rejeu). */
+export function verifyCommercePaymentReceiptSignature(receipt) {
+  if (!receipt || receipt.v !== PAY_RECEIPT_VERSION) return false;
   const sigB64 = String(receipt.sig ?? "").trim();
   if (!sigB64) return false;
   let sigBuf;
@@ -78,7 +81,7 @@ export function verifyCommercePaymentReceipt(receipt) {
   }
 }
 
-export function buildCommercePaymentReceipt({
+export async function buildCommercePaymentReceipt({
   transactionId,
   reference,
   amountFcfa,
@@ -86,6 +89,7 @@ export function buildCommercePaymentReceipt({
   commerceId,
   cashierSession = null,
 }) {
+  await ensurePayReceiptPrivateKeyLoaded();
   const issuedAt = Date.now();
   const expiresAt = issuedAt + PAY_RECEIPT_TTL_MS;
   const body = {

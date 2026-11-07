@@ -1,6 +1,7 @@
 import {
   badGateway,
   badRequest,
+  conflict,
   getBearerToken,
   normalizeApiPath,
   notFound,
@@ -12,7 +13,16 @@ import {
   unauthorized,
   forbidden,
 } from "../../lib/http.mjs";
-import { verifyAccessToken } from "../../lib/jwt.mjs";
+import { resolveAccessSession } from "../../lib/authSession.mjs";
+import {
+  checkRequestProof,
+  isSensitiveRoute,
+  DEVICE_PROOF_INVALID_CODE,
+  DEVICE_CLOCK_SKEW_CODE,
+  DEVICE_KEY_REQUIRED_CODE,
+  deviceKeyRequired,
+  parseDevicePublicKey,
+} from "../../lib/deviceKey.mjs";
 import {
   generateOtpCode,
   hashOtp,
@@ -25,9 +35,14 @@ import {
   hashTransactionPin,
 } from "../../lib/pin.mjs";
 import {
+  getActiveSessionFamilyId,
   issueAuthSession,
   rotateAuthSession,
 } from "../../lib/refreshTokens.mjs";
+import {
+  sessionReplacedUnauthorized,
+  isSessionReplacedError,
+} from "../../lib/sessionErrors.mjs";
 import { deliverOtpSms, isOtpWhatsAppConfigured } from "../../lib/sms.mjs";
 import {
   deleteOtpChallenge,
@@ -81,6 +96,11 @@ import {
   resetSoaCarTrip,
 } from "../../lib/soaCarTrip.mjs";
 import {
+  encashCommercePaymentReceipt,
+  listCommerceEncashedReceipts,
+  CODE_PAYMENT_RECEIPT_ALREADY_ENCASHED,
+} from "../../lib/paymentReceiptEncash.mjs";
+import {
   deleteDeviceToken,
   upsertDeviceToken,
 } from "../../lib/devices.mjs";
@@ -98,9 +118,25 @@ async function requireUserId(event) {
   const token = getBearerToken(event);
   if (!token) return { error: unauthorized() };
   try {
-    const userId = await verifyAccessToken(token);
+    const { userId, devicePublicKey } = await resolveAccessSession(token);
+    const method = event.requestContext?.http?.method ?? event.httpMethod;
+    const path = normalizeApiPath(event);
+    if (isSensitiveRoute(method, path)) {
+      const st = checkRequestProof(event, devicePublicKey, method, path);
+      if (st !== "ok") {
+        return {
+          error: forbidden("Signature de l’appareil invalide", {
+            code: st === "skew" ? DEVICE_CLOCK_SKEW_CODE : DEVICE_PROOF_INVALID_CODE,
+            serverTime: Date.now(),
+          }),
+        };
+      }
+    }
     return { userId };
-  } catch {
+  } catch (err) {
+    if (isSessionReplacedError(err)) {
+      return { error: sessionReplacedUnauthorized() };
+    }
     return { error: unauthorized("Session invalide") };
   }
 }
@@ -155,9 +191,14 @@ async function handleVerifyOtp(body) {
     return badRequest("Téléphone ou code invalide");
   }
 
+  if (deviceKeyRequired() && !parseDevicePublicKey(body?.devicePublicKey)) {
+    return badRequest("Mettez l’app à jour pour vous connecter", { code: DEVICE_KEY_REQUIRED_CODE });
+  }
+
+  const confirmReplaceSession = body?.confirmReplaceSession === true;
   const cacheKey = otpVerifyCacheKey(phone, code);
   const cached = await getOtpVerifyCache(cacheKey);
-  if (cached) return ok(cached);
+  if (cached?.token && cached?.user) return ok(cached);
 
   let challenge = await getOtpChallenge(phone);
   /** Course : l’écran code s’ouvre avant la fin de `request-otp` / réplique Dynamo. */
@@ -173,14 +214,22 @@ async function handleVerifyOtp(body) {
     return badRequest("Code incorrect ou expiré");
   }
 
-  await deleteOtpChallenge(phone);
   const { userId, user, isNewAccount } = await findOrCreateUserByPhoneSafe(phone);
-  const session = await issueAuthSession(userId);
+  const hadActiveSession = Boolean(await getActiveSessionFamilyId(userId));
+  if (hadActiveSession && !confirmReplaceSession) {
+    return ok({ needsSessionReplaceConfirm: true });
+  }
+
+  await deleteOtpChallenge(phone);
+  const session = await issueAuthSession(userId, body?.devicePublicKey);
   const payload = {
     token: session.token,
     refreshToken: session.refreshToken,
     user,
     isNewAccount,
+    ...(hadActiveSession && confirmReplaceSession
+      ? { replacedPreviousSession: true }
+      : {}),
   };
   await putOtpVerifyCache(cacheKey, payload);
   return ok(payload);
@@ -191,8 +240,20 @@ async function handleRefresh(body) {
   if (!refreshToken) {
     return unauthorized("Session expirée. Reconnectez-vous.");
   }
-  const session = await rotateAuthSession(refreshToken);
-  if (!session) {
+  const session = await rotateAuthSession(refreshToken, body?.deviceProof ?? null);
+  if (session?.replaced) {
+    return sessionReplacedUnauthorized();
+  }
+  if (session?.clockSkew) {
+    return conflict("Heure du téléphone décalée", {
+      code: DEVICE_CLOCK_SKEW_CODE,
+      serverTime: Date.now(),
+    });
+  }
+  if (session?.badProof) {
+    return unauthorized("Session expirée. Reconnectez-vous.", { code: DEVICE_PROOF_INVALID_CODE });
+  }
+  if (!session?.token) {
     return unauthorized("Session expirée. Reconnectez-vous.");
   }
   return ok({
@@ -570,6 +631,53 @@ async function handleSoaDayReport(userId, commerceIdRaw, dayKey) {
   return ok(result);
 }
 
+async function handlePaymentReceiptEncash(userId, commerceIdRaw, body) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  const receipt = body?.receipt ?? body;
+  if (!receipt || typeof receipt !== "object") {
+    return badRequest("receipt requis");
+  }
+  const result = await encashCommercePaymentReceipt(
+    userId,
+    commerceId,
+    receipt,
+  );
+  if (!result.ok) {
+    if (result.status === 404) return notFound(result.message);
+    if (result.status === 403) return forbidden(result.message);
+    if (result.status === 409) {
+      return conflict(result.message, {
+        code: result.code ?? CODE_PAYMENT_RECEIPT_ALREADY_ENCASHED,
+      });
+    }
+    return badRequest(result.message ?? "Encaissement refusé");
+  }
+  return ok({
+    transactionId: result.transactionId,
+    first: result.first,
+  });
+}
+
+async function handlePaymentReceiptEncashmentsList(
+  userId,
+  commerceIdRaw,
+  sinceIso,
+) {
+  const commerceId = String(commerceIdRaw ?? "").trim();
+  if (!commerceId) return badRequest("commerceId requis");
+  const result = await listCommerceEncashedReceipts(
+    userId,
+    commerceId,
+    sinceIso,
+  );
+  if (!result.ok) {
+    if (result.status === 404) return notFound(result.message);
+    return badRequest(result.message ?? "Liste impossible");
+  }
+  return ok({ items: result.items });
+}
+
 export async function handler(event, context) {
   /** Ne pas attendre les promesses SMS en arrière-plan après la réponse. */
   if (context && typeof context.callbackWaitsForEmptyEventLoop === "boolean") {
@@ -791,6 +899,36 @@ export async function handler(event, context) {
       if (method === "POST") {
         return await handleSoaTripReset(auth.userId, commerceId);
       }
+    }
+
+    const commerceReceiptEncash = path.match(
+      /^\/commerces\/([^/]+)\/payment-receipts\/encash$/,
+    );
+    if (method === "POST" && commerceReceiptEncash) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handlePaymentReceiptEncash(
+        auth.userId,
+        decodeURIComponent(commerceReceiptEncash[1]),
+        body,
+      );
+    }
+
+    const commerceReceiptEncashList = path.match(
+      /^\/commerces\/([^/]+)\/payment-receipts\/encashments$/,
+    );
+    if (method === "GET" && commerceReceiptEncashList) {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const qs = event.queryStringParameters ?? {};
+      const since = String(qs.since ?? "").trim() || null;
+      return await handlePaymentReceiptEncashmentsList(
+        auth.userId,
+        decodeURIComponent(commerceReceiptEncashList[1]),
+        since,
+      );
     }
 
     if (method === "PUT" && path === "/me/device-token") {
