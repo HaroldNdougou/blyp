@@ -4,15 +4,16 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { useAuth } from "@/contexts/authContextBase";
 import { NetworkProvider } from "@/contexts/NetworkContext";
 import { ThemeProvider, useTheme } from "@/contexts/ThemeContext";
+import { ColdStartHeavyHosts } from "@/components/network/ColdStartHeavyHosts";
+import { DeferredAppBootstraps } from "@/components/network/DeferredAppBootstraps";
+import { PayDossierBootstrap } from "@/components/pay/PayDossierBootstrap";
+import { MerchantCommerceGattBootstrap } from "@/components/commerce/MerchantCommerceGattBootstrap";
+import { NativeShellPayBootstrap } from "@/components/network/NativeShellPayBootstrap";
+import { NativeShellBadgeBootstrap } from "@/components/network/NativeShellBadgeBootstrap";
+import { NativeShellReturnBootstrap } from "@/components/network/NativeShellReturnBootstrap";
+import { OfflineBanner } from "@/components/network/OfflineBanner";
 import { BlypActionFlashHost } from "@/components/ui/BlypActionFlashHost";
 import { BlypAlertHost } from "@/components/ui/BlypAlertHost";
-import { BleBroadcastBootstrap } from "@/components/network/BleBroadcastBootstrap";
-import { QuickPayBootstrap } from "@/components/network/QuickPayBootstrap";
-import { QuickPayHost } from "@/components/pay/QuickPayHost";
-import { OfflineBanner } from "@/components/network/OfflineBanner";
-import { PushBootstrap } from "@/components/network/PushBootstrap";
-import { RealtimeSync } from "@/components/network/RealtimeSync";
-import { WalletRealtimeBootstrap } from "@/components/network/WalletRealtimeBootstrap";
 import { stackScreenOptions } from "@/lib/perf/instantMotion";
 import { RootShellReadyProvider } from "@/lib/rootShellReady";
 import { getSplashBackground } from "@/lib/theme/splash";
@@ -57,7 +58,7 @@ function SplashGate({ children }: { children: ReactNode }) {
     if (isLoading || __DEV__) return;
     const t = setTimeout(() => {
       setShellReady((prev) => prev || true);
-    }, 350);
+    }, 280);
     return () => clearTimeout(t);
   }, [isLoading]);
 
@@ -72,6 +73,9 @@ function SplashGate({ children }: { children: ReactNode }) {
         void SplashScreen.hideAsync().catch(() => {
           /* fréquent au hot reload */
         });
+        void import("@/lib/pay/nativeColdStart").then((m) =>
+          m.notifyNativePayInteractive(),
+        );
       });
     });
     return () => {
@@ -120,6 +124,9 @@ function RootShell() {
           }}
         />
         <Stack.Screen name="pocket/[id]" />
+        <Stack.Screen name="chat/[id]" />
+        <Stack.Screen name="new-chat" />
+        <Stack.Screen name="forward" />
         <Stack.Screen name="kyc" />
         <Stack.Screen name="documents" />
         <Stack.Screen name="receipts" />
@@ -129,6 +136,20 @@ function RootShell() {
             presentation: "transparentModal",
             animation: "none",
             contentStyle: { backgroundColor: "transparent" },
+          }}
+        />
+        <Stack.Screen
+          name="pay-scan"
+          options={{
+            presentation: "fullScreenModal",
+            animation: "none",
+          }}
+        />
+        <Stack.Screen
+          name="pay-qr"
+          options={{
+            presentation: "modal",
+            animation: "none",
           }}
         />
       </Stack>
@@ -154,14 +175,15 @@ export default function RootLayout() {
         <ThemeProvider>
           <NetworkProvider>
             <AuthProvider>
-              <RealtimeSync />
-              <WalletRealtimeBootstrap />
-              <PushBootstrap />
-              <BleBroadcastBootstrap />
-              <QuickPayBootstrap />
+              <PayDossierBootstrap />
+              <MerchantCommerceGattBootstrap />
+              <DeferredAppBootstraps />
+              <NativeShellPayBootstrap />
+              <NativeShellBadgeBootstrap />
+              <NativeShellReturnBootstrap />
               <SplashGate>
                 <RootShell />
-                <QuickPayHost />
+                <ColdStartHeavyHosts />
                 <BlypAlertHost />
                 <BlypActionFlashHost />
               </SplashGate>

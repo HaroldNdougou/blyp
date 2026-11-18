@@ -111,7 +111,8 @@ export function KycVerifyScreen() {
       } else {
         blypAlert(t("kyc.title"), t("kyc.pendingMessage"));
       }
-      router.back();
+      const { leaveNativeRouteScreen } = await import("@/lib/nativeShell/leaveRouteScreen");
+      if (!(await leaveNativeRouteScreen())) router.back();
     } catch (e) {
       const msg =
         e instanceof Error && e.message.trim()
@@ -159,7 +160,13 @@ export function KycVerifyScreen() {
     <SafeAreaView style={styles.safe} edges={["top", "left", "right"]}>
       <View style={styles.header}>
         <Pressable
-          onPress={() => router.back()}
+          onPress={() => {
+            void import("@/lib/nativeShell/leaveRouteScreen").then((m) =>
+              m.leaveNativeRouteScreen().then((left) => {
+                if (!left) router.back();
+              }),
+            );
+          }}
           hitSlop={8}
           accessibilityRole="button"
           accessibilityLabel={t("common.back")}

@@ -8,6 +8,7 @@ const samples: { name: string; ms: number; at: string }[] = [];
 let chatOpenT0: number | null = null;
 
 export function perfMarkStart(name: string): void {
+  if (!__DEV__) return;
   const t0 = Date.now();
   open.set(name, { name, t0 });
   if (name === "chat_open") chatOpenT0 = t0;
@@ -25,9 +26,9 @@ export function perfMarkEnd(name: string): number | null {
   if (!rec) return null;
   open.delete(name);
   const ms = Date.now() - rec.t0;
-  samples.push({ name, ms, at: new Date().toISOString() });
-  if (samples.length > 40) samples.shift();
   if (__DEV__) {
+    samples.push({ name, ms, at: new Date().toISOString() });
+    if (samples.length > 40) samples.shift();
     // eslint-disable-next-line no-console
     console.log(`[perf] ${name}: ${ms}ms`);
   }

@@ -25,7 +25,7 @@
     "aws:metrics": "node aws/scripts/metrics.mjs",
     "aws:logs": "sam logs -n blyp-health-dev --stack-name blyp-api-dev --tail",
     "aws:logs:auth": "sam logs -n blyp-auth-dev --stack-name blyp-api-dev --tail",
-    "aws:logs:wallet": "sam logs -n blyp-wallet-dev --stack-name blyp-api-dev --tail",
+    "aws:logs:wallet": "sam logs -n WalletFunction --stack-name blyp-api-dev --tail",
     "aws:logs:push": "sam logs -n blyp-push-dev --stack-name blyp-api-dev --tail"
   },
   "dependencies": {
@@ -42,6 +42,7 @@
     "expo-audio-waveform": "^0.1.0",
     "expo-av": "~16.0.8",
     "expo-build-properties": "~1.0.10",
+    "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.13",
     "expo-contacts": "~15.0.11",
     "expo-dev-client": "~6.0.20",
@@ -80,6 +81,7 @@
     "react-native-ble-plx": "^3.5.1",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-pdf-thumbnail": "^2.0.0",
+    "react-native-qrcode-svg": "^6.3.54",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",

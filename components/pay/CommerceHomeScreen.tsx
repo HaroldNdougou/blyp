@@ -16,13 +16,6 @@ import {
   enableOfflineCashierMode,
   runOfflineCashierBackgroundSync,
 } from "@/lib/commerce/offlineCashierMode";
-import { handleCommercePaymentReceipt } from "@/lib/commerce/handleCommercePaymentReceipt";
-import {
-  startMerchantClosedCashierGatt,
-  stopMerchantClosedCashierGatt,
-  subscribeMerchantClosedCashierReceipt,
-} from "@/lib/commerce/closedCashierGattMerchant";
-import type { CommercePaymentReceipt } from "@/lib/pay/paymentReceipt";
 import {
   hydratePendingCommerceReceiptsOnce,
   sumPendingCommerceReceiptsFcfa,
@@ -37,6 +30,8 @@ import {
   msUntilJustNowExpires,
 } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
+import { merchantPayUiFlash } from "@/lib/perf/merchantPayTrace";
+import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import {
   subscribeIncomingPaymentFlash,
   type IncomingPaymentFlash,
@@ -50,6 +45,7 @@ import {
   subscribeTransactionsCache,
 } from "@/lib/transactionsCache";
 import { useFocusEffect } from "@react-navigation/native";
+import { router } from "expo-router";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -97,12 +93,21 @@ function sumReceivedTodayFcfa(items: TransactionItem[] | null): number {
  * MAJ au focus (cache RAM) ; push « paiement reçu » hydrate via PushBootstrap.
  */
 export function CommerceHomeScreen() {
+  useMarkRootShellReady();
   const { t } = useTranslation();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createCommerceHomeStyles(colors), [colors]);
   const { user, token, refreshUser } = useAuth();
   const phone = user?.phone ?? "";
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      void import("@/lib/perf/postPayBoot").then((m) => {
+        m.markPayTabFirstPaint({ token, phone: phone || null });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [token, phone]);
   const bleBroadcastAccount = useMemo(
     () => resolveBleBroadcastAccount(user),
     [user],
@@ -159,6 +164,7 @@ export function CommerceHomeScreen() {
         clearTimeout(flashTimerRef.current);
       }
       setReceivedFlash(event);
+      merchantPayUiFlash(event.transactionId);
       flashTimerRef.current = setTimeout(() => {
         flashTimerRef.current = null;
         setReceivedFlash(null);
@@ -235,40 +241,7 @@ export function CommerceHomeScreen() {
     });
   }, [offlineCashierActive, viewingCommerceId, phone]);
 
-  useEffect(() => {
-    if (
-      !offlineCashierActive ||
-      !viewingCommerceId ||
-      !bleBroadcastAccount?.accountId
-    ) {
-      return;
-    }
-    const merchantAccountId = bleBroadcastAccount.accountId;
-    let alive = true;
-    void startMerchantClosedCashierGatt(merchantAccountId);
-    const unsubNative = subscribeMerchantClosedCashierReceipt((json) => {
-      if (!alive) return;
-      try {
-        const receipt = JSON.parse(json) as CommercePaymentReceipt;
-        void handleCommercePaymentReceipt({
-          receipt,
-          commerceId: viewingCommerceId,
-          merchantAccountId,
-        });
-      } catch {
-        /* ignore */
-      }
-    });
-    return () => {
-      alive = false;
-      unsubNative();
-      void stopMerchantClosedCashierGatt();
-    };
-  }, [
-    offlineCashierActive,
-    viewingCommerceId,
-    bleBroadcastAccount?.accountId,
-  ]);
+  // GATT commerce : MerchantCommerceGattBootstrap (racine app, arrière-plan OK)
 
   // Un seul timeout jusqu’à expiration — zéro intervalle.
   useEffect(() => {
@@ -309,6 +282,31 @@ export function CommerceHomeScreen() {
           focusedRef.current = false;
         };
       }
+      void import("@/lib/realtime/walletRealtimeLink").then((m) => {
+        m.ensureWalletRealtimeLink(token);
+        m.kickWalletRealtimeLink();
+      });
+      void import("@/lib/commerce/encashedReceiptIdsCache").then((m) => {
+        m.hydrateEncashedReceiptIdsOnce();
+        if (viewingCommerceId) {
+          void m
+            .syncEncashedReceiptIdsForCommerce({
+              commerceId: viewingCommerceId,
+              token,
+            })
+            .catch(() => {});
+        }
+      });
+      void import("@/lib/commerce/claimCommercePaymentReceipt").then((m) => {
+        if (viewingCommerceId) {
+          void m
+            .flushPendingReceiptEncashQueue({
+              commerceId: viewingCommerceId,
+              token,
+            })
+            .catch(() => {});
+        }
+      });
       void refreshUser().catch(() => {});
       void import("@/lib/sync/transactionsSync").then((m) => {
         if (phone) {
@@ -324,7 +322,7 @@ export function CommerceHomeScreen() {
         focusedRef.current = false;
         warm.cancel?.();
       };
-    }, [token, refreshUser, phone]),
+    }, [token, refreshUser, phone, viewingCommerceId]),
   );
 
   const lastReconnectGenRef = useRef(0);
@@ -369,24 +367,6 @@ export function CommerceHomeScreen() {
     [broadcast.setEnabled, t],
   );
 
-  const onBroadcastToggle = useCallback(
-    async (enabled: boolean) => {
-      if (enabled) {
-        const connected = await fetchIsNetworkConnected();
-        if (!connected) {
-          if (offlineCashierActive) {
-            setOfflineAlreadyVisible(true);
-          } else {
-            setOfflineOfferVisible(true);
-          }
-          return;
-        }
-      }
-      await enableOnlineBroadcast(enabled);
-    },
-    [enableOnlineBroadcast, offlineCashierActive],
-  );
-
   const onConfirmOfflineCashierMode = useCallback(async () => {
     setOfflineOfferVisible(false);
     if (!viewingCommerceId) return;
@@ -395,6 +375,24 @@ export function CommerceHomeScreen() {
       await enableOnlineBroadcast(false);
     }
   }, [viewingCommerceId, broadcast.wantOn, enableOnlineBroadcast]);
+
+  const onBroadcastToggle = useCallback(
+    async (enabled: boolean) => {
+      if (enabled) {
+        const connected = await fetchIsNetworkConnected();
+        if (!connected) {
+          if (offlineCashierActive) {
+            setOfflineAlreadyVisible(true);
+          } else {
+            await onConfirmOfflineCashierMode();
+          }
+          return;
+        }
+      }
+      await enableOnlineBroadcast(enabled);
+    },
+    [enableOnlineBroadcast, offlineCashierActive, onConfirmOfflineCashierMode],
+  );
 
   const onRequestExitOfflineCashier = useCallback(async () => {
     if (offlineExitBusy) return;
@@ -537,6 +535,17 @@ export function CommerceHomeScreen() {
                 ) : null}
                 <Text style={styles.balanceCurrency}>{t("common.fcfa")}</Text>
               </View>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.qrCta,
+                  pressed && styles.qrCtaPressed,
+                ]}
+                onPress={() => router.push("/pay-qr")}
+                accessibilityRole="button"
+                accessibilityLabel={t("commerce.myQrA11y")}
+              >
+                <Text style={styles.qrCtaText}>{t("commerce.myQrCta")}</Text>
+              </Pressable>
             </View>
 
             {recentReceived.length > 0 ? (

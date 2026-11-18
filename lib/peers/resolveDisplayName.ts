@@ -3,10 +3,15 @@
  * Ne bloque jamais le captage : à appeler en fire-and-forget / après paint.
  */
 import {
+  getPeerAvatarUrlCached,
+  rememberPeerAvatarUrl,
+} from "@/lib/peers/peerAvatarCache";
+import {
   getPeerDisplayNameCached,
   hydratePeerDisplayName,
   rememberPeerDisplayName,
 } from "@/lib/peers/displayNameCache";
+import { peerAvatarUrl } from "@/lib/peers/peerAvatarUrl";
 import {
   getPeerCategoryCached,
   rememberPeerCategory,
@@ -59,6 +64,56 @@ export async function resolvePeerCategory(
   return job;
 }
 
+const avatarInflight = new Map<string, Promise<string | null>>();
+
+/** URL photo profil (CDN absolu depuis l’API ou repli téléphone). */
+export async function resolvePeerAvatarUrl(
+  accountId: string,
+  token: string | null | undefined,
+  phoneDigits?: string | null,
+): Promise<string | null> {
+  const id = String(accountId ?? "")
+    .trim()
+    .toUpperCase();
+  if (!id.startsWith("BLYP-")) {
+    return peerAvatarUrl(phoneDigits);
+  }
+
+  const cached = getPeerAvatarUrlCached(id);
+  if (cached) return cached;
+
+  const fromPhone = peerAvatarUrl(phoneDigits);
+  if (fromPhone) return fromPhone;
+
+  const t = String(token ?? "").trim();
+  if (!t) return null;
+
+  const existing = avatarInflight.get(id);
+  if (existing) return existing;
+
+  const job = (async () => {
+    try {
+      const { lookupAccountPublic } = await import("@/lib/api/client");
+      const res = await lookupAccountPublic(t, id);
+      const url = String(
+        (res as { avatarUrl?: string | null }).avatarUrl ?? "",
+      ).trim();
+      if (url) {
+        rememberPeerAvatarUrl(id, url);
+        return url;
+      }
+      return null;
+    } catch {
+      return null;
+    } finally {
+      avatarInflight.delete(id);
+    }
+  })();
+
+  avatarInflight.set(id, job);
+  return job;
+}
+
 export async function resolvePeerDisplayName(
   accountId: string,
   token: string | null | undefined,
@@ -97,6 +152,10 @@ export async function resolvePeerDisplayName(
         .slice(0, 48);
       if (name.length < 2) return null;
       rememberPeerDisplayName(id, name);
+      const avatarUrl = String(
+        (res as { avatarUrl?: string | null }).avatarUrl ?? "",
+      ).trim();
+      if (avatarUrl) rememberPeerAvatarUrl(id, avatarUrl);
       void resolvePeerCategory(id, t);
       return name;
     } catch {

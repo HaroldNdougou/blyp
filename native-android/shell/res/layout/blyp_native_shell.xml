@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/blyp_native_shell_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/blyp_shell_bg">
+
+    <FrameLayout
+        android:id="@+id/blyp_shell_content"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/blyp_shell_border" />
+
+    <LinearLayout
+        android:id="@+id/blyp_shell_bottom_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@color/blyp_shell_tab_bar">
+
+        <TextView
+            android:id="@+id/blyp_shell_tab_pay"
+            style="@style/BlypShellTabLabel"
+            android:drawableTop="@drawable/blyp_shell_tab_ic_pay"
+            android:text="@string/blyp_shell_tab_pay" />
+
+        <TextView
+            android:id="@+id/blyp_shell_tab_history"
+            style="@style/BlypShellTabLabel"
+            android:drawableTop="@drawable/blyp_shell_tab_ic_history"
+            android:text="@string/blyp_shell_tab_history" />
+
+        <TextView
+            android:id="@+id/blyp_shell_tab_profile"
+            style="@style/BlypShellTabLabel"
+            android:drawableTop="@drawable/blyp_shell_tab_ic_profile"
+            android:text="@string/blyp_shell_tab_profile" />
+
+        <FrameLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1">
+
+            <TextView
+                android:id="@+id/blyp_shell_tab_messages"
+                style="@style/BlypShellTabLabel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:drawableTop="@drawable/blyp_shell_tab_ic_messages"
+                android:text="@string/blyp_shell_tab_messages" />
+
+            <TextView
+                android:id="@+id/blyp_shell_tab_messages_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="18dp"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_marginStart="22dp"
+                android:layout_marginTop="0dp"
+                android:background="@drawable/blyp_shell_messages_badge_bg"
+                android:gravity="center"
+                android:minWidth="18dp"
+                android:paddingHorizontal="4dp"
+                android:textColor="@color/blyp_shell_accent_on"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
+        </FrameLayout>
+    </LinearLayout>
+</LinearLayout>

@@ -23,14 +23,31 @@ object CashierGattController {
   private var sessionId: Int = 0
   private var accountId: String = ""
   private var sessionPayload: ByteArray = byteArrayOf()
+  private var appContext: Context? = null
+  private val pendingWrites =
+    java.util.concurrent.ConcurrentHashMap<String, java.io.ByteArrayOutputStream>()
 
   @Volatile
   private var running = false
 
   fun isRunning(): Boolean = running
 
-  fun start(context: Context, session: Int, merchantAccountId: String): Boolean {
+  fun merchantSessionId(): Int = sessionId
+
+  fun merchantAccountId(): String = accountId
+
+  /** Identité commerce (mêmes octets que la diffusion « En ligne ») en réponse de scan. */
+  private var identityManuf: ByteArray? = null
+
+  fun start(
+    context: Context,
+    session: Int,
+    merchantAccountId: String,
+    identityManufBytes: ByteArray? = null,
+  ): Boolean {
     stop(context)
+    identityManuf = identityManufBytes
+    appContext = context.applicationContext
     val adapter = BluetoothAdapter.getDefaultAdapter() ?: return false
     if (!adapter.isEnabled) return false
     sessionId = session
@@ -79,6 +96,12 @@ object CashierGattController {
       return false
     }
 
+    startAdvertisingInternal()
+    running = true
+    return true
+  }
+
+  private fun startAdvertisingInternal() {
     val settings =
       AdvertiseSettings.Builder()
         .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
@@ -94,10 +117,44 @@ object CashierGattController {
         .addServiceUuid(ParcelUuid(CashierGattUuids.SERVICE))
         .build()
 
-    advertiser?.startAdvertising(settings, data, advertiseCallback)
-    running = true
-    return true
+    val manuf = identityManuf
+    try {
+      if (manuf != null) {
+        /** Identité dans le paquet principal : la réponse de scan se perd vite avec la distance. */
+        val primary =
+          AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .addManufacturerData(IDENTITY_COMPANY_ID, manuf)
+            .build()
+        advertiser?.startAdvertising(settings, primary, data, advertiseCallback)
+      } else {
+        advertiser?.startAdvertising(settings, data, advertiseCallback)
+      }
+    } catch (_: SecurityException) {
+    }
   }
+
+  /** Ajoute / retire l’identité commerce du signal caisse (« En ligne » on / off). */
+  fun setIdentity(identityManufBytes: ByteArray?) {
+    val prev = identityManuf
+    if (prev == null && identityManufBytes == null) return
+    if (prev != null && identityManufBytes != null && prev.contentEquals(identityManufBytes)) return
+    identityManuf = identityManufBytes
+    restartAdvertising()
+  }
+
+  /** Certains appareils coupent la pub connectable à la 1re liaison : on la relance. */
+  private fun restartAdvertising() {
+    if (!running) return
+    try {
+      advertiser?.stopAdvertising(advertiseCallback)
+    } catch (_: Exception) {
+    }
+    startAdvertisingInternal()
+  }
+
+  private const val IDENTITY_COMPANY_ID = 0x0b1b
 
   fun stop(context: Context) {
     running = false
@@ -126,7 +183,12 @@ object CashierGattController {
 
   private val advertiseCallback =
     object : AdvertiseCallback() {
+      override fun onStartSuccess(settingsInEffect: AdvertiseSettings?) {
+        android.util.Log.d("BlypCashierAdv", "adv ok identity=${identityManuf?.size ?: 0}b")
+      }
+
       override fun onStartFailure(errorCode: Int) {
+        android.util.Log.d("BlypCashierAdv", "adv FAILED code=$errorCode identity=${identityManuf?.size ?: 0}b")
         CashierGattBridge.emitError("advertise_failed_$errorCode")
       }
     }
@@ -183,8 +245,15 @@ object CashierGattController {
           }
           return
         }
-        val json = String(value, StandardCharsets.UTF_8)
-        CashierGattBridge.emitReceipt(json)
+        if (preparedWrite) {
+          val buf = pendingWrites.getOrPut(device.address) { java.io.ByteArrayOutputStream() }
+          synchronized(buf) {
+            if (offset == 0) buf.reset()
+            buf.write(value)
+          }
+        } else {
+          CashierGattBridge.emitReceipt(String(value, StandardCharsets.UTF_8))
+        }
         if (responseNeeded) {
           gattServer?.sendResponse(
             device,
@@ -193,6 +262,37 @@ object CashierGattController {
             offset,
             value,
           )
+        }
+      }
+
+      override fun onExecuteWrite(
+        device: android.bluetooth.BluetoothDevice,
+        requestId: Int,
+        execute: Boolean,
+      ) {
+        val buf = pendingWrites.remove(device.address)
+        if (execute && buf != null) {
+          val bytes = synchronized(buf) { buf.toByteArray() }
+          CashierGattBridge.emitReceipt(String(bytes, StandardCharsets.UTF_8))
+        }
+        gattServer?.sendResponse(
+          device,
+          requestId,
+          android.bluetooth.BluetoothGatt.GATT_SUCCESS,
+          0,
+          null,
+        )
+      }
+
+      override fun onConnectionStateChange(
+        device: android.bluetooth.BluetoothDevice,
+        status: Int,
+        newState: Int,
+      ) {
+        if (newState == android.bluetooth.BluetoothProfile.STATE_DISCONNECTED) {
+          pendingWrites.remove(device.address)
+        } else if (newState == android.bluetooth.BluetoothProfile.STATE_CONNECTED) {
+          restartAdvertising()
         }
       }
     }

@@ -51,6 +51,18 @@ export function createMessagesStyles(c: ThemeColors) {
       alignItems: "center",
       gap: 4,
     },
+    shellIslandBackRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      gap: 2,
+    },
+    shellIslandBackLabel: {
+      fontSize: 17,
+      fontWeight: "600",
+      color: c.accent,
+    },
     inboxTabRow: {
       flexDirection: "row",
       alignItems: "flex-end",

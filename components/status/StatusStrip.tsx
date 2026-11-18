@@ -11,6 +11,7 @@ import {
   ensureStatusFeedPlaceholder,
   getStatusFeedSnapshot,
   getStatusMyUserId,
+  statusViewStartIndex,
   subscribeStatusFeed,
 } from "@/lib/status/statusCache";
 import { useTheme } from "@/contexts/ThemeContext";

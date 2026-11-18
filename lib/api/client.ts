@@ -5,6 +5,7 @@ import {
   setAuthSession,
 } from "@/lib/auth/authSession";
 import i18n from "@/lib/i18n";
+import { NativeModules, Platform } from "react-native";
 import {
   demoApiResponse,
   isDemoPath,
@@ -17,7 +18,11 @@ import {
 import { accessTokenSubject } from "@/lib/auth/accessTokenSubject";
 import { withNormalizedReplyTo } from "@/lib/messages/replyPreview";
 import { API_BASE_URL, USE_MOCK_API } from "../config";
-import { ApiError } from "./errors";
+import { ApiError, isSessionReplacedError } from "./errors";
+import {
+  emitSessionReplaced,
+  emitSessionReplacedIfNeeded,
+} from "@/lib/auth/sessionReplaced";
 import type {
   ApiUser,
   KycDocType,
@@ -36,6 +41,8 @@ export {
   ApiError,
   API_ERROR_TRANSACTION_PIN_INVALID,
   isTransactionPinInvalidError,
+  SessionReplaceCancelledError,
+  isSessionReplacedError,
 } from "./errors";
 
 /** Chargé à la demande : en prod (`USE_MOCK_API` false) le parse/execute au cold start évite tout le mock. */
@@ -107,6 +114,74 @@ async function fetchWithTimeout(
   }
 }
 
+/** Doit correspondre à `SENSITIVE_ROUTES` (aws/lib/deviceKey.mjs). */
+const DEVICE_SIGNED_ROUTES: [string, RegExp][] = [
+  ["POST", /^\/payments\/pay$/],
+  ["POST", /^\/wallet\/deposit$/],
+  ["POST", /^\/pockets$/],
+  ["POST", /^\/pockets\/[^/]+\/move$/],
+  ["DELETE", /^\/pockets\/[^/]+$/],
+  ["POST", /^\/auth\/onboarding\/transaction-pin$/],
+  ["POST", /^\/me\/transaction-pin\/change$/],
+  ["PUT", /^\/me\/small-pay-without-pin$/],
+  ["POST", /^\/commerces\/[^/]+\/payment-receipts\/encash$/],
+];
+
+/** Actions d’argent : signées par la clé appareil de la coque native (modèle WhatsApp). */
+async function signWithDeviceKey(
+  method: string,
+  path: string,
+  body: string,
+): Promise<{ ts: string; sig: string } | null> {
+  if (Platform.OS !== "android" || USE_MOCK_API) return null;
+  const m = method.toUpperCase();
+  const pathOnly = path.split("?")[0];
+  if (!DEVICE_SIGNED_ROUTES.some(([rm, re]) => rm === m && re.test(pathOnly))) return null;
+  const mod = NativeModules.BlypNativeShell as
+    | {
+        signDeviceRequest?: (
+          method: string,
+          path: string,
+          body: string,
+        ) => Promise<{ ts?: string; sig?: string } | null>;
+      }
+    | undefined;
+  try {
+    const res = await mod?.signDeviceRequest?.(m, pathOnly, body);
+    return res?.ts && res?.sig ? { ts: res.ts, sig: res.sig } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Android : la coque native est seule à faire tourner le refresh (deux rotateurs = famille révoquée).
+ * `undefined` = pas de coque → chemin JS.
+ */
+async function refreshViaNativeShell(
+  access: string | null,
+  refresh: string | null,
+): Promise<{ token: string; refreshToken: string | null } | null | undefined> {
+  if (Platform.OS !== "android" || USE_MOCK_API) return undefined;
+  const mod = NativeModules.BlypNativeShell as
+    | {
+        refreshSessionFromShell?: (
+          a: string | null,
+          r: string | null,
+        ) => Promise<{ token?: string; refreshToken?: string | null } | null>;
+      }
+    | undefined;
+  if (!mod?.refreshSessionFromShell) return undefined;
+  try {
+    const res = await mod.refreshSessionFromShell(access, refresh);
+    const token = res?.token?.trim();
+    if (!token) return null;
+    return { token, refreshToken: res?.refreshToken?.trim() || null };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Rafraîchit access (+ refresh si rotation) ; met à jour le stockage sécurisé.
  * Appelé depuis `request` sur 401, sans repasser par `request` (évite boucle).
@@ -116,6 +191,12 @@ async function refreshSessionTokens(): Promise<boolean> {
 
   refreshInFlight = (async () => {
     const refresh = getRefreshToken();
+    const shellTokens = await refreshViaNativeShell(getAccessToken(), refresh);
+    if (shellTokens !== undefined) {
+      if (!shellTokens) return false;
+      await setAuthSession(shellTokens.token, shellTokens.refreshToken ?? refresh);
+      return true;
+    }
     if (!refresh) return false;
     try {
       let data: { token: string; refreshToken?: string };
@@ -134,11 +215,18 @@ async function refreshSessionTokens(): Promise<boolean> {
         );
         const body = await parseJson(res);
         if (!res.ok) {
-          throw new ApiError(
+          const err = new ApiError(
             errorMessageFromResponse(res, body),
             res.status,
             body,
           );
+          if (isSessionReplacedError(err)) {
+            await clearAuthSession();
+            emitSessionReplaced();
+          } else if (err.status === 401 || err.status === 403) {
+            await clearAuthSession();
+          }
+          throw err;
         }
         data = body as { token: string; refreshToken?: string };
       }
@@ -147,7 +235,12 @@ async function refreshSessionTokens(): Promise<boolean> {
     } catch (e) {
       /** Réseau / timeout : ne jamais effacer — l’utilisateur garde sa session locale. */
       if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-        await clearAuthSession();
+        if (isSessionReplacedError(e)) {
+          await clearAuthSession();
+          emitSessionReplaced();
+        } else {
+          await clearAuthSession();
+        }
       }
       return false;
     } finally {
@@ -213,6 +306,17 @@ async function request<T>(
   if (isDemoPath(path)) {
     return demoApiResponse<T>(path, rest.method ?? "GET", rest.body, token);
   }
+  if (token) {
+    const proof = await signWithDeviceKey(
+      rest.method ?? "GET",
+      path,
+      typeof rest.body === "string" ? rest.body : "",
+    );
+    if (proof) {
+      headers.set("X-Blyp-Ts", proof.ts);
+      headers.set("X-Blyp-Sig", proof.sig);
+    }
+  }
   const url = `${API_BASE_URL}${path}`;
   let res: Response;
   try {
@@ -244,7 +348,23 @@ async function request<T>(
         });
       }
     }
-    throw new ApiError(errorMessageFromResponse(res, data), res.status, data);
+    const skew = data as { code?: string; serverTime?: number } | null;
+    if (
+      res.status === 403 &&
+      !skipAuthRefresh &&
+      skew?.code === "DEVICE_CLOCK_SKEW" &&
+      typeof skew.serverTime === "number"
+    ) {
+      /** Refus avant exécution : recale l’heure de la coque puis un seul renvoi re-signé. */
+      const mod = NativeModules.BlypNativeShell as
+        | { noteServerTime?: (ms: number) => Promise<void> }
+        | undefined;
+      await mod?.noteServerTime?.(skew.serverTime).catch(() => {});
+      return request(path, { ...options, skipAuthRefresh: true });
+    }
+    const apiErr = new ApiError(errorMessageFromResponse(res, data), res.status, data);
+    emitSessionReplacedIfNeeded(apiErr);
+    throw apiErr;
   }
   return data as T;
 }
@@ -305,12 +425,8 @@ export async function fetchHealth(): Promise<HealthResponse> {
   try {
     res = await fetch(url);
   } catch (cause) {
-    const technical =
-      cause instanceof Error && cause.message
-        ? `\n\nTechnique : ${cause.message}`
-        : "";
     throw new ApiError(
-      `${API_UNREACHABLE_HINT}${technical}\n\nURL : ${API_BASE_URL}`,
+      `${networkUnreachableMessage(cause)}\n\nURL : ${API_BASE_URL}`,
       0,
     );
   }
@@ -342,14 +458,26 @@ export async function requestOtp(phoneDigits: string): Promise<{ ok: boolean }> 
 export async function verifyOtp(
   phoneDigits: string,
   code: string,
+  options?: { confirmReplaceSession?: boolean },
 ): Promise<{
-  token: string;
+  token?: string;
   refreshToken?: string;
-  user: ApiUser;
+  user?: ApiUser;
   isNewAccount?: boolean;
+  needsSessionReplaceConfirm?: boolean;
+  replacedPreviousSession?: boolean;
 }> {
   if (USE_MOCK_API) return (await loadMock()).mockVerifyOtp(phoneDigits, code);
-  const body = JSON.stringify({ phone: phoneDigits, code });
+  const { getOrCreatePushDeviceId } = await import("@/lib/push/deviceId");
+  const deviceId = await getOrCreatePushDeviceId();
+  const body = JSON.stringify({
+    phone: phoneDigits,
+    code,
+    deviceId,
+    ...(options?.confirmReplaceSession
+      ? { confirmReplaceSession: true }
+      : {}),
+  });
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -841,6 +969,45 @@ export async function updateCommerceCategory(
   });
 }
 
+export async function encashCommercePaymentReceipt(
+  commerceId: string,
+  token: string,
+  body: { receipt: import("@/lib/pay/paymentReceipt").CommercePaymentReceipt },
+): Promise<{ transactionId: string; first: boolean }> {
+  const id = String(commerceId ?? "").trim();
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockEncashCommercePaymentReceipt(
+      token,
+      id,
+      body.receipt,
+    );
+  }
+  return request(`/commerces/${encodeURIComponent(id)}/payment-receipts/encash`, {
+    method: "POST",
+    token,
+    body: JSON.stringify(body),
+    timeoutMs: 8_000,
+  });
+}
+
+export async function fetchCommerceEncashedReceipts(
+  commerceId: string,
+  token: string,
+  sinceIso: string | null,
+): Promise<{
+  items: { transactionId: string; encashedAt: string; amountFcfa: number }[];
+}> {
+  const id = String(commerceId ?? "").trim();
+  const q = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : "";
+  if (USE_MOCK_API) {
+    return (await loadMock()).mockListCommerceEncashedReceipts(token, id);
+  }
+  return request(
+    `/commerces/${encodeURIComponent(id)}/payment-receipts/encashments${q}`,
+    { token, timeoutMs: 12_000 },
+  );
+}
+
 /** Lookup nom public (commerce / prénom) — GetItem ciblé, pour libellé BLE. */
 export async function lookupAccountPublic(
   token: string,
@@ -850,6 +1017,7 @@ export async function lookupAccountPublic(
   displayName: string;
   kind: string;
   category?: string | null;
+  avatarUrl?: string | null;
 }> {
   const id = String(accountId ?? "")
     .trim()

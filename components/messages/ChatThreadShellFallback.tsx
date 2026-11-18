@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import type { createMessagesStyles } from "@/components/messages/messagesStyles";
+import { leaveThreadWithoutBackStack } from "@/lib/messages/leaveThread";
 
 type Styles = ReturnType<typeof createMessagesStyles>;
 
@@ -40,7 +41,7 @@ export function ChatThreadShellFallback({
           style={styles.headerBtn}
           onPress={() => {
             if (router.canGoBack()) router.back();
-            else router.replace("/(tabs)/pay");
+            else leaveThreadWithoutBackStack();
           }}
           accessibilityLabel={t("common.back")}
         >

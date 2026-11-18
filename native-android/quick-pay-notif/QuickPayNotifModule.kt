@@ -18,6 +18,9 @@ class QuickPayNotifModule(
   fun start(
     title: String,
     body: String,
+    merchantName: String,
+    merchantInitial: String,
+    merchantAvatarB64: String,
     l50: String,
     l100: String,
     l200: String,
@@ -25,7 +28,18 @@ class QuickPayNotifModule(
     promise: Promise,
   ) {
     try {
-      QuickPayNotifService.start(ctx, title, body, l50, l100, l200, l500)
+      QuickPayNotifService.start(
+        ctx,
+        title,
+        body,
+        merchantName,
+        merchantInitial,
+        merchantAvatarB64.ifBlank { null },
+        l50,
+        l100,
+        l200,
+        l500,
+      )
       promise.resolve(null)
     } catch (e: Exception) {
       promise.reject("QUICK_PAY_FGS", e.message, e)

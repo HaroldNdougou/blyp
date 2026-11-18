@@ -19,6 +19,18 @@ export const USE_MOCK_API = configured.length === 0;
 
 export const API_BASE_URL = USE_MOCK_API ? "" : configured.replace(/\/$/, "");
 
+function readAssetsCdnUrl(): string {
+  const extra = Constants.expoConfig?.extra as
+    | { EXPO_PUBLIC_ASSETS_CDN_URL?: string }
+    | undefined;
+  const fromExtra = extra?.EXPO_PUBLIC_ASSETS_CDN_URL?.trim() ?? "";
+  const fromEnv = process.env.EXPO_PUBLIC_ASSETS_CDN_URL?.trim() ?? "";
+  return (fromExtra || fromEnv).replace(/\/$/, "");
+}
+
+/** CloudFront avatars — synchro coque native via `syncNativeShellSession`. */
+export const ASSETS_CDN_URL = readAssetsCdnUrl();
+
 function readRealtimeWsUrl(): string {
   const extra = Constants.expoConfig?.extra as
     | { EXPO_PUBLIC_REALTIME_WS_URL?: string }

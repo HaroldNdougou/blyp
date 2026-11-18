@@ -6,6 +6,8 @@ import { prefetchModule } from "@/lib/perf/prefetchModule";
 
 if (!DEV_METRO_LITE) {
   prefetchModule(() => import("@/app/(tabs)/pay"));
+  prefetchModule(() => import("@/components/pay/PayHomeFullGate"));
+  prefetchModule(() => import("@/components/pay/PayHomeInstantShell"));
   prefetchModule(() => import("@/components/pay/PayHomeScreen"));
   prefetchModule(() => import("@/components/pay/CommerceHomeScreen"));
 }

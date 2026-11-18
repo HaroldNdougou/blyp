@@ -5,6 +5,7 @@ import {
   demoStatusViewersForJeanKamga,
   isJeanKamgaDisplayName,
   withDemoConversations,
+  withDemoStatusFeed,
 } from "@/lib/dev/demoProfiles";
 import {
   mockGetSoaTrip,
@@ -18,8 +19,9 @@ import {
 } from "@/lib/status/statusPostOrder";
 import { makeTxReference } from "@/lib/txReference";
 import { buildMockCommercePaymentReceiptSync } from "@/lib/pay/paymentReceipt";
+import { evaluateSmallPayPinSkip } from "@/lib/pay/smallPayPolicy";
 import { parseRegistrationFullName } from "@/lib/profile/parseRegistrationFullName";
-import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID } from "./errors";
+import { ApiError, API_ERROR_TRANSACTION_PIN_INVALID, API_ERROR_PAYMENT_RECEIPT_ALREADY_ENCASHED } from "./errors";
 import type {
   ApiActiveContext,
   ApiCommerce,
@@ -58,6 +60,9 @@ let sessionRefreshToken: string | null = null;
 let sessionPhone: string | null = null;
 let mockTransactionPinPlain: string | null = null;
 let mockSmallPayWithoutPin = false;
+let mockSmallPayStatsDay: string | null = null;
+let mockSmallPayStatsSumFcfa = 0;
+let mockSmallPayPeriodWithoutPinSumFcfa = 0;
 let mockFirstName: string | null = null;
 let mockLastName: string | null = null;
 let mockSessionUserId: string | null = null;
@@ -134,6 +139,9 @@ function mockUserFromState(): ApiUser {
     kycStatus: mockKycStatus,
     kycLevel: mockKycStatus === "approved" ? 1 : 0,
     smallPayWithoutPinEnabled: mockSmallPayWithoutPin,
+    smallPayStatsDay: mockSmallPayStatsDay,
+    smallPayStatsSumFcfa: mockSmallPayStatsSumFcfa,
+    smallPayPeriodWithoutPinSumFcfa: mockSmallPayPeriodWithoutPinSumFcfa,
   };
 }
 
@@ -764,12 +772,19 @@ export function mockPay(
 } {
   assertSession(token);
   const pin = String(transactionPin ?? "").replace(/\D/g, "");
-  const smallSkip =
-    mockSmallPayWithoutPin &&
-    Number.isFinite(amount) &&
-    amount > 0 &&
-    amount <= 499 &&
-    pin.length === 0;
+  const user = mockUserFromState();
+  const pinSkipEval = evaluateSmallPayPinSkip(user, amount);
+  const smallSkip = pinSkipEval.allowSkipPin && pin.length === 0;
+  if (
+    !smallSkip &&
+    pin.length === 0 &&
+    pinSkipEval.requirePinForLimit
+  ) {
+    throw new ApiError(
+      "Plafond paiements sans code atteint — saisissez votre PIN",
+      400,
+    );
+  }
   if (!smallSkip) {
     if (pin.length !== 4) {
       throw new ApiError("Code PIN de transaction requis (4 chiffres)", 400);
@@ -798,10 +813,7 @@ export function mockPay(
   if (!accountId) {
     throw new ApiError("Destinataire invalide (accountId requis)", 400);
   }
-  if (
-    accountId === mockSessionUserId ||
-    mockCommerces.some((c) => c.accountId === accountId)
-  ) {
+  if (accountId === mockSessionUserId) {
     throw new ApiError("Impossible de vous payer vous-même", 400);
   }
 
@@ -835,6 +847,15 @@ export function mockPay(
     createdAt: new Date().toISOString(),
   };
   transactions = [row, ...transactions];
+
+  if (smallSkip) {
+    const day = new Date().toISOString().slice(0, 10);
+    const dailyBase =
+      mockSmallPayStatsDay === day ? mockSmallPayStatsSumFcfa : 0;
+    mockSmallPayStatsDay = day;
+    mockSmallPayStatsSumFcfa = dailyBase + Math.floor(amount);
+    mockSmallPayPeriodWithoutPinSumFcfa += Math.floor(amount);
+  }
 
   let paymentReceipt = null;
   if (recipientCommerce) {
@@ -1083,6 +1104,7 @@ export function mockLookupBlypPhones(
     return {
       phone,
       onBlyp: demoOnBlyp.has(nine),
+      accountId: demoOnBlyp.has(nine) ? `BLYP-U-DEMO${nine}` : null,
     };
   });
   return { items };
@@ -2022,4 +2044,44 @@ export function mockSoaDayReportForCommerce(
     throw new ApiError("Ce commerce n’est pas un car Soa", 400);
   }
   return mockSoaDayReport(commerce.id, dayKey);
+}
+
+const mockEncashedReceiptTxIds = new Set<string>();
+
+export function mockEncashCommercePaymentReceipt(
+  token: string,
+  commerceId: string,
+  receipt: import("@/lib/pay/paymentReceipt").CommercePaymentReceipt,
+): { transactionId: string; first: boolean } {
+  assertSession(token);
+  const commerce = mockCommerces.find((c) => c.id === commerceId);
+  if (!commerce) throw new ApiError("Commerce introuvable", 404);
+  const txId = String(receipt?.transactionId ?? "").trim();
+  if (!txId) throw new ApiError("transactionId manquant", 400);
+  if (mockEncashedReceiptTxIds.has(txId)) {
+    throw new ApiError("Reçu déjà encaissé (anti-rejeu)", 409, {
+      code: API_ERROR_PAYMENT_RECEIPT_ALREADY_ENCASHED,
+    });
+  }
+  mockEncashedReceiptTxIds.add(txId);
+  return { transactionId: txId, first: true };
+}
+
+export function mockListCommerceEncashedReceipts(
+  token: string,
+  commerceId: string,
+): {
+  items: { transactionId: string; encashedAt: string; amountFcfa: number }[];
+} {
+  assertSession(token);
+  const commerce = mockCommerces.find((c) => c.id === commerceId);
+  if (!commerce) throw new ApiError("Commerce introuvable", 404);
+  const now = new Date().toISOString();
+  return {
+    items: [...mockEncashedReceiptTxIds].map((transactionId) => ({
+      transactionId,
+      encashedAt: now,
+      amountFcfa: 0,
+    })),
+  };
 }

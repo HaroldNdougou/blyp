@@ -42,4 +42,26 @@ const blockList = [
 ];
 config.resolver.blockList = blockList;
 
+/**
+ * Bundle embarqué (release) = îlot Messages seul (cf. `app.config.js`) :
+ * écrans RN Pay / Historique / Profil / dépôt… hors bundle, préchauffage RN neutralisé.
+ */
+const messagesOnlyBundle =
+  process.argv.includes("export:embed") && process.env.BLYP_RN_FULL_BUNDLE !== "1";
+if (messagesOnlyBundle) {
+  const legacyRoute =
+    /^@\/app\/(\(tabs\)\/(pay|history|profile|welcome|index)|deposit|kyc|register|receipts|documents|pocket\/.*|pay-qr|pay-scan)$/;
+  const legacyWarm = /^@\/lib\/perf\/(aggressiveWarm|floodAllTabs)$/;
+  const upstream = config.resolver.resolveRequest;
+  config.resolver.resolveRequest = (context, moduleName, platform) => {
+    if (legacyRoute.test(moduleName)) return { type: "empty" };
+    const name = legacyWarm.test(moduleName)
+      ? "@/lib/perf/messagesIslandWarm"
+      : moduleName;
+    return upstream
+      ? upstream(context, name, platform)
+      : context.resolveRequest(context, name, platform);
+  };
+}
+
 module.exports = config;

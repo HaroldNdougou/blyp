@@ -23,6 +23,13 @@ const AUTH_SESSION_SK = "AUTH_SESSION";
 /** 180 jours — session persistante jusqu’à désinstall / logout / vol de jeton. */
 export const REFRESH_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 
+/**
+ * Réponse de rotation perdue (réseau coupé) ou deux renouvellements en parallèle :
+ * l’ancien jeton reste accepté brièvement, seulement si la session est liée à la clé appareil
+ * (preuve signée exigée ⇒ un jeton volé reste inutile ailleurs).
+ */
+const REUSE_GRACE_SEC = 5 * 60;
+
 function hashRefreshToken(raw) {
   return createHash("sha256").update(String(raw), "utf8").digest("hex");
 }
@@ -136,6 +143,42 @@ export async function getActiveSessionFamilyId(userId) {
   return fid || null;
 }
 
+/**
+ * Session active « réelle » : famille pointée ET encore au moins un refresh vivant.
+ * Ouverte avec la même clé appareil ⇒ pas un autre téléphone.
+ * @returns {Promise<{ sameDevice: boolean } | null>}
+ */
+export async function getLiveOtherSession(userId, devicePublicKeyRaw = null) {
+  const familyId = await getActiveSessionFamilyId(userId);
+  if (!familyId) return null;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const res = await doc.send(
+    new QueryCommand({
+      TableName: getTableName(),
+      KeyConditionExpression: "PK = :pk AND begins_with(SK, :sk)",
+      ExpressionAttributeValues: { ":pk": familyPk(familyId), ":sk": "TOKEN#" },
+    }),
+  );
+  const offered = String(devicePublicKeyRaw ?? "").trim();
+  let alive = false;
+  for (const it of res.Items ?? []) {
+    if (!it.tokenHash || (it.expiresAt && it.expiresAt <= nowSec)) continue;
+    const meta = await doc.send(
+      new GetCommand({
+        TableName: getTableName(),
+        Key: { PK: refreshPk(it.tokenHash), SK: "META" },
+      }),
+    );
+    const m = meta.Item;
+    if (!m || (m.expiresAt && m.expiresAt <= nowSec)) continue;
+    alive = true;
+    if (offered && String(m.devicePublicKey ?? "").trim() === offered) {
+      return { sameDevice: true };
+    }
+  }
+  return alive ? { sameDevice: false } : null;
+}
+
 async function setActiveSessionFamily(userId, familyId) {
   await doc.send(
     new PutCommand({
@@ -211,9 +254,15 @@ export async function rotateAuthSession(refreshTokenRaw, deviceProof = null) {
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
+  const boundKey = String(item.devicePublicKey ?? "").trim();
+  let graceReuse = false;
   if (item.revokedAt) {
-    await revokeFamily(item.familyId);
-    return null;
+    const revokedSec = Math.floor(Date.parse(item.revokedAt) / 1000);
+    if (!boundKey || !Number.isFinite(revokedSec) || nowSec - revokedSec > REUSE_GRACE_SEC) {
+      await revokeFamily(item.familyId);
+      return null;
+    }
+    graceReuse = true;
   }
   if (item.expiresAt && item.expiresAt <= nowSec) {
     await deleteRefreshSession(tokenHash, item.familyId);
@@ -240,26 +289,32 @@ export async function rotateAuthSession(refreshTokenRaw, deviceProof = null) {
     }
   }
 
-  /** Marque révoqué avant rotation — réutilisation concurrente ⇒ famille tuée. */
-  try {
-    await doc.send(
-      new UpdateCommand({
-        TableName: table,
-        Key: { PK: refreshPk(tokenHash), SK: "META" },
-        UpdateExpression: "SET revokedAt = :r",
-        ConditionExpression: "attribute_not_exists(revokedAt)",
-        ExpressionAttributeValues: { ":r": new Date().toISOString() },
-      }),
-    );
-  } catch (err) {
-    if (err?.name === "ConditionalCheckFailedException") {
-      await revokeFamily(item.familyId);
-      return null;
+  /**
+   * Marque révoqué (gardé [REUSE_GRACE_SEC] puis effacé par TTL).
+   * Réutilisation concurrente : tolérée si clé appareil, sinon famille tuée.
+   */
+  if (!graceReuse) {
+    try {
+      await doc.send(
+        new UpdateCommand({
+          TableName: table,
+          Key: { PK: refreshPk(tokenHash), SK: "META" },
+          UpdateExpression: "SET revokedAt = :r, expiresAt = :e",
+          ConditionExpression: "attribute_not_exists(revokedAt)",
+          ExpressionAttributeValues: {
+            ":r": new Date().toISOString(),
+            ":e": nowSec + REUSE_GRACE_SEC,
+          },
+        }),
+      );
+    } catch (err) {
+      if (err?.name !== "ConditionalCheckFailedException") throw err;
+      if (!boundKey) {
+        await revokeFamily(item.familyId);
+        return null;
+      }
     }
-    throw err;
   }
-
-  await deleteRefreshSession(tokenHash, item.familyId);
 
   const nextRaw = newRefreshRaw();
   const nextHash = hashRefreshToken(nextRaw);

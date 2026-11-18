@@ -189,6 +189,24 @@ async function getManager(): Promise<import("react-native-ble-plx").BleManager |
   }
 }
 
+/** Une seule instance PLX par app — ne jamais appeler destroy() dessus. */
+export async function getSharedBleManager(): Promise<
+  import("react-native-ble-plx").BleManager | null
+> {
+  return getManager();
+}
+
+function isBleManagerDestroyedError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e ?? "");
+  return msg.toLowerCase().includes("destroyed");
+}
+
+function resetBleManagerAfterDestroy(): void {
+  manager = null;
+  scanning = false;
+  adapterWatchOn = false;
+}
+
 function haltUnauthorized(reason: string) {
   if (!authWarnLogged) {
     authWarnLogged = true;
@@ -500,14 +518,22 @@ export function kickTaxiScanIfActive(): void {
   if (!scanning || !manager) return;
   try {
     manager.stopDeviceScan();
-  } catch {
-    /* ignore */
+  } catch (e) {
+    if (isBleManagerDestroyedError(e)) {
+      resetBleManagerAfterDestroy();
+    }
+    return;
   }
   try {
     manager.startDeviceScan(null, SCAN_OPTIONS, onDevice);
     lastScanStartAt = Date.now();
     if (__DEV__) console.log("[ble] scan KICK (keep peers)");
   } catch (e) {
+    if (isBleManagerDestroyedError(e)) {
+      resetBleManagerAfterDestroy();
+      void startTaxiScan();
+      return;
+    }
     if (__DEV__) {
       console.warn(
         "[ble] scan kick failed",

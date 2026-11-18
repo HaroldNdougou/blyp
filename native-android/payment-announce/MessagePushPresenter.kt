@@ -8,10 +8,11 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.RingtoneManager
-import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.haroldndougou.blyp.R
+import com.haroldndougou.blyp.shell.BlypShellDeepLink
+import com.haroldndougou.blyp.shell.BlypShellLaunchBridge
 
 /**
  * Notif message reçu — même chemin que le paiement (indépendant d’Expo / MIUI).
@@ -20,27 +21,6 @@ object MessagePushPresenter {
   const val CHANNEL_ID = "messages"
 
   fun handle(context: Context, data: Map<String, String>) {
-    val conversationId = data["conversationId"]?.trim().orEmpty()
-    if (conversationId.isEmpty()) return
-
-    PaymentAnnounceModule.emitIncomingMessage(data)
-
-    val viewing =
-      isAppInForeground(context) &&
-        PaymentAnnouncePrefs.getActiveConversation(context) == conversationId
-    if (viewing) return
-
-    val rawBody =
-      data["body"]?.takeIf { it.isNotBlank() }
-        ?: data["message"].orEmpty()
-    val isReaction = isReactionPayload(data, rawBody)
-    val emoji = parseReactionEmoji(rawBody, data)
-    if (isReaction && emoji.isEmpty()) return
-
-    showMessageReceived(context, conversationId, data)
-    if (!isReaction) {
-      ConversationReceiptAck.markDelivered(context, conversationId)
-    }
   }
 
   /** Notif « Harold a récupéré les 1000F » — tap ouvre la bulle money. */
@@ -105,13 +85,7 @@ object MessagePushPresenter {
       PendingIntent.getActivity(
         app,
         conversationId.hashCode(),
-        Intent(Intent.ACTION_VIEW, Uri.parse("blyp://chat/${Uri.encode(conversationId)}")).apply {
-          setPackage(app.packageName)
-          flags =
-            Intent.FLAG_ACTIVITY_SINGLE_TOP or
-              Intent.FLAG_ACTIVITY_CLEAR_TOP or
-              Intent.FLAG_ACTIVITY_NEW_TASK
-        },
+        BlypShellDeepLink.pendingIntentActivity(app, conversationId),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 
@@ -158,22 +132,11 @@ object MessagePushPresenter {
     val body = formatMoneyBody(type, lang)
     val notifId = "$type:$transferId".hashCode()
 
-    val uri =
-      Uri.parse("blyp://chat/${Uri.encode(conversationId)}")
-        .buildUpon()
-        .appendQueryParameter("transferId", transferId)
-        .build()
     val openChat =
       PendingIntent.getActivity(
         app,
         notifId,
-        Intent(Intent.ACTION_VIEW, uri).apply {
-          setPackage(app.packageName)
-          flags =
-            Intent.FLAG_ACTIVITY_SINGLE_TOP or
-              Intent.FLAG_ACTIVITY_CLEAR_TOP or
-              Intent.FLAG_ACTIVITY_NEW_TASK
-        },
+        BlypShellDeepLink.pendingIntentActivity(app, conversationId, transferId),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 

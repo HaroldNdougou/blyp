@@ -1,4 +1,6 @@
 import { dispatchPaymentReceived } from "@/lib/pay/paymentRealtimeBridge";
+import { merchantPayRx } from "@/lib/perf/merchantPayTrace";
+import { shouldApplyIncomingPayment } from "@/lib/push/shouldApplyIncomingPayment";
 import { useAuth } from "@/contexts/authContextBase";
 import {
   openHomeFromPush,
@@ -40,6 +42,11 @@ export function PushBootstrap() {
         (raw: Record<string, unknown>) => {
           const data = parsePushData(raw);
           if (!data) return;
+          if (!shouldApplyIncomingPayment(user, data)) return;
+          merchantPayRx(
+            "push_native",
+            String(data.transactionId ?? "").trim() || undefined,
+          );
           dispatchPaymentReceived(data);
         },
       );
@@ -63,7 +70,7 @@ export function PushBootstrap() {
       clearTimeout(announceTimer);
       paySub?.remove();
     };
-  }, [token, phone, refreshUser, applyIncomingPayment]);
+  }, [token, phone, user, refreshUser, applyIncomingPayment]);
 
   useEffect(() => {
     if (Platform.OS === "web") return;
@@ -150,6 +157,11 @@ export function PushBootstrap() {
           const raw = n.request.content.data as Record<string, unknown>;
           const data = parsePushData(raw);
           if (!data) return;
+          if (!shouldApplyIncomingPayment(user, data)) return;
+          merchantPayRx(
+            "push_expo",
+            String(data.transactionId ?? "").trim() || undefined,
+          );
           applyIncomingPayment(data);
           softHydrateAfterPaymentPush({ token, phone, refreshUser });
           void import("@/lib/push/announcePayment").then((m) => {
@@ -165,6 +177,7 @@ export function PushBootstrap() {
             >;
             const data = parsePushData(raw);
             if (!data) return;
+            if (!shouldApplyIncomingPayment(user, data)) return;
             applyIncomingPayment(data);
             openHomeFromPush(router);
             softHydrateAfterPaymentPush({ token, phone, refreshUser });
@@ -196,6 +209,7 @@ export function PushBootstrap() {
               /* ignore */
             }
             if (cancelled) return;
+            if (!shouldApplyIncomingPayment(user, data)) return;
             applyIncomingPayment(data);
             openHomeFromPush(router);
             softHydrateAfterPaymentPush({ token, phone, refreshUser });
@@ -210,7 +224,7 @@ export function PushBootstrap() {
       subReceived?.remove();
       subResponse?.remove();
     };
-  }, [token, phone, refreshUser, applyIncomingPayment, router]);
+  }, [token, phone, user, refreshUser, applyIncomingPayment, router]);
 
   useEffect(() => {
     if (!token) return;

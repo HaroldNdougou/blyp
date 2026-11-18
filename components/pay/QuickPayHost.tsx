@@ -4,19 +4,16 @@ import { waitForAppActive } from "@/lib/app/waitForAppActive";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { executeStandardQuickPay } from "@/lib/pay/executeStandardQuickPay";
 import { requestQuickPayFromNotif, subscribeQuickPayFlow } from "@/lib/pay/quickPayFlow";
-import {
-  loadQuickPayRecipient,
-  type QuickPayRecipient,
-} from "@/lib/pay/quickPayRecipient";
+import { resolveQuickPayRecipientForAmountTap } from "@/lib/pay/quickPayNearbyCommerce";
+import type { QuickPayRecipient } from "@/lib/pay/quickPayRecipient";
 import { clearQuickPayNotifHighlight } from "@/lib/pay/quickPayNotifNative";
 import { QUICK_PAY_AMOUNTS } from "@/lib/pay/syncQuickPayNotif";
-import { USE_MOCK_API } from "@/lib/config";
 import { canUseDeviceAuth } from "@/lib/security/deviceAuth";
-import { useTranslation } from "react-i18next";
-import React, { useCallback, useEffect, useRef } from "react";
 import { showBlypActionFlash } from "@/lib/ui/blypActionFlash";
 import { blypAlert } from "@/lib/ui/blypAlert";
-import { InteractionManager, Platform } from "react-native";
+import { useTranslation } from "react-i18next";
+import React, { useCallback, useEffect, useRef } from "react";
+import { InteractionManager } from "react-native";
 
 export function QuickPayHost() {
   const { t, i18n } = useTranslation();
@@ -37,6 +34,7 @@ export function QuickPayHost() {
           amountFcfa,
           to,
           pin,
+          user,
           updateBalance,
           network: {
             isOffline: network.isOffline,
@@ -84,7 +82,7 @@ export function QuickPayHost() {
         void clearQuickPayNotifHighlight();
         return;
       }
-      const to = await loadQuickPayRecipient();
+      const to = await resolveQuickPayRecipientForAmountTap(user);
       if (!to?.accountId) {
         void clearQuickPayNotifHighlight();
         blypAlert(
@@ -137,11 +135,10 @@ export function QuickPayHost() {
       }
       void runPay(amountFcfa, to, vaulted);
     },
-    [token, user?.needsOnboarding, balance, t, runPay],
+    [token, user, user?.needsOnboarding, balance, t, runPay],
   );
 
   useEffect(() => {
-    if (Platform.OS === "android" && !USE_MOCK_API) return () => {};
     return subscribeQuickPayFlow(beginQuickPay);
   }, [beginQuickPay]);
 

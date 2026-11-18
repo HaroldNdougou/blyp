@@ -1,6 +1,6 @@
 import type { TransactionItem } from "@/lib/api/types";
 import { clearHistoryUiCache, rememberHistoryUi } from "@/lib/history/historyUiCache";
-import { runDbRead, runDbWrite } from "@/lib/db/sqlite";
+import { getDb, runDbRead, runDbWrite } from "@/lib/db/sqlite";
 import { fallbackTxReference } from "@/lib/txReference";
 
 type CacheListener = (phone: string, items: TransactionItem[]) => void;
@@ -283,6 +283,18 @@ export function getTransactionsSnapshot(
   if (!phone) return null;
   const v = byPhone.get(phone);
   return v !== undefined ? v : null;
+}
+
+/** Retire une ligne optimiste (ex. rollback paiement instant). */
+export function removeTransactionFromCache(phone: string, txId: string): void {
+  if (!phone) return;
+  const id = String(txId ?? "").trim();
+  if (!id) return;
+  const snap = byPhone.get(phone);
+  if (!snap?.length) return;
+  const next = snap.filter((t) => t.id !== id);
+  if (next.length === snap.length) return;
+  setTransactionsSnapshot(phone, next);
 }
 
 export function getSyncCursor(phone: string): string | null {

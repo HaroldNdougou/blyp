@@ -26,5 +26,6 @@ if (!i18n.isInitialized) {
 }
 
 export default i18n;
-export { appLanguage, resolveAppLanguage, getNumberLocale } from "./locale";
+export { appLanguage };
+export { resolveAppLanguage, getNumberLocale } from "./locale";
 export type { AppLanguage } from "./locale";

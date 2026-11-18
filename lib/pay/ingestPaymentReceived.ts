@@ -1,6 +1,11 @@
 import { resolveAppLanguage } from "@/lib/i18n/locale";
-import type { PaymentReceivedPushData } from "@/lib/push/handleIncoming";
+import {
+  merchantPayRx,
+  merchantPayVoiceDone,
+} from "@/lib/perf/merchantPayTrace";
+import type { MerchantPayRxSource } from "@/lib/perf/merchantPayTrace.types";
 import { dispatchPaymentReceived } from "@/lib/pay/paymentRealtimeBridge";
+import type { PaymentReceivedPushData } from "@/lib/push/handleIncoming";
 import { Platform } from "react-native";
 
 function parsePayload(raw: Record<string, unknown>): PaymentReceivedPushData | null {

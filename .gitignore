@@ -61,3 +61,15 @@ aws/node_modules/
 
 # local scratch / secrets dumps
 .tmp-env-pairs.txt
+infra/admin-credentials.local.txt
+
+admin-app/node_modules/
+admin-app/.expo/
+admin-app/android/
+admin-app/ios/
+
+blyp-admin.apk
+eas-admin-build*.log
+eas-log*.txt
+sam-build.log
+sam-deploy.log

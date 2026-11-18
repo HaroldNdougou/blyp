@@ -48,6 +48,15 @@ function parseUserSnapshot(raw: unknown): ApiUser | null {
   return u as ApiUser;
 }
 
+/** Parse un snapshot utilisateur JSON (pont coque native → SecureStore). */
+export function apiUserFromJsonString(raw: string): ApiUser | null {
+  try {
+    return parseUserSnapshot(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 let hydratePromise: Promise<void> | null = null;
 
 type AuthSessionListener = (s: {
@@ -201,6 +210,10 @@ export async function hydrateAuthSession(): Promise<void> {
       cache = { access: null, refresh: null, userSnapshot: null };
     }
     syncApiSessionToNative(cache.access);
+    if (Platform.OS !== "web") {
+      const { mirrorShellAuthFromCache } = await import("@/lib/auth/mirrorShellAuth");
+      mirrorShellAuthFromCache();
+    }
   })();
   await hydratePromise;
 }
@@ -232,6 +245,10 @@ export async function setAuthSession(
   await writeRaw(JSON.stringify(payload));
   emit();
   syncApiSessionToNative(accessToken);
+  if (Platform.OS !== "web") {
+    const { mirrorShellAuthToNativeDisk } = await import("@/lib/auth/mirrorShellAuth");
+    mirrorShellAuthToNativeDisk(accessToken, cache.userSnapshot);
+  }
 }
 
 export async function clearAuthSession(): Promise<void> {
@@ -247,4 +264,13 @@ export async function clearAuthSession(): Promise<void> {
   }
   emit();
   syncApiSessionToNative(null);
+  if (Platform.OS !== "web") {
+    const { mirrorShellAuthToNativeDisk } = await import("@/lib/auth/mirrorShellAuth");
+    mirrorShellAuthToNativeDisk(null, null);
+  }
+}
+
+/** Démarre la lecture SecureStore avant le 1er render React (cold start). */
+if (Platform.OS !== "web") {
+  void hydrateAuthSession();
 }

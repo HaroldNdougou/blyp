@@ -6,6 +6,7 @@ import {
   CASHIER_GATT_SCAN_MS,
 } from "@/lib/ble/cashierGattConstants";
 import { prepareBleRadio } from "@/lib/ble/prepareRadio";
+import { getSharedBleManager, kickTaxiScanIfActive } from "@/lib/ble/scan";
 import type { CommercePaymentReceipt } from "@/lib/pay/paymentReceipt";
 import { verifyCommercePaymentReceiptSync } from "@/lib/pay/paymentReceipt";
 
@@ -37,31 +38,40 @@ function parseSessionPayload(base64: string | null | undefined): {
   }
 }
 
-async function withBleManager<T>(
+async function withSharedBleManager<T>(
   fn: (mgr: import("react-native-ble-plx").BleManager) => Promise<T>,
 ): Promise<T | null> {
   const radio = await prepareBleRadio({ forcePrompt: false });
   if (radio !== "granted") return null;
-  const { BleManager } = await import("react-native-ble-plx");
-  const mgr = new BleManager();
+  const mgr = await getSharedBleManager();
+  if (!mgr) return null;
   try {
-    return await fn(mgr);
-  } finally {
     try {
-      mgr.destroy();
+      mgr.stopDeviceScan();
     } catch {
       /* ignore */
     }
+    return await fn(mgr);
+  } finally {
+    try {
+      mgr.stopDeviceScan();
+    } catch {
+      /* ignore */
+    }
+    kickTaxiScanIfActive();
   }
 }
 
 export async function readCashierSessionViaGatt(
   merchantAccountId: string,
+  opts?: { scanMs?: number; maxDevices?: number },
 ): Promise<number | null> {
   const target = merchantAccountId.trim().toUpperCase();
   if (!target) return null;
+  const scanMs = opts?.scanMs ?? CASHIER_GATT_SCAN_MS;
+  const maxDevices = opts?.maxDevices ?? 4;
 
-  return withBleManager(async (mgr) => {
+  return withSharedBleManager(async (mgr) => {
     const found: { id: string; rssi: number }[] = [];
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -71,7 +81,7 @@ export async function readCashierSessionViaGatt(
           /* ignore */
         }
         resolve();
-      }, CASHIER_GATT_SCAN_MS);
+      }, scanMs);
       mgr.startDeviceScan(
         [BLYP_CASHIER_GATT_SERVICE_UUID],
         { allowDuplicates: false },
@@ -83,7 +93,7 @@ export async function readCashierSessionViaGatt(
     });
 
     found.sort((a, b) => b.rssi - a.rssi);
-    for (const hit of found.slice(0, 4)) {
+    for (const hit of found.slice(0, maxDevices)) {
       try {
         const device = await mgr.connectToDevice(hit.id, {
           timeout: CASHIER_GATT_CONNECT_MS,
@@ -116,10 +126,21 @@ export async function deliverReceiptViaCashierGatt(input: {
   merchantAccountId: string;
 }): Promise<boolean> {
   if (!verifyCommercePaymentReceiptSync(input.receipt)) return false;
-  const target = input.merchantAccountId.trim().toUpperCase();
-  const payload = JSON.stringify(input.receipt);
+  return deliverPayPayloadViaCashierGatt({
+    payloadJson: JSON.stringify(input.receipt),
+    merchantAccountId: input.merchantAccountId,
+  });
+}
 
-  const result = await withBleManager(async (mgr) => {
+export async function deliverPayPayloadViaCashierGatt(input: {
+  payloadJson: string;
+  merchantAccountId: string;
+}): Promise<boolean> {
+  const target = input.merchantAccountId.trim().toUpperCase();
+  const payload = input.payloadJson;
+  if (!target || !payload) return false;
+
+  const result = await withSharedBleManager(async (mgr) => {
     const found: { id: string; rssi: number }[] = [];
     await new Promise<void>((resolve) => {
       setTimeout(() => {
@@ -192,6 +213,17 @@ export function deliverReceiptViaCashierGattDeferred(input: {
   if (!input.receipt || !input.merchantAccountId) return;
   void deliverReceiptViaCashierGatt({
     receipt: input.receipt,
+    merchantAccountId: input.merchantAccountId,
+  });
+}
+
+export function deliverPayPayloadViaCashierGattDeferred(input: {
+  payloadJson: string;
+  merchantAccountId: string | null | undefined;
+}): void {
+  if (!input.payloadJson || !input.merchantAccountId) return;
+  void deliverPayPayloadViaCashierGatt({
+    payloadJson: input.payloadJson,
     merchantAccountId: input.merchantAccountId,
   });
 }

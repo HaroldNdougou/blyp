@@ -1,9 +1,11 @@
 # Blyp — stratégie hybride (React Native + natif + infra)
 
+> **Mise à jour stratégie** : la cible produit est un **client natif** (app entière), Messages en **îlot RN v1**. Voir **`docs/BLYP-CLIENT-NATIF.md`** et **`blyp-native-client-target.mdc`**. Ce document reste utile pour l’îlot Messages et les patterns perf/gates.
+
 Document de référence pour l’équipe et les agents Cursor.  
 Complète `docs/ARCHITECTURE-CIBLE.md`, `blyp-perf-light.mdc` et `blyp-architecture-cible.mdc`.
 
-**Objectif** : viser une réactivité perçue **WhatsApp / Telegram** sur wallet + messagerie, sans réécrire toute l’app en natif — **RN pour le produit**, **natif pour les moteurs**, **infra pour le réseau invisible**, **tuning continu** pour ne pas régresser.
+**Objectif historique** : réactivité **WhatsApp / Telegram** avec RN coquille + natif ciblé. **Objectif actuel** : porter wallet + shell en natif ; RN limité à Messages jusqu’à phase 2.
 
 ---
 

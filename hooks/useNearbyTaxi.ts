@@ -30,6 +30,10 @@ import {
 import { normalizeSpendCategory } from "@/lib/pay/spendCategory";
 import { isQuickPayBleScanActive } from "@/lib/pay/quickPayBleScanGate";
 import { setPayScanFocused } from "@/lib/ble/payScanGate";
+import {
+  isPayBleScanAllowed,
+  subscribePostPayBoot,
+} from "@/lib/perf/postPayBoot";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, InteractionManager, type AppStateStatus } from "react-native";
@@ -102,12 +106,27 @@ export function useNearbyTaxi(enabled: boolean) {
       setRawPeer(withCachedName(p));
     });
     const unsubStatus = subscribeBleScanStatus(setStatus);
-    void startTaxiScan().catch(() => {
-      setStatus("unavailable");
-    });
+
+    let cancelled = false;
+    let unsubBoot: (() => void) | undefined;
+    const beginScan = () => {
+      if (cancelled || !canScan) return;
+      void startTaxiScan().catch(() => {
+        if (!cancelled) setStatus("unavailable");
+      });
+    };
+
+    if (isPayBleScanAllowed()) {
+      beginScan();
+    } else {
+      unsubBoot = subscribePostPayBoot(() => {
+        if (isPayBleScanAllowed()) beginScan();
+      });
+    }
 
     const onAppState = (s: AppStateStatus) => {
       if (s === "active") {
+        if (!isPayBleScanAllowed()) return;
         if (
           isBleBroadcasting() ||
           isBleAutoPromptDeclined() ||
@@ -132,6 +151,8 @@ export function useNearbyTaxi(enabled: boolean) {
     }, BLYP_BLE_SCAN_KICK_MS);
 
     return () => {
+      cancelled = true;
+      unsubBoot?.();
       clearInterval(kickTimer);
       unsubPeer();
       unsubStatus();

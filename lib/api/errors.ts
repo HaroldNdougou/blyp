@@ -1,5 +1,15 @@
 /** Code métier renvoyé par l’API (corps JSON), ex. échec PIN transaction. */
 export const API_ERROR_TRANSACTION_PIN_INVALID = "TRANSACTION_PIN_INVALID";
+export const API_ERROR_PAYMENT_RECEIPT_ALREADY_ENCASHED =
+  "PAYMENT_RECEIPT_ALREADY_ENCASHED";
+export const API_ERROR_SESSION_REPLACED = "SESSION_REPLACED";
+
+export class SessionReplaceCancelledError extends Error {
+  constructor() {
+    super("SESSION_REPLACE_CANCELLED");
+    this.name = "SessionReplaceCancelledError";
+  }
+}
 
 export class ApiError extends Error {
   status: number;
@@ -40,6 +50,21 @@ export function isTransactionPinInvalidError(e: unknown): boolean {
   );
 }
 
+/** Plafond « sans code » atteint — repasser par le PIN, pas échec définitif. */
+export function isSmallPayLimitPinRequiredError(e: unknown): boolean {
+  if (!(e instanceof ApiError)) {
+    if (typeof e !== "object" || e === null) return false;
+    if ((e as { name?: string }).name !== "ApiError") return false;
+  }
+  const m = String((e as ApiError).message ?? "").toLowerCase();
+  return (
+    m.includes("plafond") &&
+    (m.includes("sans code") ||
+      m.includes("saisissez votre pin") ||
+      m.includes("saisissez votre code"))
+  );
+}
+
 /** Échec liaison / timeout / gateway — pas une erreur métier PIN ou solde. */
 export function isApiNetworkFailure(e: unknown): boolean {
   return (
@@ -50,4 +75,32 @@ export function isApiNetworkFailure(e: unknown): boolean {
       e.status === 503 ||
       e.status === 504)
   );
+}
+
+/** Compte connecté ailleurs — une seule session active (style WhatsApp). */
+export function isSessionReplacedError(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.code === API_ERROR_SESSION_REPLACED) return true;
+  const m = e.message.toLowerCase();
+  return m.includes("autre téléphone") || m.includes("another device");
+}
+
+function isApiErrorLike(e: unknown): e is ApiError {
+  if (e instanceof ApiError) return true;
+  if (typeof e !== "object" || e === null) return false;
+  const o = e as { name?: unknown; status?: unknown; message?: unknown };
+  return o.name === "ApiError" && typeof o.status === "number";
+}
+
+/** Message utilisateur depuis une erreur API / réseau (évite le générique si le corps JSON est lisible). */
+export function getApiErrorMessage(e: unknown, fallback: string): string {
+  if (isApiErrorLike(e)) {
+    const msg = String(e.message ?? "").trim();
+    if (msg) return msg;
+  }
+  if (e instanceof Error) {
+    const msg = e.message.trim();
+    if (msg) return msg;
+  }
+  return fallback;
 }

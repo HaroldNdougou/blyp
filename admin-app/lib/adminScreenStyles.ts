@@ -1,0 +1,103 @@
+import { StyleSheet } from "react-native";
+import type { ThemeColors } from "./theme";
+
+export function createAdminScreenStyles(c: ThemeColors) {
+  return StyleSheet.create({
+    root: { flex: 1, backgroundColor: c.bg },
+    center: { flex: 1, backgroundColor: c.bg, alignItems: "center", justifyContent: "center" },
+    content: { padding: 16, paddingBottom: 24 },
+    section: { color: c.accent, fontWeight: "800", fontSize: 13, letterSpacing: 0.4, marginBottom: 10 },
+    sectionHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginTop: 8,
+      marginBottom: 10,
+      paddingVertical: 4,
+    },
+    sectionHeaderTitle: {
+      color: c.accent,
+      fontWeight: "800",
+      fontSize: 13,
+      letterSpacing: 0.4,
+    },
+    grid: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 16 },
+    stat: {
+      width: "48%",
+      flexGrow: 1,
+      backgroundColor: c.card,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: 12,
+    },
+    statValue: { color: c.text, fontSize: 18, fontWeight: "800" },
+    statLabel: { color: c.muted, marginTop: 4, fontSize: 12 },
+    card: {
+      backgroundColor: c.card,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: 12,
+      marginBottom: 8,
+    },
+    cardTitle: { color: c.text, fontWeight: "700", fontSize: 15 },
+    cardSummary: { color: c.muted, marginTop: 4, fontSize: 13 },
+    cardMeta: { color: c.muted, marginTop: 8, fontSize: 11 },
+    muted: { color: c.muted, textAlign: "center", marginTop: 24 },
+    error: { color: c.danger, marginBottom: 8 },
+    rowCard: {
+      backgroundColor: c.card,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.border,
+      padding: 16,
+      marginBottom: 12,
+    },
+    rowLabel: { color: c.muted, fontSize: 12, marginBottom: 4 },
+    rowValue: { color: c.text, fontSize: 16, fontWeight: "600" },
+    dangerBtn: {
+      marginTop: 8,
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.danger,
+      borderRadius: 12,
+      paddingVertical: 14,
+      alignItems: "center",
+    },
+    dangerBtnText: { color: c.danger, fontWeight: "700", fontSize: 16 },
+    actionRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginBottom: 20,
+    },
+    bigBtn: {
+      flex: 1,
+      borderRadius: 16,
+      paddingVertical: 22,
+      alignItems: "center",
+      justifyContent: "center",
+      minHeight: 72,
+    },
+    bigBtnPrimary: {
+      backgroundColor: c.accent,
+    },
+    bigBtnSecondary: {
+      backgroundColor: c.card,
+      borderWidth: 1,
+      borderColor: c.border,
+    },
+    bigBtnTextPrimary: {
+      color: c.onAccent,
+      fontSize: 17,
+      fontWeight: "700",
+    },
+    bigBtnTextSecondary: {
+      color: c.text,
+      fontSize: 17,
+      fontWeight: "700",
+    },
+  });
+}
+
+export type AdminScreenStyles = ReturnType<typeof createAdminScreenStyles>;

@@ -256,7 +256,13 @@ export function ReceiptsScreen() {
       <View style={styles.header}>
         <Pressable
           style={styles.headerBack}
-          onPress={() => router.back()}
+          onPress={() => {
+            void import("@/lib/nativeShell/leaveRouteScreen").then((m) =>
+              m.leaveNativeRouteScreen().then((left) => {
+                if (!left) router.back();
+              }),
+            );
+          }}
           hitSlop={12}
           accessibilityRole="button"
           accessibilityLabel={t("common.back")}

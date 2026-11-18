@@ -8,19 +8,24 @@ function androidApiLevel(): number {
 }
 
 function androidPerms(wantAdvertise: boolean): string[] {
-  const api = androidApiLevel();
-  const perms: string[] = [
-    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-    PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-  ];
-  if (api >= 31) {
-    perms.push(
-      "android.permission.BLUETOOTH_SCAN",
-      "android.permission.BLUETOOTH_CONNECT",
-    );
-    if (wantAdvertise) perms.push("android.permission.BLUETOOTH_ADVERTISE");
+  if (androidApiLevel() < 31) {
+    return [
+      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+    ];
   }
+  /** Android 12+ : scan déclaré `neverForLocation` — aucune localisation. */
+  const perms: string[] = [
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.BLUETOOTH_CONNECT",
+  ];
+  if (wantAdvertise) perms.push("android.permission.BLUETOOTH_ADVERTISE");
   return perms;
+}
+
+/** Localisation (permission + GPS allumé) exigée par l’OS seulement jusqu’à Android 11. */
+export function bleNeedsLocation(): boolean {
+  return Platform.OS === "android" && androidApiLevel() < 31;
 }
 
 /** Lecture seule — aucun dialogue système. */
@@ -67,17 +72,17 @@ export async function requestBlePermissions(opts?: {
     );
     if (!result) return "denied";
 
-    const fine =
-      result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
-      PermissionsAndroid.RESULTS.GRANTED;
-    const coarse =
-      result[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
-      PermissionsAndroid.RESULTS.GRANTED;
-    if (!fine && !coarse) {
-      return "denied";
-    }
-
-    if (api >= 31) {
+    if (api < 31) {
+      const fine =
+        result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+      const coarse =
+        result[PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION] ===
+        PermissionsAndroid.RESULTS.GRANTED;
+      if (!fine && !coarse) {
+        return "denied";
+      }
+    } else {
       const scan =
         result["android.permission.BLUETOOTH_SCAN" as keyof typeof result] ===
         PermissionsAndroid.RESULTS.GRANTED;

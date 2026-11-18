@@ -1,6 +1,7 @@
 package com.haroldndougou.blyp.quickpaynotif
 
 import android.app.ActivityOptions
+import android.app.KeyguardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -20,9 +21,12 @@ import java.util.concurrent.Executor
 class QuickPayAuthActivity : FragmentActivity() {
   private var amountFcfa: Int = 0
   private var authStarted = false
+  private var phoneWasLocked = false
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+    phoneWasLocked = keyguard.isKeyguardLocked || keyguard.isDeviceLocked
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
       setTurnScreenOn(true)
@@ -38,22 +42,57 @@ class QuickPayAuthActivity : FragmentActivity() {
 
     amountFcfa = intent.getIntExtra(EXTRA_AMOUNT, 0)
     if (amountFcfa <= 0) {
-      finish()
+      leaveWithoutApp()
       return
     }
-    QuickPayNotifService.highlightAmount(this, amountFcfa)
     if (!QuickPayNativeSecrets.isReady(this)) {
       toast(getString(R.string.quick_pay_not_ready))
       QuickPayNotifService.clearHighlight(this)
-      finish()
+      leaveWithoutApp()
       return
     }
+    QuickPayNotifService.highlightAmount(this, amountFcfa)
   }
 
   override fun onResume() {
     super.onResume()
     if (authStarted || amountFcfa <= 0) return
-    window.decorView.post { startBiometricAuth() }
+    window.decorView.post {
+      if (phoneWasLocked) confirmUnlockThenPay() else startBiometricAuth()
+    }
+  }
+
+  /** Téléphone verrouillé : un seul déverrouillage, puis paiement. */
+  private fun confirmUnlockThenPay() {
+    if (authStarted || isFinishing) return
+    authStarted = true
+    val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+    if (!keyguard.isKeyguardLocked && !keyguard.isDeviceLocked) {
+      runPay(amountFcfa)
+      return
+    }
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+      runPay(amountFcfa)
+      return
+    }
+    keyguard.requestDismissKeyguard(
+      this,
+      object : KeyguardManager.KeyguardDismissCallback() {
+        override fun onDismissSucceeded() {
+          runPay(amountFcfa)
+        }
+
+        override fun onDismissCancelled() {
+          QuickPayNotifService.clearHighlight(this@QuickPayAuthActivity)
+          leaveWithoutApp()
+        }
+
+        override fun onDismissError() {
+          QuickPayNotifService.clearHighlight(this@QuickPayAuthActivity)
+          leaveWithoutApp()
+        }
+      },
+    )
   }
 
   private fun startBiometricAuth() {
@@ -83,7 +122,7 @@ class QuickPayAuthActivity : FragmentActivity() {
               errorCode == BiometricPrompt.ERROR_CANCELED
             ) {
               QuickPayNotifService.clearHighlight(this@QuickPayAuthActivity)
-              finish()
+              leaveWithoutApp()
               return
             }
             showBlypPinFallback()
@@ -111,7 +150,7 @@ class QuickPayAuthActivity : FragmentActivity() {
     val snap = QuickPayNativeSecrets.read(this) ?: run {
       toast(getString(R.string.quick_pay_not_ready))
       QuickPayNotifService.clearHighlight(this)
-      finish()
+      leaveWithoutApp()
       return
     }
     val amount = amountFcfa
@@ -122,20 +161,20 @@ class QuickPayAuthActivity : FragmentActivity() {
       maxLines = 1
       filters = arrayOf(android.text.InputFilter.LengthFilter(4))
     }
-    android.app.AlertDialog.Builder(this)
+    com.haroldndougou.blyp.shell.BlypShellDialogs.alertBuilder(this)
       .setTitle(getString(R.string.quick_pay_blyp_pin_title))
       .setView(input)
       .setCancelable(true)
       .setOnCancelListener {
         QuickPayNotifService.clearHighlight(this)
-        finish()
+        leaveWithoutApp()
       }
       .setPositiveButton(android.R.string.ok) { _, _ ->
         val pin = input.text.toString().replace(Regex("\\D"), "")
         if (pin.length != 4 || pin != snap.transactionPin) {
           toast(getString(R.string.quick_pay_blyp_pin_wrong))
           QuickPayNotifService.clearHighlight(this)
-          finish()
+          leaveWithoutApp()
           return@setPositiveButton
         }
         runPay(amount)
@@ -144,29 +183,109 @@ class QuickPayAuthActivity : FragmentActivity() {
   }
 
   private fun runPay(amount: Int) {
-    QuickPayExecutor.payAsync(this, amount) { pay ->
-      runOnUiThread {
-        if (pay.ok) {
-          toast(getString(R.string.quick_pay_success))
+    ensureSharedRecipient()
+    if (!com.haroldndougou.blyp.shell.BlypShellNetwork.isOnline(this)) {
+      toast(getString(R.string.blyp_shell_pay_no_internet))
+      leaveWithoutApp()
+      return
+    }
+    when (com.haroldndougou.blyp.shell.BlypShellInstantCommercePay.runAfterAuth(this, amount)) {
+      com.haroldndougou.blyp.shell.BlypShellInstantCommercePay.Outcome.Started -> {
+        val left = com.haroldndougou.blyp.shell.BlypShellSession.profile(this)?.balanceFcfa ?: 0
+        QuickPayNativeSecrets.updateBalance(this, left)
+        com.haroldndougou.blyp.shell.BlypShellPayFeedback.markPaySuccess(amount)
+        com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
+        toast(getString(R.string.quick_pay_success))
+        QuickPayNotifService.clearHighlight(this)
+        leaveWithoutApp()
+        return
+      }
+      com.haroldndougou.blyp.shell.BlypShellInstantCommercePay.Outcome.Denied -> {
+        QuickPayNotifService.clearHighlight(this)
+        leaveWithoutApp()
+        return
+      }
+      com.haroldndougou.blyp.shell.BlypShellInstantCommercePay.Outcome.NotCommerce -> Unit
+    }
+    if (!com.haroldndougou.blyp.shell.BlypShellPayDossierStore.isBalanceSufficientForPay(this, amount)) {
+      toast(getString(R.string.quick_pay_insufficient))
+      QuickPayNotifService.clearHighlight(this)
+      leaveWithoutApp()
+      return
+    }
+    val snap = com.haroldndougou.blyp.shell.BlypShellPayRuntime.read(this) ?: run {
+      toast(getString(R.string.quick_pay_not_ready))
+      QuickPayNotifService.clearHighlight(this)
+      leaveWithoutApp()
+      return
+    }
+    val prevBal =
+      com.haroldndougou.blyp.shell.BlypShellPayDossierStore.readVerified(this)?.balanceFcfa
+        ?: snap.balanceFcfa
+    val idem = java.util.UUID.randomUUID().toString()
+    com.haroldndougou.blyp.shell.BlypShellPayRuntime.updateBalance(this, prevBal - amount)
+    QuickPayNativeSecrets.updateBalance(this, (prevBal - amount).coerceAtLeast(0))
+    com.haroldndougou.blyp.shell.BlypShellPayFeedback.markPaySuccess(amount)
+    com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
+    toast(getString(R.string.quick_pay_success))
+    QuickPayNotifService.clearHighlight(this)
+    leaveWithoutApp()
+    com.haroldndougou.blyp.shell.BlypShellPayExecutor.payAsync(applicationContext, amount, { pay ->
+      when {
+        pay.ok ->
           QuickPayNotifBridge.emitPayCompleted(
-            this,
+            applicationContext,
             amount,
             pay.balanceFcfa,
             pay.transactionId,
           )
-        } else {
-          val msg =
-            when (pay.message) {
-              "insufficient_balance" -> getString(R.string.quick_pay_insufficient)
-              "not_configured", "no_recipient" -> getString(R.string.quick_pay_not_ready)
-              else -> getString(R.string.quick_pay_failed)
-            }
-          toast(msg)
+        pay.message == "insufficient_balance" ||
+          pay.message == "no_recipient" ||
+          pay.message == "not_configured" -> {
+          com.haroldndougou.blyp.shell.BlypShellPayRuntime.updateBalance(applicationContext, prevBal)
+          QuickPayNativeSecrets.updateBalance(applicationContext, prevBal)
+          com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
         }
-        QuickPayNotifService.clearHighlight(this)
-        finish()
+        com.haroldndougou.blyp.shell.BlypShellNetwork.isRetryablePayFailure(pay.message) -> {
+          com.haroldndougou.blyp.shell.BlypShellOfflinePayQueue.enqueue(
+            applicationContext,
+            amount,
+            idem,
+            snap.recipientJson,
+          )
+          com.haroldndougou.blyp.shell.BlypShellOfflinePayQueue.flush(applicationContext)
+        }
+        else -> {
+          com.haroldndougou.blyp.shell.BlypShellPayRuntime.updateBalance(applicationContext, prevBal)
+          QuickPayNativeSecrets.updateBalance(applicationContext, prevBal)
+          com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
+        }
       }
-    }
+    }, idem)
+  }
+
+  /** La notif et Payer paient la même personne. */
+  private fun ensureSharedRecipient() {
+    if (com.haroldndougou.blyp.shell.BlypShellPayRuntime.activeRecipientAccountId(this) != null) return
+    val ready = QuickPayNativeSecrets.read(this) ?: return
+    val raw = org.json.JSONObject(ready.recipientJson)
+    val id = raw.optString("accountId", "").trim()
+    val name = raw.optString("name", "").trim()
+    if (id.isEmpty() || name.isEmpty()) return
+    val phone = raw.optString("phoneDigits", "").replace(Regex("\\D"), "").takeLast(9)
+    com.haroldndougou.blyp.shell.BlypShellPayRuntime.applyRecipient(
+      this,
+      com.haroldndougou.blyp.shell.BlypShellPayRuntime.RecipientOption(
+        accountId = id,
+        name = name,
+        phoneDigits = phone.ifEmpty { null },
+        fromBle = true,
+      ),
+    )
+  }
+
+  private fun leaveWithoutApp() {
+    finishAndRemoveTask()
   }
 
   private fun toast(msg: String) {

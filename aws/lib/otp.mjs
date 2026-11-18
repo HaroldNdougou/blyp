@@ -23,6 +23,8 @@ export function generateOtpCode() {
   return String(randomInt(100_000, 1_000_000));
 }
 
-export function otpVerifyCacheKey(phone, code) {
-  return `${phone}|${hashOtp(phone, code)}`;
+/** Rejeu idempotent réservé au même appareil (clé publique) — un autre téléphone repasse par la vérif. */
+export function otpVerifyCacheKey(phone, code, devicePublicKey = "") {
+  const dev = createHash("sha256").update(String(devicePublicKey ?? "").trim(), "utf8").digest("hex");
+  return `${phone}|${hashOtp(phone, code)}|${dev.slice(0, 32)}`;
 }

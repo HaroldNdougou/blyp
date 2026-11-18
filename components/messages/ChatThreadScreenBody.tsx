@@ -13,6 +13,7 @@ import {
   ReactionPicker,
 } from "@/components/messages/MessageReactions";
 import { TypingDotsBubble } from "@/components/messages/TypingDotsBubble";
+import { ComposerReplyBar } from "@/components/messages/MessageReplyQuote";
 import {
   ChatMessageListRow,
   type ChatMessageRowHandlers,
@@ -176,6 +177,7 @@ import {
   SafeAreaView,
   useSafeAreaInsets,
 } from "react-native-safe-area-context";
+import { leaveThreadWithoutBackStack } from "@/lib/messages/leaveThread";
 
 if (__DEV__) {
   perfChatOpenLap("inner_module_parsed");
@@ -3318,7 +3320,7 @@ export default function ChatThreadScreenBody() {
   const leaveChat = useCallback(() => {
     stopTyping();
     if (router.canGoBack()) router.back();
-    else router.replace("/(tabs)/pay");
+    else leaveThreadWithoutBackStack();
   }, [stopTyping]);
 
   const handleThreadBack = useCallback(() => {

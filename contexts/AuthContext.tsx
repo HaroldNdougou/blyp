@@ -1,5 +1,7 @@
 import type { ApiUser } from "@/lib/api/types";
 import { notifyIncomingPaymentFlash } from "@/lib/pay/incomingFlash";
+import { shouldApplyIncomingPayment } from "@/lib/push/shouldApplyIncomingPayment";
+import { merchantPayApplied } from "@/lib/perf/merchantPayTrace";
 import {
   clearAuthSession,
   getAccessToken,
@@ -14,6 +16,13 @@ import {
   DEV_BACKGROUND_BOOT_MS,
   runAfterDevBackgroundBoot,
 } from "@/lib/perf/devMetroLite";
+import i18n from "@/lib/i18n";
+import { subscribeSessionReplaced } from "@/lib/auth/sessionReplaced";
+import { blypAlert } from "@/lib/ui/blypAlert";
+import {
+  SessionReplaceCancelledError,
+  isSessionReplacedError,
+} from "@/lib/api/errors";
 import React, {
   useCallback,
   useEffect,
@@ -35,6 +44,9 @@ function hydrateTxCache(phone: string) {
 
 function hydrateLocalCaches(phone: string, _token?: string | null) {
   hydrateTxCache(phone);
+  void import("@/lib/pay/payDossierCache").then((m) =>
+    m.hydratePayDossierFromDisk(phone),
+  );
 }
 
 async function clearTxCaches() {
@@ -92,6 +104,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const applyUser = useCallback(async (next: ApiUser) => {
     const t = getAccessToken();
     setUser(next);
+    const { hydratePayDossierFromUser } = await import("@/lib/pay/payDossierCache");
+    hydratePayDossierFromUser(next);
     if (t) await setAuthSession(t, getRefreshToken(), next);
   }, []);
 
@@ -104,7 +118,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(t);
       setUser(me);
       await setAuthSession(t, getRefreshToken(), me);
-    } catch {
+      const { hydratePayDossierFromUser } = await import("@/lib/pay/payDossierCache");
+      hydratePayDossierFromUser(me);
+    } catch (e) {
+      if (isSessionReplacedError(e)) return;
       /* hors-ligne / 401 — session locale conservée */
     }
   }, []);
@@ -124,9 +141,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await hydrateAuthSession();
         if (!alive) return;
 
-        const tok = getAccessToken();
-        const refresh = getRefreshToken();
-        const snap = getUserSnapshot();
+        let tok = getAccessToken();
+        let refresh = getRefreshToken();
+        let snap = getUserSnapshot();
+
+        if (!tok && !refresh) {
+          const { consumeNativeShellAuthForJs } = await import("@/lib/nativeShell");
+          const fromShell = await consumeNativeShellAuthForJs();
+          if (fromShell) {
+            await setAuthSession(
+              fromShell.accessToken,
+              fromShell.refreshToken,
+              fromShell.user,
+            );
+            if (fromShell.pendingPin?.length === 4) {
+              const { saveTransactionPinVault } = await import(
+                "@/lib/security/transactionPinVault"
+              );
+              await saveTransactionPinVault(fromShell.pendingPin);
+            }
+            const { syncShellPayRuntime } = await import(
+              "@/lib/pay/syncShellPayRuntime"
+            );
+            void syncShellPayRuntime(fromShell.user);
+            tok = fromShell.accessToken;
+            refresh = fromShell.refreshToken;
+            snap = fromShell.user;
+          }
+        }
 
         if (!tok && !refresh) {
           if (alive) setIsLoading(false);
@@ -142,7 +184,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setIsLoading(false);
         }
 
-        if (snap?.phone) hydrateLocalCaches(snap.phone, tok);
+        if (snap?.phone) {
+          const { InteractionManager } = await import("react-native");
+          InteractionManager.runAfterInteractions(() => {
+            if (!alive) return;
+            hydrateLocalCaches(snap.phone!, tok);
+          });
+        }
 
         const refreshProfile = () => {
           if (!alive) return;
@@ -161,9 +209,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               setToken(getAccessToken() ?? current);
               setUser(me);
               await setAuthSession(current, getRefreshToken(), me);
+              const { hydratePayDossierFromUser } = await import(
+                "@/lib/pay/payDossierCache"
+              );
+              hydratePayDossierFromUser(me);
               hydrateLocalCaches(me.phone, getAccessToken() ?? current);
             } catch (e) {
               const { ApiError } = await import("@/lib/api/errors");
+              if (isSessionReplacedError(e)) {
+                return;
+              }
               if (
                 e instanceof ApiError &&
                 (e.status === 401 || e.status === 403) &&
@@ -197,25 +252,120 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    void import("@/lib/nativeShell").then((m) =>
+      m.syncNativeShellSession(user?.phone ?? null, token, user),
+    );
+    void import("@/lib/pay/syncShellPayRuntime").then((m) =>
+      m.syncShellPayRuntime(user),
+    );
+  }, [user, token]);
+
+  useEffect(() => {
+    const phone = user?.phone?.trim();
+    if (!phone || !token) return;
+    let stopEngine = () => {};
+    let unsubRegulars = () => {};
+    void import("@/lib/pay/regularRecipients").then((reg) => {
+      stopEngine = reg.startRegularRecipientsEngine(phone);
+      unsubRegulars = reg.subscribeRegularRecipients(() => {
+        void import("@/lib/pay/syncShellPayRuntime").then((m) =>
+          m.syncShellPayRuntime(user),
+        );
+      });
+    });
+    return () => {
+      stopEngine();
+      unsubRegulars();
+    };
+  }, [user, token, user?.phone]);
+
   const requestOtp = useCallback(async (phoneDigits: string) => {
     const { requestOtp: ro } = await import("@/lib/api/client");
     return ro(phoneDigits);
   }, []);
 
-  const verifyAndSignIn = useCallback(
-    async (phoneDigits: string, code: string) => {
-      const api = await import("@/lib/api/client");
-      const { token: newToken, refreshToken, user: u } = await api.verifyOtp(
-        phoneDigits,
-        code,
-      );
+  const sessionReplacedAlertShownRef = useRef(false);
+
+  const completeOtpSignIn = useCallback(
+    async (
+      newToken: string,
+      refreshToken: string | undefined,
+      u: ApiUser,
+    ) => {
       await setAuthSession(newToken, refreshToken ?? null, u);
       setToken(newToken);
       setUser(u);
+      const { hydratePayDossierFromUser } = await import("@/lib/pay/payDossierCache");
+      hydratePayDossierFromUser(u);
       hydrateLocalCaches(u.phone, newToken);
-      return u;
     },
     [],
+  );
+
+  const verifyAndSignIn = useCallback(
+    async (phoneDigits: string, code: string) => {
+      const api = await import("@/lib/api/client");
+      const t = i18n.t.bind(i18n);
+
+      const finishSignIn = async (
+        payload: Awaited<ReturnType<typeof api.verifyOtp>>,
+      ) => {
+        const newToken = payload.token;
+        const u = payload.user;
+        if (!newToken || !u) {
+          throw new Error("verify_otp_incomplete");
+        }
+        await completeOtpSignIn(newToken, payload.refreshToken, u);
+        if (payload.replacedPreviousSession) {
+          await new Promise<void>((resolve) => {
+            blypAlert(
+              t("auth.replaceSessionDoneTitle"),
+              t("auth.replaceSessionDoneMessage"),
+              [{ text: t("common.ok"), onPress: () => resolve() }],
+              { cancelable: false },
+            );
+          });
+        }
+        return u;
+      };
+
+      const first = await api.verifyOtp(phoneDigits, code);
+      if (first.needsSessionReplaceConfirm) {
+        return new Promise<ApiUser>((resolve, reject) => {
+          blypAlert(
+            t("auth.replaceSessionTitle"),
+            t("auth.replaceSessionMessage"),
+            [
+              {
+                text: t("common.cancel"),
+                style: "cancel",
+                onPress: () => reject(new SessionReplaceCancelledError()),
+              },
+              {
+                text: t("auth.replaceSessionConfirm"),
+                style: "destructive",
+                onPress: () => {
+                  void (async () => {
+                    try {
+                      const confirmed = await api.verifyOtp(phoneDigits, code, {
+                        confirmReplaceSession: true,
+                      });
+                      resolve(await finishSignIn(confirmed));
+                    } catch (err) {
+                      reject(err);
+                    }
+                  })();
+                },
+              },
+            ],
+            { cancelable: false },
+          );
+        });
+      }
+      return finishSignIn(first);
+    },
+    [completeOtpSignIn],
   );
 
   const signOut = useCallback(async () => {
@@ -253,6 +403,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* best effort */
     }
+    try {
+      const { clearPendingInstantPayQueue } = await import(
+        "@/lib/pay/pendingInstantPayQueue"
+      );
+      await clearPendingInstantPayQueue();
+    } catch {
+      /* best effort */
+    }
+    try {
+      const { clearPayDossierCache } = await import("@/lib/pay/payDossierCache");
+      await clearPayDossierCache();
+    } catch {
+      /* best effort */
+    }
     await clearAuthSession();
     const { clearTransactionPinVault } = await import(
       "@/lib/security/transactionPinVault"
@@ -261,9 +425,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await clearTxCaches();
     const { resetAggressiveWarm } = await import("@/lib/perf/aggressiveWarm");
     resetAggressiveWarm();
+    const { resetPostPayBoot } = await import("@/lib/perf/postPayBoot");
+    resetPostPayBoot();
     setToken(null);
     setUser(null);
   }, []);
+
+  useEffect(() => {
+    return subscribeSessionReplaced(() => {
+      if (sessionReplacedAlertShownRef.current) return;
+      sessionReplacedAlertShownRef.current = true;
+      void (async () => {
+        try {
+          const { clearPendingInstantPayQueue } = await import(
+            "@/lib/pay/pendingInstantPayQueue"
+          );
+          await clearPendingInstantPayQueue();
+        } catch {
+          /* ignore */
+        }
+        await signOut();
+        blypAlert(
+          i18n.t("auth.sessionReplacedTitle"),
+          i18n.t("auth.sessionReplacedMessage"),
+          [{ text: i18n.t("common.ok") }],
+          {
+            cancelable: false,
+            onDismiss: () => {
+              sessionReplacedAlertShownRef.current = false;
+            },
+          },
+        );
+      })();
+    });
+  }, [signOut]);
 
   const cancelRegistration = useCallback(async () => {
     const access = getAccessToken();
@@ -284,6 +479,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       commerceId?: string;
       fromName?: string;
     }) => {
+      const snap = getUserSnapshot();
+      if (!shouldApplyIncomingPayment(snap, data)) return;
+
       const amount = Math.floor(Number(data.amountFcfa) || 0);
       if (amount <= 0) return;
       const txId = String(data.transactionId ?? "").trim();
@@ -332,6 +530,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         commerceId: isCommerce ? commerceId : undefined,
         contextType: isCommerce ? "commerce" : "personal",
       });
+      merchantPayApplied(txId || undefined);
       const userPhone = getUserSnapshot()?.phone;
       if (txId && userPhone) {
         void import("@/lib/transactionsCache").then((cache) => {
@@ -371,6 +570,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (a) void setAuthSession(a, getRefreshToken(), next);
       return next;
     });
+    void import("@/lib/pay/payDossierCache").then((m) =>
+      m.setPayDossierBalance(balanceFcfa),
+    );
   }, []);
 
   const setActiveContext = useCallback(

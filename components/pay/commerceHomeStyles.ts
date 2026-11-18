@@ -104,6 +104,22 @@ export function createCommerceHomeStyles(c: ThemeColors) {
       fontWeight: "700",
       color: c.accent,
     },
+    qrCta: {
+      marginTop: 20,
+      paddingVertical: 12,
+      paddingHorizontal: 22,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: c.accent,
+    },
+    qrCtaPressed: {
+      opacity: 0.85,
+    },
+    qrCtaText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: c.accent,
+    },
     balancePendingHint: {
       marginTop: 8,
       fontSize: 11,

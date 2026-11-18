@@ -1,0 +1,10 @@
+---
+description: Poste Windows — Cursor + plusieurs agents sur Blyp
+alwaysApply: true
+---
+
+# Blyp — poste de dev Cursor
+
+- **Agents** : viser **2–3 en parallèle** sur ce PC (i7 mobile, 16 Go RAM). Un seul **build Android / Gradle** à la fois.
+- **Disque** : projet et caches sur **D:** ; garder **C:** avec **≥15 Go libres** (sinon builds et IDE rament).
+- **Léger** : pas de refetch/sync lourde inutile ; builds et `npm install` seulement quand c’est demandé.

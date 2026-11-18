@@ -13,6 +13,7 @@ import {
   unauthorized,
   forbidden,
 } from "../../lib/http.mjs";
+import { emitAdminEvent } from "../../lib/adminEvents.mjs";
 import { resolveAccessSession } from "../../lib/authSession.mjs";
 import {
   checkRequestProof,
@@ -33,9 +34,11 @@ import { normalizeCameroonPhone } from "../../lib/phone.mjs";
 import {
   getTransactionPinPepper,
   hashTransactionPin,
+  verifyTransactionPin,
 } from "../../lib/pin.mjs";
+import { clearPinAttempts, pinLockRemainingSec, recordWrongPin } from "../../lib/pinAttempts.mjs";
 import {
-  getActiveSessionFamilyId,
+  getLiveOtherSession,
   issueAuthSession,
   rotateAuthSession,
 } from "../../lib/refreshTokens.mjs";
@@ -58,6 +61,7 @@ import {
   putOtpVerifyCache,
   setOtpCooldown,
   setTransactionPin,
+  replaceTransactionPin,
   setSmallPayWithoutPinEnabled,
   updateProfileNames,
   touchAvatarUpdated,
@@ -197,7 +201,7 @@ async function handleVerifyOtp(body) {
   }
 
   const confirmReplaceSession = body?.confirmReplaceSession === true;
-  const cacheKey = otpVerifyCacheKey(phone, code);
+  const cacheKey = otpVerifyCacheKey(phone, code, body?.devicePublicKey);
   const cached = await getOtpVerifyCache(cacheKey);
   if (cached?.token && cached?.user) return ok(cached);
 
@@ -216,7 +220,8 @@ async function handleVerifyOtp(body) {
   }
 
   const { userId, user, isNewAccount } = await findOrCreateUserByPhoneSafe(phone);
-  const hadActiveSession = Boolean(await getActiveSessionFamilyId(userId));
+  const live = await getLiveOtherSession(userId, body?.devicePublicKey);
+  const hadActiveSession = Boolean(live) && !live.sameDevice;
   if (hadActiveSession && !confirmReplaceSession) {
     return ok({ needsSessionReplaceConfirm: true });
   }
@@ -233,6 +238,15 @@ async function handleVerifyOtp(body) {
       : {}),
   };
   await putOtpVerifyCache(cacheKey, payload);
+  await emitAdminEvent({
+    type: "login",
+    userId,
+    data: {
+      phone,
+      isNewAccount: Boolean(isNewAccount),
+      replacedPreviousSession: Boolean(hadActiveSession && confirmReplaceSession),
+    },
+  });
   return ok(payload);
 }
 
@@ -292,6 +306,17 @@ async function handleSetPin(userId, body) {
     throw err;
   }
 
+  if (
+    String(profile.firstName ?? "").trim() &&
+    String(profile.lastName ?? "").trim()
+  ) {
+    await emitAdminEvent({
+      type: "signup",
+      userId,
+      data: { phone: profile.phone ?? null, completedBy: "pin" },
+    });
+  }
+
   const user = await getUserApiPayload(userId);
   return ok({ user });
 }
@@ -334,14 +359,97 @@ async function handleSetProfile(userId, body) {
   if (!profile) return unauthorized("Utilisateur introuvable");
 
   await updateProfileNames(userId, firstName, lastName);
+  if (profile.transactionPinHash && !String(profile.firstName ?? "").trim()) {
+    await emitAdminEvent({
+      type: "signup",
+      userId,
+      data: { phone: profile.phone ?? null, completedBy: "profile" },
+    });
+  }
   const user = await getUserApiPayload(userId);
   return ok({ user });
 }
 
-async function handleMe(userId) {
-  const user = await getUserApiPayload(userId);
+async function handleMe(userId, deviceInfo = null) {
+  /** `app_open` en parallèle de la lecture : zéro latence ajoutée (worker dédoublonne à 45 s). */
+  const [user] = await Promise.all([
+    getUserApiPayload(userId),
+    emitAdminEvent({
+      type: "app_open",
+      userId,
+      data: deviceInfo ? { ...deviceInfo } : {},
+    }),
+  ]);
   if (!user) return unauthorized("Utilisateur introuvable");
   return ok(user);
+}
+
+/** Compte existant sur nouvel appareil : valide le code secret avant de l’enregistrer localement. */
+async function handleVerifyTransactionPin(userId, body) {
+  const pin = String(body?.pin ?? "").replace(/\D/g, "");
+  if (pin.length !== 4) return badRequest("Code invalide", { code: "PIN_INVALID" });
+  const lockSec = await pinLockRemainingSec(userId);
+  if (lockSec > 0) {
+    return tooManyRequests("Trop d’essais. Réessayez plus tard.", {
+      code: "PIN_LOCKED",
+      retryAfterSeconds: lockSec,
+    });
+  }
+  const profile = await getUserProfile(userId);
+  if (!profile?.transactionPinHash) {
+    return forbidden("Complétez votre inscription (code PIN) pour payer");
+  }
+  if (!verifyTransactionPin(pin, profile.transactionPinHash, getTransactionPinPepper())) {
+    const remaining = await recordWrongPin(userId);
+    return badRequest("Code secret incorrect", { code: "PIN_WRONG", remaining });
+  }
+  await clearPinAttempts(userId);
+  return ok({ valid: true });
+}
+
+async function handleChangeTransactionPin(userId, body) {
+  const current = String(body?.currentPin ?? "").replace(/\D/g, "");
+  const next = String(body?.pin ?? "").replace(/\D/g, "");
+  if (current.length !== 4 || next.length !== 4) {
+    return badRequest("Code invalide", { code: "PIN_INVALID" });
+  }
+  if (current === next) {
+    return badRequest("Choisissez un code différent", { code: "PIN_SAME" });
+  }
+  const lockSec = await pinLockRemainingSec(userId);
+  if (lockSec > 0) {
+    return tooManyRequests("Trop d’essais. Réessayez plus tard.", {
+      code: "PIN_LOCKED",
+      retryAfterSeconds: lockSec,
+    });
+  }
+  const profile = await getUserProfile(userId);
+  if (!profile?.transactionPinHash) {
+    return forbidden("Complétez votre inscription (code PIN) pour payer");
+  }
+  const pepper = getTransactionPinPepper();
+  if (!verifyTransactionPin(current, profile.transactionPinHash, pepper)) {
+    const remaining = await recordWrongPin(userId);
+    return badRequest("Code secret incorrect", { code: "PIN_WRONG", remaining });
+  }
+  let hash;
+  try {
+    hash = hashTransactionPin(next, pepper);
+  } catch (err) {
+    console.error("[pin/change]", err);
+    return serverError("Configuration serveur (PIN) invalide");
+  }
+  try {
+    await replaceTransactionPin(userId, hash, profile.transactionPinHash);
+  } catch (err) {
+    if (err?.name === "ConditionalCheckFailedException") {
+      return badRequest("Code secret incorrect", { code: "PIN_WRONG", remaining: 0 });
+    }
+    throw err;
+  }
+  await clearPinAttempts(userId);
+  const user = await getUserApiPayload(userId);
+  return ok({ user });
 }
 
 async function handleSmallPayWithoutPin(userId, body) {
@@ -715,6 +823,22 @@ export async function handler(event, context) {
       return await handleSetPin(auth.userId, body);
     }
 
+    if (method === "POST" && path === "/me/transaction-pin/change") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleChangeTransactionPin(auth.userId, body);
+    }
+
+    if (method === "POST" && path === "/me/transaction-pin/verify") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      return await handleVerifyTransactionPin(auth.userId, body);
+    }
+
     if (method === "POST" && path === "/auth/onboarding/profile") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
@@ -740,7 +864,12 @@ export async function handler(event, context) {
     if (method === "GET" && path === "/me") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;
-      return await handleMe(auth.userId);
+      return await handleMe(auth.userId, {
+        userAgent: String(
+          event?.headers?.["user-agent"] ?? event?.headers?.["User-Agent"] ?? "",
+        ).slice(0, 120),
+        ip: event?.requestContext?.http?.sourceIp ?? null,
+      });
     }
 
     if (method === "POST" && path === "/me/avatar/presign") {

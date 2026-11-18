@@ -3,5 +3,8 @@
     <color name="blyp_accent">#5DC705</color>
     <color name="quick_pay_chip_bg">#33FFFFFF</color>
     <color name="quick_pay_chip_text">#F2FFFFFF</color>
-    <color name="quick_pay_chip_text_selected">#FFFFFF</color>
+    <color name="quick_pay_chip_text_selected">#F2FFFFFF</color>
+    <color name="quick_pay_merchant_name">#F2FFFFFF</color>
+    <color name="quick_pay_notif_tint">#B0B0B0</color>
+    <color name="quick_pay_chip_bg_selected">#335DC705</color>
 </resources>

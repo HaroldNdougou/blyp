@@ -26,6 +26,21 @@ export function createPayOutcomeSheetStyles(c: ThemeColors) {
       zIndex: 1,
       borderWidth: StyleSheet.hairlineWidth,
       borderColor: c.borderLight,
+      position: "relative",
+    },
+    closeBtn: {
+      position: "absolute",
+      top: 8,
+      right: 8,
+      zIndex: 2,
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    closeBtnPressed: {
+      opacity: 0.65,
     },
     iconWrap: {
       alignSelf: "center",

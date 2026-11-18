@@ -93,7 +93,7 @@ export function hydratePendingCommerceReceiptsOnce(): void {
       const raw = await SS.getItemAsync(STORE_KEY);
       items = parseStored(raw);
       for (const r of items) {
-        if (r.status === "pending" && r.transactionId) {
+        if (r.transactionId) {
           seenTxIds.add(dedupeKeyTx(r.transactionId));
         }
       }
@@ -127,12 +127,7 @@ export async function ingestFullPaymentReceipt(input: {
   const txId = input.receipt.transactionId.trim();
   const key = dedupeKeyTx(txId);
   if (seenTxIds.has(key)) {
-    const existing = items.find(
-      (r) =>
-        r.transactionId === txId &&
-        r.status === "pending",
-    );
-    return existing ?? null;
+    return null;
   }
   seenTxIds.add(key);
   const txFp = paymentTxFingerprint(txId);

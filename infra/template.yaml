@@ -34,7 +34,9 @@ Parameters:
     Type: String
     NoEcho: true
     Default: ""
-    Description: PEM Ed25519 preuve paiement commerce (pair lib/pay/paymentReceiptEd25519PublicKey.ts)
+    Description: >-
+      Seed PEM (local samconfig uniquement). Synchronisé vers Secrets Manager au deploy ;
+      la Lambda lit PAY_RECEIPT_ED25519_SECRET_ARN, pas cette variable.
 
   SmsProvider:
     Type: String
@@ -111,7 +113,54 @@ Parameters:
     MaxValue: 10
     Description: Lambda wallet provisionnée (0 = ping seul ; quota compte AWS)
 
+  AdminEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Email(s) des fondateurs, séparés par des virgules : chacun peut se connecter et reçoit
+      toutes les alertes (secours si l'un est indisponible). Vide = tableau de bord désactivé (503).
+
+  AdminAlarmEmail2:
+    Type: String
+    Default: ""
+    Description: Second email (optionnel) abonné aux alarmes techniques SNS.
+
+  AdminSenderEmail:
+    Type: String
+    Default: ""
+    Description: Expéditeur SES vérifié (alertes, récaps). Vide = pas d'email.
+
+  AdminPasswordHash:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Empreinte scrypt du mot de passe admin (node aws/scripts/admin-setup.mjs)
+
+  AdminTotpSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Secret TOTP base32 (application d'authentification)
+
+  AdminJwtSecret:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Secret de session admin (32+ caractères, distinct de JwtSecret)
+
+  AdminPushPhone:
+    Type: String
+    Default: ""
+    Description: Téléphones Blyp des fondateurs (9 chiffres, séparés par des virgules) — reçoivent tous les push
+
+  AdminAllowedIps:
+    Type: String
+    Default: ""
+    Description: Liste d'IP autorisées séparées par des virgules (vide = toutes, protégées par mot de passe + TOTP)
+
 Conditions:
+  HasAdminEmail: !Not [!Equals [!Ref AdminEmail, ""]]
+  HasAdminAlarmEmail2: !And [!Condition HasAdminEmail, !Not [!Equals [!Ref AdminAlarmEmail2, ""]]]
   IsProd: !Equals [!Ref Stage, prod]
   HasPinPepper: !Not [!Equals [!Ref TransactionPinPepper, ""]]
   HasWalletPC: !Not [!Equals [!Ref WalletProvisionedConcurrency, 0]]
@@ -132,6 +181,7 @@ Globals:
         TABLE_NAME: !Ref BlypTable
         JWT_SECRET: !Ref JwtSecret
         OTP_PEPPER: !Ref OtpPepper
+        ADMIN_EVENTS_QUEUE_URL: !Ref AdminEventsQueue
         NODE_ENV: !If [IsProd, production, development]
 
 Resources:
@@ -237,6 +287,8 @@ Resources:
           MEDIA_BUCKET: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
           KYC_AUTO_APPROVE: !Ref Stage
       Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AdminEventsQueue.QueueName
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
         - S3CrudPolicy:
@@ -358,6 +410,18 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /me/profile
             Method: PUT
+        MeTransactionPinVerify:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/transaction-pin/verify
+            Method: POST
+        MeTransactionPinChange:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /me/transaction-pin/change
+            Method: POST
         MeSmallPayWithoutPin:
           Type: HttpApi
           Properties:
@@ -424,6 +488,26 @@ Resources:
             ApiId: !Ref BlypApi
             Path: /commerces/{commerceId}/soa-trip/day-report
             Method: GET
+        CommercePaymentReceiptEncash:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}/payment-receipts/encash
+            Method: POST
+        CommercePaymentReceiptEncashList:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /commerces/{commerceId}/payment-receipts/encashments
+            Method: GET
+
+  PayReceiptEd25519Secret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Name: !Sub "blyp/${Stage}/pay-receipt-ed25519-private-key-pem"
+      Description: Ed25519 PEM — signature reçus paiement commerce (v2)
 
   WalletFunction:
     Type: AWS::Serverless::Function
@@ -447,7 +531,7 @@ Resources:
             - !Ref TransactionPinPepper
             - !Ref OtpPepper
           PAY_RECEIPT_PEPPER: !Ref OtpPepper
-          PAY_RECEIPT_ED25519_PRIVATE_KEY_PEM: !Ref PayReceiptEd25519PrivateKeyPem
+          PAY_RECEIPT_ED25519_SECRET_ARN: !Ref PayReceiptEd25519Secret
           DEPOSIT_MODE: !Ref DepositMode
           PAWAPAY_API_TOKEN: !Ref PawapayApiToken
           PAWAPAY_API_BASE_URL: !Ref PawapayApiBaseUrl
@@ -457,8 +541,12 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref PayReceiptEd25519Secret
         - SQSSendMessagePolicy:
             QueueName: !GetAtt PushQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AdminEventsQueue.QueueName
         - Statement:
             - Effect: Allow
               Action:
@@ -561,6 +649,8 @@ Resources:
           PAWAPAY_WEBHOOK_SECRET: !Ref PawapayWebhookSecret
           PAWAPAY_WEBHOOK_VERIFY: none
       Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AdminEventsQueue.QueueName
         - DynamoDBCrudPolicy:
             TableName: !Ref BlypTable
       Events:
@@ -694,6 +784,8 @@ Resources:
             TableName: !Ref BlypTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt PushQueue.QueueName
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AdminEventsQueue.QueueName
         - S3CrudPolicy:
             BucketName: !Sub "blyp-media-${Stage}-${AWS::AccountId}"
         - Statement:
@@ -894,6 +986,207 @@ Resources:
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/*"
 
+  # ---------------------------------------------------------------------------
+  # Tableau de bord fondateur : journal d'événements, alertes, récaps, site /admin
+  # (voir docs/ADMIN-DASHBOARD.md)
+  # ---------------------------------------------------------------------------
+
+  AdminEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "blyp-admin-events-dlq-${Stage}"
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  AdminEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "blyp-admin-events-${Stage}"
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 345600
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt AdminEventsDLQ.Arn
+        maxReceiveCount: 5
+
+  AdminEventsWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-admin-events-${Stage}"
+      Description: Worker SQS — journal d'événements, statistiques, alertes fondateur
+      CodeUri: ../aws/
+      Handler: handlers/adminEvents/index.handler
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          ADMIN_EMAIL: !Ref AdminEmail
+          ADMIN_SENDER_EMAIL: !Ref AdminSenderEmail
+          ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
+          ADMIN_TOTP_SECRET: !Ref AdminTotpSecret
+          ADMIN_JWT_SECRET: !Ref AdminJwtSecret
+          ADMIN_PUSH_PHONE: !Ref AdminPushPhone
+          ADMIN_ALLOWED_IPS: !Ref AdminAllowedIps
+          ADMIN_DASHBOARD_URL: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/admin"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+      Events:
+        AdminEventsQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt AdminEventsQueue.Arn
+            BatchSize: 10
+            ScalingConfig:
+              MaximumConcurrency: 5
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  AdminFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-admin-${Stage}"
+      Description: Site + API du tableau de bord fondateur (/admin)
+      CodeUri: ../aws/
+      Handler: handlers/admin/index.handler
+      Timeout: 29
+      MemorySize: 1024
+      Environment:
+        Variables:
+          ADMIN_EMAIL: !Ref AdminEmail
+          ADMIN_SENDER_EMAIL: !Ref AdminSenderEmail
+          ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
+          ADMIN_TOTP_SECRET: !Ref AdminTotpSecret
+          ADMIN_JWT_SECRET: !Ref AdminJwtSecret
+          ADMIN_PUSH_PHONE: !Ref AdminPushPhone
+          ADMIN_ALLOWED_IPS: !Ref AdminAllowedIps
+          REALTIME_WS_API_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt AdminEventsQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - execute-api:ManageConnections
+              Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/${Stage}/POST/@connections/*"
+      Events:
+        AdminPage:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /admin
+            Method: GET
+        AdminProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /admin/{proxy+}
+            Method: ANY
+
+  AdminRecapFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "blyp-admin-recap-${Stage}"
+      Description: Récaps fondateur — quotidien (07:00 Cameroun), hebdo le lundi, mensuel le 1er
+      CodeUri: ../aws/
+      Handler: handlers/adminRecap/index.handler
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          ADMIN_EMAIL: !Ref AdminEmail
+          ADMIN_SENDER_EMAIL: !Ref AdminSenderEmail
+          ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
+          ADMIN_TOTP_SECRET: !Ref AdminTotpSecret
+          ADMIN_JWT_SECRET: !Ref AdminJwtSecret
+          ADMIN_PUSH_PHONE: !Ref AdminPushPhone
+          ADMIN_ALLOWED_IPS: !Ref AdminAllowedIps
+          ADMIN_DASHBOARD_URL: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/admin"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BlypTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+              Resource: "*"
+      Events:
+        DailyAt7Douala:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 7 * * ? *)
+            ScheduleExpressionTimezone: Africa/Douala
+            State: ENABLED
+            Input: '{}'
+
+  AdminAlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAdminEmail
+    Properties:
+      TopicName: !Sub "blyp-admin-alarms-${Stage}"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Select [0, !Split [",", !Ref AdminEmail]]
+
+  AdminAlarmSubscription2:
+    Type: AWS::SNS::Subscription
+    Condition: HasAdminAlarmEmail2
+    Properties:
+      TopicArn: !Ref AdminAlarmTopic
+      Protocol: email
+      Endpoint: !Ref AdminAlarmEmail2
+
+  AdminDlqAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAdminEmail
+    Properties:
+      AlarmName: !Sub "blyp-admin-events-dlq-${Stage}"
+      AlarmDescription: Des événements admin n'ont pas pu être traités (file morte non vide)
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt AdminEventsDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AdminAlarmTopic
+
+  AdminWorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAdminEmail
+    Properties:
+      AlarmName: !Sub "blyp-admin-worker-errors-${Stage}"
+      AlarmDescription: Erreurs du worker d'événements admin
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AdminEventsWorkerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AdminAlarmTopic
+
 Outputs:
   ApiUrl:
     Description: URL de base de l'API (EXPO_PUBLIC_API_URL)
@@ -929,9 +1222,21 @@ Outputs:
     Description: ARN de la Lambda wallet
     Value: !GetAtt WalletFunction.Arn
 
+  PayReceiptEd25519SecretArn:
+    Description: Secrets Manager — clé privée Ed25519 reçus commerce (PEM)
+    Value: !Ref PayReceiptEd25519Secret
+
   WebhookFunctionArn:
     Description: ARN de la Lambda webhooks
     Value: !GetAtt WebhookFunction.Arn
+
+  AdminDashboardUrl:
+    Description: Tableau de bord fondateur (mot de passe + code TOTP)
+    Value: !Sub "https://${BlypApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}/admin"
+
+  AdminEventsQueueUrl:
+    Description: File SQS du journal d'événements admin
+    Value: !Ref AdminEventsQueue
 
   PushQueueUrl:
     Description: File SQS push notifications

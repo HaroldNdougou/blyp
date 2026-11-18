@@ -2,7 +2,12 @@ import type { QuickPayRecipient } from "@/lib/pay/quickPayRecipient";
 import { ApiError, isTransactionPinInvalidError } from "@/lib/api/errors";
 import i18n from "@/lib/i18n";
 import { isLikelyOfflineNow } from "@/lib/network/isLikelyOffline";
+import {
+  executeInstantCommercePay,
+  shouldUseInstantCommercePay,
+} from "@/lib/pay/executeInstantCommercePay";
 import { fallbackTxReference } from "@/lib/txReference";
+import type { ApiUser } from "@/lib/api/types";
 
 export type QuickPayExecuteResult =
   | { ok: true; balanceFcfa: number; transactionId: string | null }
@@ -14,6 +19,7 @@ export async function executeStandardQuickPay(opts: {
   amountFcfa: number;
   to: QuickPayRecipient;
   pin: string;
+  user?: ApiUser | null;
   updateBalance: (balanceFcfa: number) => void;
   network?: {
     isOffline: boolean;
@@ -24,6 +30,49 @@ export async function executeStandardQuickPay(opts: {
   const amount = Math.floor(opts.amountFcfa);
   if (amount <= 0 || !opts.token) return { ok: false, reason: "NO_TOKEN" };
   if (!opts.to.accountId) return { ok: false, reason: "NO_RECIPIENT" };
+
+  if (
+    opts.user &&
+    shouldUseInstantCommercePay({
+      recipientAccountId: opts.to.accountId,
+      spendCategory: null,
+    })
+  ) {
+    const instant = await executeInstantCommercePay({
+      token: opts.token,
+      phone: opts.phone,
+      user: opts.user,
+      amountFcfa: amount,
+      to: opts.to,
+      pin: opts.pin,
+      smallPaySkipPin: false,
+      cashierSession: await import("@/lib/commerce/resolveCashierSessionForPay").then(
+        (m) => m.resolveCashierSessionForPay(opts.to.accountId),
+      ),
+      updateBalance: opts.updateBalance,
+    });
+    if (!instant.ok) {
+      if (instant.reason === "PIN") return { ok: false, reason: "PIN" };
+      return {
+        ok: false,
+        reason: "API",
+        message: instant.message,
+      };
+    }
+    void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) => {
+      void m.syncQuickPayNativeRuntime({
+        pin: opts.pin,
+        balanceFcfa: instant.balanceFcfa,
+        phone: opts.phone,
+        recipient: opts.to,
+      });
+    });
+    return {
+      ok: true,
+      balanceFcfa: instant.balanceFcfa,
+      transactionId: instant.optimisticTxId,
+    };
+  }
 
   if (opts.network && isLikelyOfflineNow(opts.network)) {
     return {
@@ -43,10 +92,8 @@ export async function executeStandardQuickPay(opts: {
       opts.to.accountId,
       undefined,
       {
-        cashierSession: (
-          await import("@/lib/ble/deliverReceiptViaCashierGatt").then((m) =>
-            m.readCashierSessionViaGatt(opts.to.accountId),
-          )
+        cashierSession: await import("@/lib/commerce/resolveCashierSessionForPay").then(
+          (m) => m.resolveCashierSessionForPay(opts.to.accountId),
         ),
       },
     );
@@ -71,7 +118,7 @@ export async function executeStandardQuickPay(opts: {
           createdAt: paidAt,
         },
       ]);
-      await cache.setSyncCursor(opts.phone, paidAt);
+      void cache.setSyncCursor(opts.phone, paidAt).catch(() => {});
     }
     void import("@/lib/peers/displayNameCache").then((m) => {
       m.rememberPeerDisplayName(opts.to.accountId, opts.to.name);
@@ -90,8 +137,12 @@ export async function executeStandardQuickPay(opts: {
         pin: opts.pin,
         balanceFcfa: payRes.balanceFcfa,
         phone: opts.phone,
+        recipient: opts.to,
       });
     });
+    void import("@/lib/pay/rememberPayRecipientForNativeShell").then((m) =>
+      m.rememberPayRecipientForNativeShell(opts.to, null),
+    );
     return {
       ok: true,
       balanceFcfa: payRes.balanceFcfa,

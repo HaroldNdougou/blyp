@@ -74,10 +74,22 @@ import {
 } from "@/lib/perf/devMetroLite";
 import { runAggressiveWarm } from "@/lib/perf/aggressiveWarm";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
+import {
+  hideNativeMessagesLoading,
+  isRnIslandHideTabBar,
+  returnToNativeShellAfterMessages,
+} from "@/lib/nativeShell";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
 import type { ThemeColors } from "@/lib/theme/colors";
 import { router, useFocusEffect } from "expo-router";
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   ActivityIndicator,
@@ -253,7 +265,11 @@ const ConversationRow = React.memo(function ConversationRow({
 export default function ConversationsScreen() {
   const { t } = useTranslation();
   const { colors } = useTheme();
+  useLayoutEffect(() => {
+    hideNativeMessagesLoading();
+  }, []);
   const styles = useMemo(() => createMessagesStyles(colors), [colors]);
+  const shellIsland = isRnIslandHideTabBar();
   const { token, user, isLoading: authLoading } = useAuth();
   useMarkRootShellReady();
   const ownerPhone = user?.phone ?? "";
@@ -687,6 +703,19 @@ export default function ConversationsScreen() {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right"]}>
+      {shellIsland ? (
+        <Pressable
+          style={styles.shellIslandBackRow}
+          onPress={() => {
+            void returnToNativeShellAfterMessages();
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={t("nativeShell.backToApp")}
+        >
+          <Ionicons name="chevron-back" size={22} color={colors.accent} />
+          <Text style={styles.shellIslandBackLabel}>{t("nativeShell.backToApp")}</Text>
+        </Pressable>
+      ) : null}
       <View style={styles.inboxChrome}>
         <View
           style={styles.inboxTabRow}

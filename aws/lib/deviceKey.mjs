@@ -135,6 +135,7 @@ const SENSITIVE_ROUTES = [
   ["POST", /^\/pockets\/[^/]+\/move$/],
   ["DELETE", /^\/pockets\/[^/]+$/],
   ["POST", /^\/auth\/onboarding\/transaction-pin$/],
+  ["POST", /^\/me\/transaction-pin\/change$/],
   ["PUT", /^\/me\/small-pay-without-pin$/],
   ["POST", /^\/commerces\/[^/]+\/payment-receipts\/encash$/],
 ];

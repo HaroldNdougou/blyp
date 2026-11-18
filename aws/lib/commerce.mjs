@@ -12,7 +12,7 @@ import { getUserBalance, getUserProfile, userPk } from "./user.mjs";
 
 const doc = getDocClient();
 
-const CATEGORIES = new Set(["taxi", "shop", "other", "soa_car"]);
+const CATEGORIES = new Set(["taxi", "shop", "street", "other", "soa_car"]);
 
 function commerceMetaSk(commerceId) {
   return `COMMERCE#${commerceId}`;
@@ -44,6 +44,10 @@ export function commerceToApi(item, balanceFcfa = 0) {
     accountId: item.accountId,
     name: item.name,
     category: item.category ?? "other",
+    categoryLabel:
+      item.category === "other" && item.categoryLabel
+        ? String(item.categoryLabel)
+        : null,
     phoneDigits: item.phoneDigits ?? null,
     balanceFcfa,
     createdAt: item.createdAt ?? null,
@@ -226,6 +230,8 @@ export async function createCommerce(userId, input) {
   if (name.length < 2) return { error: "NAME_INVALID" };
 
   const category = normalizeCategory(input?.category);
+  const categoryLabel =
+    category === "other" ? trimName(input?.categoryLabel) : "";
   const phoneDigits = normalizePhoneDigits(input?.phone, profile.phone);
   if (!phoneDigits) return { error: "PHONE_INVALID" };
 
@@ -250,6 +256,7 @@ export async function createCommerce(userId, input) {
                   accountId,
                   name,
                   category,
+                  ...(categoryLabel.length >= 2 ? { categoryLabel } : {}),
                   phoneDigits,
                   ownerUserId: userId,
                   createdAt: now,

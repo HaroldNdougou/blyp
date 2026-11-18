@@ -3,6 +3,7 @@ package com.haroldndougou.blyp.quickpaynotif
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONObject
 
 /** Données minimales pour payer depuis la notif sans monter React. */
 object QuickPayNativeSecrets {
@@ -14,16 +15,20 @@ object QuickPayNativeSecrets {
   private const val KEY_BALANCE = "balance_fcfa"
   private const val KEY_PHONE = "phone_digits"
 
-  private fun prefs(context: Context) =
-    EncryptedSharedPreferences.create(
-      context.applicationContext,
-      PREFS,
-      MasterKey.Builder(context.applicationContext)
-        .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-        .build(),
-      EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-      EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-    )
+  @Volatile private var cachedPrefs: android.content.SharedPreferences? = null
+
+  private fun prefs(context: Context): android.content.SharedPreferences =
+    cachedPrefs ?: synchronized(this) {
+      cachedPrefs ?: EncryptedSharedPreferences.create(
+        context.applicationContext,
+        PREFS,
+        MasterKey.Builder(context.applicationContext)
+          .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+          .build(),
+        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+      ).also { cachedPrefs = it }
+    }
 
   fun sync(
     context: Context,
@@ -54,8 +59,12 @@ object QuickPayNativeSecrets {
     val p = prefs(context)
     if (p.getString(KEY_API, "").isNullOrBlank()) return false
     if (p.getString(KEY_TOKEN, "").isNullOrBlank()) return false
-    if (p.getString(KEY_RECIPIENT, "").isNullOrBlank()) return false
-    if (p.getString(KEY_PIN, "")?.length != 4) return false
+    val rec = p.getString(KEY_RECIPIENT, "")?.trim().orEmpty()
+    if (rec.isBlank()) return false
+    val accountId =
+      runCatching { JSONObject(rec).optString("accountId", "").trim() }.getOrDefault("")
+    if (accountId.isBlank()) return false
+    if (p.getString(KEY_PIN, "")?.replace(Regex("\\D"), "")?.length != 4) return false
     return true
   }
 
@@ -74,7 +83,9 @@ object QuickPayNativeSecrets {
     val token = p.getString(KEY_TOKEN, "")?.trim().orEmpty()
     val recipient = p.getString(KEY_RECIPIENT, "")?.trim().orEmpty()
     val pin = p.getString(KEY_PIN, "")?.replace(Regex("\\D"), "").orEmpty()
-    if (api.isBlank() || token.isBlank() || recipient.isBlank() || pin.length != 4) {
+    val accountId =
+      runCatching { JSONObject(recipient).optString("accountId", "").trim() }.getOrDefault("")
+    if (api.isBlank() || token.isBlank() || accountId.isBlank() || pin.length != 4) {
       return null
     }
     return Snapshot(

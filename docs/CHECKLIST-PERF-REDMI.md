@@ -29,6 +29,35 @@ Objectif : valider la fluidité « WhatsApp-like » après changements messageri
 | `chat_open` | `onPressIn` liste → 1er paint fil | Transition + header/composer **immédiats** ; pas de freeze au clic | &lt; 120 ms jusqu’au 1er paint fil (messages RAM ou vides OK) |
 | `history_open` | Focus Historique | Liste cache instantanée | &lt; 100 ms |
 | `pay_home_open` | Focus Pay | Inchangé (référence) | &lt; 80 ms |
+| `pay_ble_wait` | Attente taxi BLE après OFF « Recevoir » | Avant PIN / envoi | typ. &lt; 3,2 s (timeout scan) |
+| `pay_pin_vault` | Déverrouillage PIN enregistré (empreinte) | Modal PIN | variable |
+| `pay_pin_local` | Vérif PIN local avant réseau | Modal PIN | &lt; 50 ms |
+| `pay_pre_api` | Import client + session caisse cache | Juste avant HTTP | &lt; 80 ms |
+| `pay_api` | Envoi `/payments/pay` (PIN ou petit montant) | Réponse API → sheet succès | objectif &lt; 250 ms serveur chaud (release) |
+
+### Paiement — chronologie `pay→…` (depuis tap Payer)
+
+| Lap / fin | Signification |
+|-----------|----------------|
+| `pay.trace START` | Tap sur Payer (montant &gt; 0) |
+| `pay→ble_*` | Coupure « Recevoir » + scan taxi (`pay_ble_wait` en parallèle) |
+| `pay→destinataire_pret` | Compte destinataire connu → PIN ou sans code |
+| `pay→pin_*` | Modal PIN, empreinte, saisie |
+| `pay→confirm_envoi` | Validation PIN / sans code → envoi |
+| `pay→envoi_serveur` | Spinner « envoi » |
+| `pay_pre_api` / `pay_api` | Préparation + appel serveur |
+| `pay.payer_succes` | Sheet succès affichée (durée totale trace) |
+| `pay.tx=…` | Id transaction (recouper avec commerçant) |
+
+### Commerçant — réception (`merchant→…`)
+
+| Log | Signification |
+|-----|----------------|
+| `merchant→rx (ws_wallet \| ws_chat)` | Événement temps réel |
+| `merchant→rx (push_expo \| push_native)` | Notification secours |
+| `merchant→solde_flash` | Solde + flash internes mis à jour |
+| `merchant→voix` | Annonce vocale terminée (+ ms depuis rx) |
+| `merchant→flash_ui` | Bandeau caisse visible (+ ms depuis rx) |
 
 `chat_open` : `markChatOpenOnNavigate` au **`router.push`** (pas au `pressIn` — sinon ~400 ms « fantômes » doigt enfoncé). Prefetch reste sur `onPressIn`. `perfMarkEnd` quand le fil a peint (`ChatThreadScreenBody`).
 

@@ -1,0 +1,214 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical">
+
+    <ViewFlipper
+        android:id="@+id/blyp_auth_flipper"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Étape téléphone -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingHorizontal="32dp"
+                android:paddingTop="48dp"
+                android:paddingBottom="32dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blyp_shell_sign_in_title"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="36sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_phone_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="28dp"
+                    android:text="@string/blyp_shell_auth_phone_label"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/blyp_shell_deposit_bg"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="+237"
+                        android:textColor="@color/blyp_shell_text"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <EditText
+                        android:id="@+id/blyp_auth_phone"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_marginStart="12dp"
+                        android:layout_weight="1"
+                        android:background="@android:color/transparent"
+                        android:hint="@string/blyp_shell_auth_phone_hint"
+                        android:inputType="phone"
+                        android:maxLength="12"
+                        android:textColor="@color/blyp_shell_text"
+                        android:textColorHint="@color/blyp_shell_text_secondary"
+                        android:textSize="17sp" />
+
+                    <ImageView
+                        android:id="@+id/blyp_auth_phone_brand"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:layout_marginStart="8dp"
+                        android:alpha="0.42"
+                        android:contentDescription="@string/blyp_shell_auth_brand_orange"
+                        android:scaleType="fitCenter"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/blyp_auth_phone_continue"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="32dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_continue"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- Étape OTP -->
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="24dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="32dp">
+
+                <ImageView
+                    android:id="@+id/blyp_auth_otp_back"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_marginStart="-12dp"
+                    android:contentDescription="@string/blyp_shell_scan_back"
+                    android:padding="12dp"
+                    android:src="@drawable/blyp_shell_ic_back" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_auth_otp_title"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_auth_otp_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:layout_marginTop="24dp">
+
+                    <LinearLayout
+                        android:id="@+id/blyp_auth_otp_cells"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:layout_gravity="center"
+                        android:gravity="bottom"
+                        android:orientation="horizontal" />
+
+                    <EditText
+                        android:id="@+id/blyp_auth_otp"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:alpha="0"
+                        android:autofillHints="smsOTPCode"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="@string/blyp_shell_auth_otp_hint"
+                        android:cursorVisible="false"
+                        android:importantForAutofill="yes"
+                        android:inputType="number"
+                        android:longClickable="false"
+                        android:maxLength="4"
+                        android:textColor="@android:color/transparent"
+                        tools:ignore="UnusedAttribute" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/blyp_auth_otp_verify"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_verify"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/blyp_auth_otp_resend"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_resend"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/blyp_auth_otp_edit_phone"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_edit_phone"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </ScrollView>
+    </ViewFlipper>
+</LinearLayout>

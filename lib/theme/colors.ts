@@ -135,7 +135,7 @@ export const lightColors: ThemeColors = {
   inputErrorBorder: "rgba(198, 40, 40, 0.45)",
   placeholder: "#CCCCCC",
   tabBar: "#FFFFFF",
-  tabBarBorder: "#000000",
+  tabBarBorder: "#EEEEEE",
   tabBarActivePill: "rgba(93, 199, 5, 0.11)",
   tabInactive: "#8E8E93",
   keypadBackground: "#F3F3F3",

@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Blyp Admin",
+    "slug": "blyp-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "blypadmin",
+    "userInterfaceStyle": "automatic",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "backgroundColor": "#0B0B0C",
+      "resizeMode": "native"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.haroldndougou.blypadmin",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.haroldndougou.blypadmin",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icon.png",
+        "backgroundColor": "#5dc705"
+      },
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0B0B0C"
+        }
+      ],
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#5dc705",
+          "defaultChannel": "admin_alerts"
+        }
+      ]
+    ],
+    "extra": {
+      "adminApiBase": "https://nma68tjr78.execute-api.af-south-1.amazonaws.com/dev/admin",
+      "router": {},
+      "eas": {
+        "projectId": "83c3cec3-e5b7-4de1-8f0f-b2f27584759a"
+      }
+    },
+    "owner": "haroldndougou"
+  }
+}

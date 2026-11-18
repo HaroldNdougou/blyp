@@ -61,12 +61,18 @@ object QuickPayExecutor {
         readTimeout = 25_000
         doOutput = true
         setRequestProperty("Content-Type", "application/json")
-        setRequestProperty("Authorization", "Bearer ${snap.accessToken}")
+        setRequestProperty(
+          "Authorization",
+          "Bearer ${com.haroldndougou.blyp.shell.BlypShellSessionRefresh.accessForSignedPay(context) ?: snap.accessToken}",
+        )
       }
+      val bodyText = body.toString()
+      com.haroldndougou.blyp.shell.BlypShellDeviceKey.applyProof(conn, snap.apiBaseUrl, "POST", bodyText)
       OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { w ->
-        w.write(body.toString())
+        w.write(bodyText)
       }
       val code = conn.responseCode
+      com.haroldndougou.blyp.shell.BlypShellDeviceKey.noteServerDate(conn)
       val stream = if (code in 200..299) conn.inputStream else conn.errorStream
       val text =
         stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
@@ -82,6 +88,23 @@ object QuickPayExecutor {
       val balance = json.optInt("balanceFcfa", snap.balanceFcfa - amount)
       val txId = json.optString("transactionId", null)?.takeIf { it.isNotBlank() }
       QuickPayNativeSecrets.updateBalance(context, balance)
+      val app = context.applicationContext
+      com.haroldndougou.blyp.shell.BlypShellPayRuntime.updateBalance(app, balance)
+      val userPhone = com.haroldndougou.blyp.shell.BlypShellSession.phone(app)
+      if (userPhone != null && txId != null) {
+        com.haroldndougou.blyp.shell.BlypTransactionStore.insertSentTransaction(
+          app,
+          userPhone,
+          txId,
+          amount,
+          recipientName,
+          if (phone.isBlank()) null else phone,
+          java.time.Instant.now().toString(),
+          txId,
+        )
+      }
+      com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
+      com.haroldndougou.blyp.shell.BlypShellCommerceClient.refreshDossierAfterPaymentAsync(app)
       PayResult(true, balanceFcfa = balance, transactionId = txId)
     } catch (e: Exception) {
       PayResult(false, message = e.message ?: "network")

@@ -10,7 +10,14 @@ import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
 import { resolveP2pReceiveBroadcastAccount } from "@/lib/ble/broadcastAccount";
 import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
 import { waitForNearbyPayPeer } from "@/lib/ble/waitPayPeer";
-import { ApiError, isApiNetworkFailure, isTransactionPinInvalidError } from "@/lib/api/errors";
+import {
+  ApiError,
+  getApiErrorMessage,
+  isApiNetworkFailure,
+  isSmallPayLimitPinRequiredError,
+  isTransactionPinInvalidError,
+} from "@/lib/api/errors";
+import { fallbackTxReference } from "@/lib/txReference";
 import {
   initiateWalletDeposit,
   newDepositIdempotencyKey,
@@ -25,13 +32,30 @@ import { formatCameroonPhoneDisplay } from "@/lib/format";
 import { formatFcfa } from "@/lib/formatFcfa";
 import { maxTxAmountFcfaForUser } from "@/lib/kyc/limits";
 import { isLikelyOfflineNow } from "@/lib/network/isLikelyOffline";
-import { canSkipPayPinForAmount } from "@/lib/pay/smallPayPolicy";
+import { canSkipPayPinForAmount, evaluateSmallPayPinSkip } from "@/lib/pay/smallPayPolicy";
 import { newPayIdempotencyKey } from "@/lib/pay/payIdempotency";
+import {
+  getPayDossierSnapshot,
+  subscribePayDossier,
+} from "@/lib/pay/payDossierCache";
 import { isOwnNearbyPeer } from "@/lib/peers/isOwnNearbyPeer";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { perfMarkEnd, perfMarkStart } from "@/lib/perf/marks";
+import {
+  payTraceAbort,
+  payTraceLap,
+  payTraceMilestone,
+  payTraceStart,
+  payTraceLogTxId,
+} from "@/lib/perf/payTrace";
 import { useMarkRootShellReady } from "@/lib/rootShellReady";
-import { fallbackTxReference } from "@/lib/txReference";
+import {
+  subscribePayHomeHandoff,
+  takePendingPayAmountFcfa,
+  takeShellPayDigits,
+} from "@/lib/pay/payHomeHandoff";
+import { blypPayQrToRecipient } from "@/lib/pay/blypPayQr";
+import { takePendingPayQr } from "@/lib/pay/payQrHandoff";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { router, Stack, usePathname } from "expo-router";
@@ -43,14 +67,20 @@ import React, {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { blypAlert } from "@/lib/ui/blypAlert";
 import { ActivityIndicator, BackHandler, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, Text, TextInput, View } from "react-native";
 
 import { contactPhotoUriForPhone } from "@/lib/contacts/contactPhotos";
+import { getAccessToken } from "@/lib/auth/authSession";
+import { getPeerAvatarUrlCached } from "@/lib/peers/peerAvatarCache";
+import { peerAvatarUrl } from "@/lib/peers/peerAvatarUrl";
+import { resolvePeerAvatarUrl } from "@/lib/peers/resolveDisplayName";
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { IncomingPaymentFlashSheet } from "@/components/pay/IncomingPaymentFlashSheet";
 import { MaskedPinInput } from "@/components/pay/MaskedPinInput";
+import { ShellPayIslandBack } from "@/components/pay/ShellPayIslandBack";
 import { PayAmountEntry } from "@/components/pay/PayAmountEntry";
 import { CheckGlyph, ReceiveNearbyGlyph } from "@/components/pay/PayGlyphs";
 import {
@@ -117,13 +147,6 @@ function regularToRecipient(r: RegularRecipient): PayRecipient {
 
 export default function PayHomeScreen() {
   useMarkRootShellReady();
-  useEffect(() => {
-    perfMarkStart("pay_home_open");
-    const id = requestAnimationFrame(() => {
-      perfMarkEnd("pay_home_open");
-    });
-    return () => cancelAnimationFrame(id);
-  }, []);
   const [depositChrome, setDepositChrome] = useState(false);
   const pathname = usePathname();
   /** Montant pad Pay — pour recharge + sans passer par le modal dépôt. */
@@ -149,6 +172,17 @@ export default function PayHomeScreen() {
   const styles = useMemo(() => createPayHomeStyles(colors), [colors]);
   const { user, token, isLoading: authLoading, refreshUser, updateBalance } =
     useAuth();
+  const userPhone = user?.phone ?? "";
+  useEffect(() => {
+    perfMarkStart("pay_home_open");
+    const id = requestAnimationFrame(() => {
+      perfMarkEnd("pay_home_open");
+      void import("@/lib/perf/postPayBoot").then((m) => {
+        m.markPayTabFirstPaint({ token, phone: userPhone || null });
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [token, userPhone]);
   const network = useNetwork();
   const {
     peer: nearbyPeer,
@@ -167,8 +201,9 @@ export default function PayHomeScreen() {
     () => DEFAULT_QUICK_AMOUNTS,
   );
   const spendCategory = nearbyPeer?.category ?? null;
+  const [qrPayRecipient, setQrPayRecipient] = useState<PayRecipient | null>(null);
 
-  const recipient = useMemo<PayRecipient | null>(() => {
+  const bleRecipient = useMemo<PayRecipient | null>(() => {
     if (!nearbyPeer) return null;
     if (isOwnNearbyPeer(nearbyPeer, user)) return null;
     return {
@@ -177,8 +212,39 @@ export default function PayHomeScreen() {
       phoneDigits: nearbyPeer.phoneDigits,
     };
   }, [nearbyPeer, user]);
+
+  const recipient = qrPayRecipient ?? bleRecipient;
   const recipientRef = useRef(recipient);
   recipientRef.current = recipient;
+  const [recipientAvatarUrl, setRecipientAvatarUrl] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const acc = recipient?.accountId;
+    if (!acc) {
+      setRecipientAvatarUrl(null);
+      return;
+    }
+    const cached = getPeerAvatarUrlCached(acc);
+    if (cached) {
+      setRecipientAvatarUrl(cached);
+      return;
+    }
+    const phoneUrl = peerAvatarUrl(recipient.phoneDigits);
+    if (phoneUrl) setRecipientAvatarUrl(phoneUrl);
+    let cancelled = false;
+    void resolvePeerAvatarUrl(
+      acc,
+      getAccessToken(),
+      recipient.phoneDigits,
+    ).then((url) => {
+      if (!cancelled && url) setRecipientAvatarUrl(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [recipient?.accountId, recipient?.phoneDigits]);
   /** Figé à l’ouverture du PIN — le render ne doit pas l’effacer pendant le handoff BLE. */
   const payRecipientAtPinRef = useRef<PayRecipient | null>(null);
   const pendingSoaSeatRef = useRef<number | null>(null);
@@ -318,7 +384,11 @@ export default function PayHomeScreen() {
               ? t("ble.searchingTaxi")
               : t("ble.noneNearby");
   const bleHeaderSubtitle = recipient
-    ? formatCameroonPhoneDisplay(recipient.phoneDigits)
+    ? recipient.phoneDigits
+      ? formatCameroonPhoneDisplay(recipient.phoneDigits)
+      : qrPayRecipient
+        ? t("pay.qrFromScan")
+        : ""
     : payHandoff
       ? t("ble.searchingHint")
     : bleBroadcasting
@@ -334,6 +404,7 @@ export default function PayHomeScreen() {
           : t("ble.noneNearbyHint");
   const onRefreshNearbyTaxi = useCallback(() => {
     if (bleBroadcasting) return;
+    setQrPayRecipient(null);
     const started = refreshNearbyTaxi();
     if (!started) return;
     armBleSearchPulse();
@@ -384,6 +455,13 @@ export default function PayHomeScreen() {
   useFocusEffect(
     useCallback(() => {
       payFocusedRef.current = true;
+      const qr = takePendingPayQr();
+      if (qr) {
+        setQrPayRecipient(blypPayQrToRecipient(qr));
+        if (qr.amountFcfa != null && qr.amountFcfa > 0) {
+          setPayAmountFcfa(qr.amountFcfa);
+        }
+      }
       return () => {
         payFocusedRef.current = false;
       };
@@ -437,7 +515,6 @@ export default function PayHomeScreen() {
       topUpPollAbortRef.current?.abort();
     };
   }, []);
-  const userPhone = user?.phone ?? "";
   const spendCategoryRef = useRef(spendCategory);
   spendCategoryRef.current = spendCategory;
 
@@ -466,6 +543,20 @@ export default function PayHomeScreen() {
       stop();
     };
   }, [userPhone]);
+
+  useEffect(() => {
+    if (!token) {
+      setPendingConfirmCount(0);
+      return;
+    }
+    let unsub: (() => void) | undefined;
+    void import("@/lib/pay/pendingInstantPayQueue").then((m) => {
+      unsub = m.subscribePendingInstantPayCount(setPendingConfirmCount);
+    });
+    return () => {
+      unsub?.();
+    };
+  }, [token]);
 
   useEffect(() => {
     const sel = selectedRegularRef.current;
@@ -515,15 +606,27 @@ export default function PayHomeScreen() {
     { start: number; end: number } | undefined
   >(undefined);
   const [payPinErrorLine, setPayPinErrorLine] = useState<string | null>(null);
+  const [payPinHintLine, setPayPinHintLine] = useState<string | null>(null);
   const [payPinLockoutUntil, setPayPinLockoutUntil] = useState<number | null>(
     null,
   );
   const [payPendingAmount, setPayPendingAmount] = useState(0);
+  /** Montant du pay en cours — sync avant confirm immédiat (sans PIN). */
+  const payPendingAmountRef = useRef(0);
   const [payOutcomeSheet, setPayOutcomeSheet] =
     useState<PayOutcomeSheetData | null>(null);
   const payPinFailedRef = useRef(0);
   /** Une clé par ouverture PIN : double tap / retry réseau = un seul débit. */
-  const balance = user?.balanceFcfa ?? 0;
+  const payDossier = useSyncExternalStore(
+    subscribePayDossier,
+    getPayDossierSnapshot,
+    getPayDossierSnapshot,
+  );
+  const balance =
+    payDossier?.phone && payDossier.phone === user?.phone
+      ? payDossier.balanceFcfa
+      : (user?.balanceFcfa ?? 0);
+  const [pendingConfirmCount, setPendingConfirmCount] = useState(0);
   const [registerInviteVisible, setRegisterInviteVisible] = useState(false);
   /** null = fermé ; même UI que la connexion rapide, message selon le contexte. */
   const [connexionPromptKind, setConnexionPromptKind] = useState<
@@ -540,9 +643,18 @@ export default function PayHomeScreen() {
   const confirmPayWithPinRef = useRef<
     (
       pinRaw?: string,
-      opts?: { deviceAuthDone?: boolean },
+      opts?: {
+        deviceAuthDone?: boolean;
+        smallPaySkipPin?: boolean;
+        amountFcfa?: number;
+      },
     ) => Promise<void>
   >(async () => {});
+  const payNetworkRetryRef = useRef<{
+    pin: string;
+    smallPaySkipPin: boolean;
+    amountFcfa: number;
+  } | null>(null);
   /** Remount TextInput → autoFocus fiable (Modal RN cassait le clavier). */
   const [payPinInputKey, setPayPinInputKey] = useState(0);
   const showRegisterOverlay =
@@ -736,28 +848,41 @@ export default function PayHomeScreen() {
   ]);
 
   const continueToPayPin = useCallback(
-    (n: number, to: PayRecipient) => {
+    (
+      n: number,
+      to: PayRecipient,
+      opts?: { smallPayLimitHint?: boolean },
+    ) => {
       payRecipientAtPinRef.current = to;
       recipientRef.current = to;
       payPinFailedRef.current = 0;
       setPayPinErrorLine(null);
+      setPayPinHintLine(
+        opts?.smallPayLimitHint ? t("pay.smallPayLimitPinHint") : null,
+      );
       setPayPinSelection(undefined);
       setPayPinUi("idle");
+      payPendingAmountRef.current = n;
       setPayPendingAmount(n);
       setPayPinDraft("");
       payPinOpenFocusGenRef.current += 1;
       setPayPinInputKey((k) => k + 1);
+      payTraceLap("pin_modal");
       void (async () => {
+        perfMarkStart("pay_pin_vault");
         const { tryUnlockTransactionPinVault } = await import(
           "@/lib/security/transactionPinVault"
         );
         const vaulted = await tryUnlockTransactionPinVault(
           t("pay.deviceAuthPrompt"),
         );
+        perfMarkEnd("pay_pin_vault");
         if (vaulted) {
+          payTraceLap("pin_vault_ok");
           void confirmPayWithPinRef.current(vaulted, { deviceAuthDone: true });
           return;
         }
+        payTraceLap("pin_saisie_manuelle");
         setPayPinModalVisible(true);
       })();
     },
@@ -813,8 +938,18 @@ export default function PayHomeScreen() {
       if (canSkipPayPinForAmount(u, n)) {
         payRecipientAtPinRef.current = to;
         recipientRef.current = to;
+        payPendingAmountRef.current = n;
         setPayPendingAmount(n);
-        void confirmPayWithPinRef.current("", { smallPaySkipPin: true });
+        payTraceLap("sans_code_direct");
+        void confirmPayWithPinRef.current("", {
+          smallPaySkipPin: true,
+          amountFcfa: n,
+        });
+        return;
+      }
+      const pinSkip = evaluateSmallPayPinSkip(u, n);
+      if (pinSkip.requirePinForLimit) {
+        continueToPayPin(n, to, { smallPayLimitHint: true });
         return;
       }
       continueToPayPin(n, to);
@@ -879,6 +1014,7 @@ export default function PayHomeScreen() {
           blypAlert(t("demo.title"), t("demo.readOnly"));
           return;
         }
+        payTraceStart("tap_payer");
         openPayPinForAmount(n, regularToRecipient(regular));
         return;
       }
@@ -886,11 +1022,14 @@ export default function PayHomeScreen() {
       const proceed = (to: PayRecipient | null) => {
         if (!to?.accountId) {
           blypAlert(t("ble.noNearbyTitle"), t("ble.noNearbyMessage"));
+          payTraceAbort("no_destinataire");
           return;
         }
+        payTraceLap("destinataire_pret");
         openPayPinForAmount(n, to);
       };
 
+      payTraceStart("tap_payer");
       if (!bleBroadcasting && !receiveBroadcast.on) {
         proceed(recipientRef.current);
         return;
@@ -899,12 +1038,17 @@ export default function PayHomeScreen() {
       payHandoffRef.current = true;
       setPayHandoff(true);
       armBleSearchPulse();
+      payTraceLap("ble_handoff_debut");
       void (async () => {
         try {
           await receiveBroadcast.setEnabled(false);
+          payTraceLap("ble_recevoir_off");
+          perfMarkStart("pay_ble_wait");
           const peer = await waitForNearbyPayPeer({
             isOwn: (p) => isOwnNearbyPeer(p, userRef.current),
           });
+          perfMarkEnd("pay_ble_wait");
+          payTraceLap(peer ? "ble_taxi_trouve" : "ble_taxi_timeout");
           if (!peer) {
             proceed(null);
             return;
@@ -936,6 +1080,20 @@ export default function PayHomeScreen() {
 
   const handlePayRef = useRef(handlePay);
   handlePayRef.current = handlePay;
+
+  const shellDigitsOnce = useRef(takeShellPayDigits());
+
+  useEffect(() => {
+    const flushHandoff = () => {
+      const pending = takePendingPayAmountFcfa();
+      if (pending != null && pending > 0) {
+        requestAnimationFrame(() => handlePayRef.current(pending));
+      }
+    };
+    flushHandoff();
+    return subscribePayHomeHandoff(flushHandoff);
+  }, []);
+
   const payAmountFcfaRef = useRef(payAmountFcfa);
   payAmountFcfaRef.current = payAmountFcfa;
 
@@ -1035,6 +1193,7 @@ export default function PayHomeScreen() {
     setPayPinModalVisible(false);
     setPayPinDraft("");
     setPayPinErrorLine(null);
+    setPayPinHintLine(null);
     setPayPinSelection(undefined);
     setPayPinUi("idle");
     payPinFailedRef.current = 0;
@@ -1087,11 +1246,24 @@ export default function PayHomeScreen() {
   const confirmPayWithPin = useCallback(
     async (
       pinRaw?: string,
-      opts?: { deviceAuthDone?: boolean; smallPaySkipPin?: boolean },
+      opts?: {
+        deviceAuthDone?: boolean;
+        smallPaySkipPin?: boolean;
+        /** Montant explicite (paiement sans PIN — évite state React stale). */
+        amountFcfa?: number;
+      },
     ) => {
+    const amountFcfa = Math.floor(
+      Number(
+        opts?.amountFcfa ??
+          payPendingAmountRef.current ??
+          payPendingAmount,
+      ),
+    );
+    if (!Number.isFinite(amountFcfa) || amountFcfa <= 0) return;
     const smallPaySkip =
       opts?.smallPaySkipPin === true &&
-      canSkipPayPinForAmount(userRef.current, payPendingAmount);
+      canSkipPayPinForAmount(userRef.current, amountFcfa);
     const pin = smallPaySkip
       ? ""
       : (pinRaw ?? payPinDraft).replace(/\D/g, "");
@@ -1104,17 +1276,120 @@ export default function PayHomeScreen() {
     const to = payRecipientAtPinRef.current ?? recipientRef.current;
     if (!to) {
       blypAlert(t("pay.paymentTitle"), t("ble.noTaxiMessage"));
+      payTraceAbort("no_recipient");
       return;
     }
+    payTraceLap("confirm_envoi");
     const { verifyLocalTransactionPin } = await import(
       "@/lib/security/transactionPinLocalVerify"
     );
     if (!smallPaySkip) {
+      perfMarkStart("pay_pin_local");
       const localPin = await verifyLocalTransactionPin(pin);
+      perfMarkEnd("pay_pin_local");
       if (localPin === "wrong") {
         applyPayPinWrongAttempt();
+        payTraceAbort("pin_local_faux");
         return;
       }
+      payTraceLap("pin_local_ok");
+    }
+    const useInstantCommerce = Boolean(
+      to.accountId &&
+        (
+          await import("@/lib/pay/executeInstantCommercePay")
+        ).shouldUseInstantCommercePay({
+          recipientAccountId: to.accountId,
+          spendCategory: spendCategoryRef.current,
+        }),
+    );
+    if (useInstantCommerce && userRef.current) {
+      payTraceLap("instant_commerce");
+      const { executeInstantCommercePay } = await import(
+        "@/lib/pay/executeInstantCommercePay"
+      );
+      const seatForPay = pendingSoaSeatRef.current;
+      const cashierSession = await import(
+        "@/lib/commerce/resolveCashierSessionForPay"
+      ).then((m) => m.resolveCashierSessionForPay(to.accountId));
+      const instant = await executeInstantCommercePay({
+        token,
+        phone: userPhone,
+        user: userRef.current,
+        amountFcfa,
+        to,
+        pin,
+        smallPaySkipPin: smallPaySkip,
+        soaSeatNumber: seatForPay,
+        cashierSession,
+        updateBalance,
+      });
+      if (!instant.ok) {
+        if (instant.reason === "PIN") {
+          applyPayPinWrongAttempt();
+          payTraceAbort("pin");
+          return;
+        }
+        blypAlert(
+          t("pay.paymentTitle"),
+          instant.message ?? t("common.genericError"),
+        );
+        payTraceAbort("instant_refus");
+        return;
+      }
+      pendingSoaSeatRef.current = null;
+      if (selectedRegularRef.current?.phone === to.phoneDigits) {
+        selectedRegularRef.current = null;
+        setSelectedRegularPhone(null);
+      }
+      if (payPinFocusTimerRef.current) {
+        clearTimeout(payPinFocusTimerRef.current);
+        payPinFocusTimerRef.current = null;
+      }
+      payPinInputRef.current?.blur();
+      Keyboard.dismiss();
+      payPinFailedRef.current = 0;
+      setPayPinModalVisible(false);
+      setPayPinDraft("");
+      setPayPinSelection(undefined);
+      setPayPinUi("idle");
+      setPayPinHintLine(null);
+      setPaymentStatus("IDLE");
+      setPayOutcomeSheet({
+        kind: "success",
+        amountFcfa,
+        recipientName: to.name,
+        copy: "payment",
+      });
+      payTraceMilestone("payer_succes_instant");
+      if (to.accountId && to.name) {
+        void import("@/lib/peers/displayNameCache").then((m) => {
+          m.rememberPeerDisplayName(to.accountId!, to.name);
+        });
+        void import("@/lib/pay/rememberPayRecipientForNativeShell").then((m) =>
+          m.rememberPayRecipientForNativeShell(
+            {
+              accountId: to.accountId,
+              name: to.name,
+              phoneDigits: to.phoneDigits || null,
+            },
+            userRef.current,
+          ),
+        );
+      }
+      const cat = spendCategoryRef.current;
+      if (cat) {
+        void import("@/lib/peers/peerCategoryCache").then((m) => {
+          m.rememberPeerCategory(to.accountId ?? "", cat, to.phoneDigits);
+        });
+      }
+      void refreshUser();
+      if (pin.length === 4) {
+        void import("@/lib/security/transactionPinVault").then((m) => {
+          void m.saveTransactionPinVault(pin);
+        });
+      }
+      return;
     }
     const offlineNow = isLikelyOfflineNow({
       isOffline: network.isOffline,
@@ -1134,6 +1409,11 @@ export default function PayHomeScreen() {
       setPayPinSelection(undefined);
       setPayPinUi("idle");
       setPaymentStatus("IDLE");
+      payNetworkRetryRef.current = {
+        pin,
+        smallPaySkipPin: smallPaySkip,
+        amountFcfa,
+      };
       setPayOutcomeSheet({
         kind: "error",
         title:
@@ -1142,12 +1422,16 @@ export default function PayHomeScreen() {
             : t("pay.paymentTitle"),
         message: t("network.requestFailed"),
         recipientName: to.name,
+        retry: true,
       });
+      payTraceAbort("hors_ligne");
       return;
     }
     setPaymentStatus("SENDING");
     setPayPinUi("sending");
+    payTraceLap("envoi_serveur");
     try {
+      perfMarkStart("pay_pre_api");
       const api = payApiRef.current ?? (await import("@/lib/api/client"));
       payApiRef.current = api;
       let payRes: {
@@ -1158,13 +1442,14 @@ export default function PayHomeScreen() {
       };
       let txKind = "PAYMENT";
       const seatForPay = pendingSoaSeatRef.current;
-      const cashierSession =
-        (await import("@/lib/ble/deliverReceiptViaCashierGatt").then((m) =>
-          m.readCashierSessionViaGatt(to.accountId),
-        )) ?? null;
+      const cashierSession = await import(
+        "@/lib/commerce/resolveCashierSessionForPay"
+      ).then((m) => m.resolveCashierSessionForPay(to.accountId));
+      perfMarkEnd("pay_pre_api");
+      perfMarkStart("pay_api");
       payRes = await api.pay(
         token,
-        payPendingAmount,
+        amountFcfa,
         to.name,
         to.phoneDigits || null,
         smallPaySkip ? null : pin,
@@ -1175,6 +1460,8 @@ export default function PayHomeScreen() {
           cashierSession,
         },
       );
+      perfMarkEnd("pay_api");
+      payTraceLogTxId(payRes.transactionId);
       pendingSoaSeatRef.current = null;
       if (selectedRegularRef.current?.phone === to.phoneDigits) {
         selectedRegularRef.current = null;
@@ -1203,26 +1490,28 @@ export default function PayHomeScreen() {
             reference,
             type: "sent",
             kind: txKind,
-            amountFcfa: payPendingAmount,
+            amountFcfa: amountFcfa,
             counterpartyName: to.name,
             counterpartyPhone: to.phoneDigits || null,
             createdAt: paidAt,
           },
         ]);
-        await cache.setSyncCursor(userPhone, paidAt);
+        void cache.setSyncCursor(userPhone, paidAt).catch(() => {});
       }
       setPayPinModalVisible(false);
       setPayPinDraft("");
       setPayPinSelection(undefined);
       setPayPinUi("idle");
+      setPayPinHintLine(null);
       setPaymentStatus("IDLE");
       setPayOutcomeSheet({
         kind: "success",
-        amountFcfa: payPendingAmount,
+        amountFcfa: amountFcfa,
         recipientName: to.name,
         copy:
           spendCategoryRef.current === "other" ? "transfer" : "payment",
       });
+      payTraceMilestone("payer_succes");
       void import("@/lib/pay/relayCommercePaymentReceiptBle").then((m) =>
         m.relayCommercePaymentReceiptBleDeferred({
           receipt: payRes.paymentReceipt,
@@ -1233,6 +1522,16 @@ export default function PayHomeScreen() {
         void import("@/lib/peers/displayNameCache").then((m) => {
           m.rememberPeerDisplayName(to.accountId!, to.name);
         });
+        void import("@/lib/pay/rememberPayRecipientForNativeShell").then((m) =>
+          m.rememberPayRecipientForNativeShell(
+            {
+              accountId: to.accountId,
+              name: to.name,
+              phoneDigits: to.phoneDigits || null,
+            },
+            userRef.current,
+          ),
+        );
       }
       const cat = spendCategoryRef.current;
       if (cat) {
@@ -1253,10 +1552,24 @@ export default function PayHomeScreen() {
         void m.saveTransactionPinVault(pin);
       });
     } catch (e) {
+      perfMarkEnd("pay_pre_api");
+      perfMarkEnd("pay_api");
+      payTraceAbort("echec_api");
       setPaymentStatus("IDLE");
       setPayPinUi("idle");
       if (isTransactionPinInvalidError(e)) {
         applyPayPinWrongAttempt();
+      } else if (isSmallPayLimitPinRequiredError(e)) {
+        const amountFcfa = Math.floor(
+          Number(payPendingAmountRef.current ?? payPendingAmount),
+        );
+        const to = payRecipientAtPinRef.current ?? recipientRef.current;
+        if (to && Number.isFinite(amountFcfa) && amountFcfa > 0) {
+          continueToPayPin(amountFcfa, to, { smallPayLimitHint: true });
+        } else {
+          setPayPinHintLine(t("pay.smallPayLimitPinHint"));
+          setPayPinModalVisible(true);
+        }
       } else {
         if (payPinFocusTimerRef.current) {
           clearTimeout(payPinFocusTimerRef.current);
@@ -1278,14 +1591,23 @@ export default function PayHomeScreen() {
             : t("pay.paymentTitle");
         const message = isApiNetworkFailure(e)
           ? t("network.requestFailed")
-          : e instanceof ApiError
-            ? e.message
-            : t("common.genericError");
+          : getApiErrorMessage(e, t("common.genericError"));
+        const networkRetry = isApiNetworkFailure(e);
+        if (networkRetry) {
+          payNetworkRetryRef.current = {
+            pin,
+            smallPaySkipPin: smallPaySkip,
+            amountFcfa,
+          };
+        } else {
+          payNetworkRetryRef.current = null;
+        }
         setPayOutcomeSheet({
           kind: "error",
           title,
           message,
           recipientName: toFail?.name,
+          retry: networkRetry,
         });
       }
     }
@@ -1305,6 +1627,7 @@ export default function PayHomeScreen() {
       network.isOffline,
       network.isConnected,
       network.isInternetReachable,
+      continueToPayPin,
     ],
   );
 
@@ -1316,6 +1639,16 @@ export default function PayHomeScreen() {
     setPayOutcomeSheet(null);
     setPayAmountFcfa(null);
     setAmountPadResetSeq((n) => n + 1);
+  }, []);
+
+  const retryPayAfterNetworkError = useCallback(() => {
+    const stash = payNetworkRetryRef.current;
+    setPayOutcomeSheet(null);
+    if (!stash) return;
+    void confirmPayWithPinRef.current(stash.pin, {
+      smallPaySkipPin: stash.smallPaySkipPin,
+      amountFcfa: stash.amountFcfa,
+    });
   }, []);
 
   useEffect(() => {
@@ -1335,6 +1668,7 @@ export default function PayHomeScreen() {
             style={styles.safeArea}
             edges={["top", "left", "right"]}
           >
+            <ShellPayIslandBack />
             <View style={styles.payScreenBody}>
               <View style={styles.payTopBlock}>
                 <View style={styles.topBarRow}>
@@ -1367,6 +1701,7 @@ export default function PayHomeScreen() {
                         <PeerAvatar
                           name={recipient.name}
                           phone={recipient.phoneDigits}
+                          remoteUrl={recipientAvatarUrl}
                           localUri={contactPhotoUriForPhone(recipient.phoneDigits)}
                           size={52}
                         />
@@ -1398,6 +1733,18 @@ export default function PayHomeScreen() {
                         {bleHeaderSubtitle}
                       </Text>
                     </View>
+                  </Pressable>
+                  <Pressable
+                    style={({ pressed }) => [
+                      styles.balanceAddBtn,
+                      pressed && styles.balanceAddBtnPressed,
+                    ]}
+                    onPress={() => router.push("/pay-scan")}
+                    accessibilityRole="button"
+                    accessibilityLabel={t("pay.qrScanA11y")}
+                    hitSlop={10}
+                  >
+                    <Ionicons name="qr-code-outline" size={22} color={colors.accent} />
                   </Pressable>
                   <Pressable
                     style={({ pressed }) => [
@@ -1442,6 +1789,7 @@ export default function PayHomeScreen() {
                 styles={styles}
                 /** Identité stable + seq (fermeture feuille → vide le pad sans refresh JWT). */
                 resetKey={`${user?.personalAccountId ?? user?.phone ?? "anon"}-${amountPadResetSeq}`}
+                initialDigits={shellDigitsOnce.current || undefined}
                 keypadDisabled={
                   paymentStatus === "SENDING" ||
                   payHandoff ||
@@ -1451,6 +1799,7 @@ export default function PayHomeScreen() {
                 onPay={handlePay}
                 onAmountFcfaChange={setPayAmountFcfa}
                 balanceFcfa={user && balance <= 1000 ? balance : null}
+                pendingConfirmCount={pendingConfirmCount}
                 quickAmounts={quickAmounts}
                 belowQuickAmounts={regularsRow}
                 amountLabel={selectedRegularLabel}
@@ -1606,6 +1955,14 @@ export default function PayHomeScreen() {
                     }}
                   />
                 </Text>
+                {payPinHintLine ? (
+                  <Text
+                    style={styles.payPinModalHint}
+                    accessibilityLiveRegion="polite"
+                  >
+                    {payPinHintLine}
+                  </Text>
+                ) : null}
                 {payPinErrorLine ? (
                   <Text
                     style={styles.payPinModalError}
@@ -1663,6 +2020,11 @@ export default function PayHomeScreen() {
             <PayOutcomeSheet
               outcome={payOutcomeSheet}
               onDismiss={dismissPayOutcomeSheet}
+              onRetry={
+                payOutcomeSheet.kind === "error" && payOutcomeSheet.retry
+                  ? retryPayAfterNetworkError
+                  : undefined
+              }
             />
           ) : null}
 

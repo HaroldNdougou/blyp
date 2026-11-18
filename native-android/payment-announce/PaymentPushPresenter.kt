@@ -9,8 +9,8 @@ import android.media.AudioAttributes
 import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
-import com.haroldndougou.blyp.MainActivity
 import com.haroldndougou.blyp.R
+import com.haroldndougou.blyp.shell.BlypShellEntry
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -28,16 +28,19 @@ object PaymentPushPresenter {
     ensureChannel(app)
 
     val lang = PaymentAnnouncePrefs.getLang(app)
-    val title = receivedTitle(lang, data["contextType"])
-    val body = formatBody(amount, data["fromName"], lang)
+    val transfer = data["contextType"] != "commerce"
+    val title =
+      data["title"]?.trim().takeUnless { it.isNullOrEmpty() }
+        ?: formatTitle(lang, transfer)
+    val body =
+      data["message"]?.trim().takeUnless { it.isNullOrEmpty() }
+        ?: formatBody(amount, data["fromName"], lang)
 
     val openApp =
       PendingIntent.getActivity(
         app,
         0,
-        Intent(app, MainActivity::class.java).apply {
-          flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        },
+        BlypShellEntry.primaryTaskIntent(app),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 
@@ -63,8 +66,7 @@ object PaymentPushPresenter {
     mgr.notify(notifId, notification)
   }
 
-  private fun receivedTitle(lang: String, contextType: String?): String {
-    val transfer = contextType != "commerce"
+  private fun formatTitle(lang: String, transfer: Boolean): String {
     return if (lang == "fr") {
       if (transfer) "Transfert reçu" else "Paiement reçu"
     } else {

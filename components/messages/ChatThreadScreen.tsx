@@ -3,9 +3,10 @@ import { createMessagesStyles } from "@/components/messages/messagesStyles";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getConversationsSnapshot } from "@/lib/messagesCache";
+import { hideNativeMessagesLoading } from "@/lib/nativeShell";
 import { perfChatOpenLap } from "@/lib/perf/marks";
 import { useLocalSearchParams } from "expo-router";
-import React, { lazy, Suspense, useMemo } from "react";
+import React, { lazy, Suspense, useLayoutEffect, useMemo } from "react";
 
 const ChatThreadScreenBody = lazy(() =>
   import("@/components/messages/ChatThreadScreenBody").then((m) => {
@@ -19,6 +20,9 @@ const ChatThreadScreenBody = lazy(() =>
  * Pay / voix / attach / emoji restent différés dans le body (`chatThreadDeferredUi`).
  */
 export default function ChatThreadScreen() {
+  useLayoutEffect(() => {
+    hideNativeMessagesLoading();
+  }, []);
   const { colors } = useTheme();
   const styles = useMemo(() => createMessagesStyles(colors), [colors]);
   const { token } = useAuth();

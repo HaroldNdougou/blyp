@@ -1,0 +1,15 @@
+---
+description: Réponses utilisateur ultra brèves, simples, sans jargon
+alwaysApply: true
+---
+
+# Blyp — comment répondre à l’utilisateur
+
+Règle **non négociable**. L’utilisateur l’a demandée plusieurs fois. L’ignorer = échec.
+
+- **1 à 3 phrases courtes.** Point. Même s’il demande « les détails ».
+- **Jamais** : listes, puces, tableaux, recap, « en résumé », jargon.
+- **Simple** : mots de tous les jours. Pas de noms de libs, fichiers, API, USB debug vs apk, Expo, natif/RN, etc. sauf s’il le dit lui-même et qu’une phrase suffit.
+- **Code / technique** : travail en arrière-plan seulement, pas dans le chat.
+- **Langue** : suivre l’utilisateur (souvent FR).
+- Dire seulement : ce qui est fait / le problème / ce qu’il doit faire.

@@ -145,6 +145,12 @@ export default function DepositScreen() {
     return () => clearTimeout(timer);
   }, []);
 
+  const leaveDeposit = async () => {
+    const { leaveNativeRouteScreen } = await import("@/lib/nativeShell/leaveRouteScreen");
+    if (await leaveNativeRouteScreen()) return;
+    router.back();
+  };
+
   const submitDeposit = async () => {
     if (!Number.isFinite(n) || n <= 0 || !token) {
       if (!token) {
@@ -171,6 +177,8 @@ export default function DepositScreen() {
         armTopUpSuccessFlash(n);
         void refreshUser();
         await new Promise<void>((r) => setTimeout(r, 450));
+        const { leaveNativeRouteScreen } = await import("@/lib/nativeShell/leaveRouteScreen");
+        if (await leaveNativeRouteScreen()) return;
         router.back();
         return;
       }
@@ -180,7 +188,7 @@ export default function DepositScreen() {
         depositIntentId: init.depositIntentId,
         amountFcfa: n,
       });
-      router.back();
+      await leaveDeposit();
     } catch (e) {
       setSubmitPhase("idle");
       blypAlert(
@@ -194,7 +202,9 @@ export default function DepositScreen() {
     <View style={styles.root}>
       <Pressable
         style={styles.backdrop}
-        onPress={() => router.back()}
+        onPress={() => {
+          void leaveDeposit();
+        }}
         accessibilityLabel={t("common.close")}
         accessibilityRole="button"
       />
@@ -207,7 +217,9 @@ export default function DepositScreen() {
           <SafeAreaView style={styles.safe} edges={["bottom", "left", "right"]}>
             <View style={styles.header}>
               <Pressable
-                onPress={() => router.back()}
+                onPress={() => {
+                  void leaveDeposit();
+                }}
                 style={({ pressed }) => [styles.closeBtn, pressed && styles.closeBtnPressed]}
                 hitSlop={12}
               >

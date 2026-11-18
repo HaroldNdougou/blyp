@@ -73,7 +73,7 @@ export default function ForwardMessagesScreen() {
   const [conversations, setConversations] = useState<Conversation[]>(() =>
     token ? sortConversationsByActivity(getConversationsSnapshot(token) ?? []) : [],
   );
-  const [, recipTick] = useState(0);
+  const [recipTick, setRecipTick] = useState(0);
   void recipTick;
 
   useEffect(() => {

@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="24dp">
+
+    <ImageView
+        android:id="@+id/blyp_soa_report_close"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="-12dp"
+        android:contentDescription="@string/blyp_shell_scan_back"
+        android:padding="12dp"
+        android:src="@drawable/blyp_shell_ic_back" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="@string/blyp_shell_soa_report_period_title"
+        android:textColor="@color/blyp_shell_text"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="@string/blyp_shell_soa_report_period_kind"
+        android:textColor="@color/blyp_shell_muted"
+        android:textSize="13sp" />
+
+    <Spinner
+        android:id="@+id/blyp_soa_report_kind"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/blyp_shell_soa_report_period_pick"
+        android:textColor="@color/blyp_shell_muted"
+        android:textSize="13sp" />
+
+    <Spinner
+        android:id="@+id/blyp_soa_report_period"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp" />
+
+    <TextView
+        android:id="@+id/blyp_soa_report_summary"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:textColor="@color/blyp_shell_text"
+        android:textSize="15sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:text="@string/blyp_shell_soa_report_trips_heading"
+        android:textColor="@color/blyp_shell_text"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/blyp_soa_report_trip_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:nestedScrollingEnabled="false"
+        android:overScrollMode="never" />
+
+    <TextView
+        android:id="@+id/blyp_soa_report_export_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:background="@drawable/blyp_shell_filter_chip"
+        android:gravity="center"
+        android:paddingVertical="12dp"
+        android:text="@string/blyp_shell_soa_export_share_text"
+        android:textColor="@color/blyp_shell_accent"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/blyp_soa_report_export_csv"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/blyp_shell_filter_chip"
+        android:gravity="center"
+        android:paddingVertical="12dp"
+        android:text="@string/blyp_shell_soa_export_share_csv"
+        android:textColor="@color/blyp_shell_accent"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

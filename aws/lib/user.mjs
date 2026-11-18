@@ -428,6 +428,23 @@ export async function findOrCreateUserByPhoneSafe(phone) {
   }
 }
 
+export async function replaceTransactionPin(userId, pinHash, previousHash) {
+  const now = new Date().toISOString();
+  await doc.send(
+    new UpdateCommand({
+      TableName: getTableName(),
+      Key: { PK: userPk(userId), SK: "PROFILE" },
+      UpdateExpression: "SET transactionPinHash = :hash, updatedAt = :now",
+      ConditionExpression: "transactionPinHash = :prev",
+      ExpressionAttributeValues: {
+        ":hash": pinHash,
+        ":now": now,
+        ":prev": previousHash,
+      },
+    }),
+  );
+}
+
 export async function setTransactionPin(userId, pinHash) {
   const now = new Date().toISOString();
   await doc.send(

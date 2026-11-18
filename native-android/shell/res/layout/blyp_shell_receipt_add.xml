@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical"
+    android:paddingHorizontal="24dp"
+    android:paddingTop="8dp">
+
+    <ImageView
+        android:id="@+id/blyp_receipt_add_back"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="-12dp"
+        android:contentDescription="@string/blyp_shell_scan_back"
+        android:padding="12dp"
+        android:src="@drawable/blyp_shell_ic_back" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="@string/blyp_shell_receipt_add_title"
+        android:textColor="@color/blyp_shell_text"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:text="@string/blyp_shell_receipt_add_name"
+        android:textColor="@color/blyp_shell_text_secondary"
+        android:textSize="13sp" />
+
+    <EditText
+        android:id="@+id/blyp_receipt_add_name"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/blyp_shell_filter_chip"
+        android:paddingHorizontal="16dp"
+        android:textColor="@color/blyp_shell_text" />
+
+    <TextView
+        android:id="@+id/blyp_receipt_add_pick"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="20dp"
+        android:background="@drawable/blyp_shell_filter_chip"
+        android:gravity="center"
+        android:text="@string/blyp_shell_receipt_add_pick"
+        android:textColor="@color/blyp_shell_text"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/blyp_receipt_add_camera"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/blyp_shell_filter_chip"
+        android:gravity="center"
+        android:text="@string/blyp_shell_receipt_add_camera"
+        android:textColor="@color/blyp_shell_text"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/blyp_receipt_add_save"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:layout_marginTop="28dp"
+        android:background="@drawable/blyp_shell_filter_chip_selected"
+        android:gravity="center"
+        android:text="@string/blyp_shell_receipt_add_save"
+        android:textColor="@color/blyp_shell_accent_on"
+        android:textStyle="bold" />
+</LinearLayout>

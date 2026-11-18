@@ -43,6 +43,10 @@ function parseParameterOverrides(raw) {
 }
 
 const params = parseParameterOverrides(overridesMatch[1]);
+const payReceiptPemSeed = params.PayReceiptEd25519PrivateKeyPem?.trim() ?? "";
+const stageForSecret = params.Stage?.trim() || "dev";
+delete params.PayReceiptEd25519PrivateKeyPem;
+
 const paramsPath = join(root, ".aws-sam", "deploy-params.yaml");
 const yamlLines = Object.entries(params).map(([k, v]) => {
   const needsQuote = /[\s:"'#]/.test(v);
@@ -74,6 +78,27 @@ const result = spawnSync("sam", args, {
   stdio: "inherit",
   windowsHide: true,
 });
+
+if (result.status === 0 && payReceiptPemSeed) {
+  const sync = spawnSync(
+    "node",
+    [join(root, "infra", "scripts", "sync-pay-receipt-secret.mjs")],
+    {
+      cwd: root,
+      stdio: "inherit",
+      windowsHide: true,
+      env: {
+        ...process.env,
+        BLYP_STAGE: stageForSecret,
+        BLYP_PAY_RECEIPT_PEM_SYNC: payReceiptPemSeed,
+        AWS_REGION: "af-south-1",
+      },
+    },
+  );
+  if (sync.status !== 0) {
+    process.exit(sync.status ?? 1);
+  }
+}
 
 try {
   unlinkSync(paramsPath);

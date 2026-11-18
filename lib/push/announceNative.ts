@@ -10,6 +10,7 @@ type PaymentAnnounceNative = {
     amountFcfa: number,
     lang: string,
     txId: string | null,
+    payerName?: string | null,
   ) => Promise<void>;
 };
 
@@ -56,6 +57,7 @@ export async function announcePaymentNative(opts: {
   amountFcfa: number;
   txId?: string;
   lang?: string;
+  payerName?: string | null;
 }): Promise<void> {
   const native = module();
   if (!native?.announce) return;
@@ -63,5 +65,6 @@ export async function announcePaymentNative(opts: {
     opts.amountFcfa,
     opts.lang ?? resolveAppLanguage(),
     opts.txId?.trim() || null,
+    opts.payerName?.trim() || null,
   );
 }

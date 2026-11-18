@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Remplacé à chaque prebuild par plugins/withNativeShell.js -->
+<resources>
+    <string name="blyp_api_base_url" translatable="false">https://nma68tjr78.execute-api.af-south-1.amazonaws.com/dev</string>
+    <string name="blyp_realtime_ws_url" translatable="false">wss://quryhnp89j.execute-api.af-south-1.amazonaws.com/dev</string>
+    <string name="blyp_assets_cdn_url" translatable="false">https://d3uxpq8lck3mie.cloudfront.net</string>
+</resources>

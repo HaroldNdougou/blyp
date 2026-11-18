@@ -51,8 +51,12 @@ export type ApiUser = {
   kycStatus?: KycStatus;
   /** 0 = téléphone seul, 1 = identité vérifiée. */
   kycLevel?: number;
-  /** Opt-in : paiements sous 500 F sans saisie PIN (serveur valide). */
+  /** Opt-in : paiements ≤ 1 000 F sans saisie PIN (serveur valide). */
   smallPayWithoutPinEnabled?: boolean;
+  /** Stats plafond sans PIN (UTC jour + cumuls). */
+  smallPayStatsDay?: string | null;
+  smallPayStatsSumFcfa?: number;
+  smallPayPeriodWithoutPinSumFcfa?: number;
 };
 
 export type TransactionItem = {
@@ -245,6 +249,8 @@ export type ChatMessage = {
 export type BlypPhoneLookupItem = {
   phone: string;
   onBlyp: boolean;
+  /** Compte perso BLYP-U-… si inscrit sur Blyp. */
+  accountId?: string | null;
 };
 
 export type Conversation = {

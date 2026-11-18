@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <issue id="NewApi">
+        <!-- Généré par l'écran de démarrage Expo ; attribut ignoré sans risque avant Android 13. -->
+        <ignore path="**/res/values/styles.xml" />
+    </issue>
+</lint>

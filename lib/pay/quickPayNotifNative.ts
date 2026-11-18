@@ -4,6 +4,9 @@ type QuickPayMod = {
   start: (
     title: string,
     body: string,
+    merchantName: string,
+    merchantInitial: string,
+    merchantAvatarB64: string,
     l50: string,
     l100: string,
     l200: string,
@@ -41,6 +44,9 @@ export function isQuickPayNotifNativeAvailable(): boolean {
 export async function startQuickPayNotifNative(opts: {
   title: string;
   body: string;
+  merchantName: string;
+  merchantInitial: string;
+  merchantAvatarBase64?: string | null;
   l50: string;
   l100: string;
   l200: string;
@@ -52,6 +58,9 @@ export async function startQuickPayNotifNative(opts: {
     await mod.start(
       opts.title,
       opts.body,
+      opts.merchantName,
+      opts.merchantInitial,
+      opts.merchantAvatarBase64 ?? "",
       opts.l50,
       opts.l100,
       opts.l200,

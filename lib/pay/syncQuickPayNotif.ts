@@ -5,10 +5,6 @@ import {
   hydrateQuickPayNotifPref,
 } from "@/lib/pay/quickPayNotifPref";
 import {
-  getQuickPayRecipientCached,
-  loadQuickPayRecipient,
-} from "@/lib/pay/quickPayRecipient";
-import {
   isQuickPayNotifNativeAvailable,
   startQuickPayNotifNative,
   stopQuickPayNotifNative,
@@ -17,8 +13,17 @@ import {
   ensureQuickPayNotificationPermission,
   hasQuickPayNotificationPermission,
 } from "@/lib/pay/quickPayNotifPermission";
+import {
+  getQuickPayNearbyAvatarUrl,
+  getQuickPayNearbyRecipientSnapshot,
+} from "@/lib/pay/quickPayNearbyRecipientCache";
+import type { QuickPayRecipient } from "@/lib/pay/quickPayRecipient";
+import {
+  avatarBase64ForQuickPayNotif,
+  merchantInitialsFromName,
+} from "@/lib/pay/quickPayNotifMerchantAvatar";
 
-export const QUICK_PAY_AMOUNTS = [50, 100, 200, 500] as const;
+export const QUICK_PAY_AMOUNTS = [100, 150, 200, 250, 300, 350, 400, 500] as const;
 
 export type SyncQuickPayNotifOptions = {
   /**
@@ -26,13 +31,16 @@ export type SyncQuickPayNotifOptions = {
    * `false` = boot / login / MAJ destinataire — jamais de popup permission.
    */
   interactive?: boolean;
+  /** Override nom commerçant (sinon cache BLE). */
+  nearbyName?: string | null;
+  recipient?: QuickPayRecipient | null;
 };
 
 function amountLabel(n: number): string {
   return formatFcfa(n, i18n.language);
 }
 
-function notifBody(recipientName: string | null): string {
+function notifSubtitle(recipientName: string | null): string {
   if (recipientName) {
     return i18n.t("profile.quickPayNotifBodyTo", { name: recipientName });
   }
@@ -66,18 +74,44 @@ export async function syncQuickPayNotif(
     return { ok: true };
   }
 
-  await loadQuickPayRecipient();
-  const to = getQuickPayRecipientCached();
+  const recipient =
+    options?.recipient !== undefined
+      ? options.recipient
+      : getQuickPayNearbyRecipientSnapshot();
+  let name: string | null;
+  if (options?.nearbyName !== undefined) {
+    name = options.nearbyName;
+  } else {
+    name = recipient?.name?.trim() || null;
+    if (!name) {
+      const { quickPayLabelFromBleSnapshot } = await import(
+        "@/lib/pay/quickPayNearbyCommerce"
+      );
+      const { getUserSnapshot } = await import("@/lib/auth/authSession");
+      name = quickPayLabelFromBleSnapshot(getUserSnapshot());
+    }
+  }
+
+  const merchantName = name?.trim() ?? "";
+  const avatarB64 = merchantName
+    ? await avatarBase64ForQuickPayNotif(getQuickPayNearbyAvatarUrl())
+    : null;
+
   await startQuickPayNotifNative({
     title: i18n.t("profile.quickPayNotifTitle"),
-    body: notifBody(to?.name ?? null),
+    body: merchantName ? "" : notifSubtitle(null),
+    merchantName,
+    merchantInitial: merchantInitialsFromName(merchantName),
+    merchantAvatarBase64: avatarB64,
     l50: amountLabel(50),
     l100: amountLabel(100),
     l200: amountLabel(200),
     l500: amountLabel(500),
   });
   void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) =>
-    m.syncQuickPayNativeRuntime(),
+    m.syncQuickPayNativeRuntime({
+      recipient: recipient ?? undefined,
+    }),
   );
   return { ok: true };
 }

@@ -72,9 +72,11 @@ export async function rememberQuickPayRecipient(
   void import("@/lib/pay/syncQuickPayNotif").then((m) =>
     m.syncQuickPayNotif({ interactive: false }),
   );
-  void import("@/lib/pay/syncQuickPayNativeSecrets").then((m) =>
-    m.syncQuickPayNativeRuntime(),
-  );
+  void import("@/lib/pay/syncShellPayRuntime").then((m) => {
+    void import("@/lib/auth/authSession").then(({ getUserSnapshot }) =>
+      m.syncShellPayRuntime(getUserSnapshot()),
+    );
+  });
 }
 
 export async function clearQuickPayRecipient(): Promise<void> {

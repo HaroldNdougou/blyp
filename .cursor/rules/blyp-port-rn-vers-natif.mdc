@@ -1,0 +1,14 @@
+---
+description: Migration RN → natif — porter l’existant, ne pas réinventer
+alwaysApply: true
+---
+
+# Blyp — bascule RN → natif (pas une nouvelle app)
+
+> **Règle temporaire** : à supprimer quand la bascule vers le natif sera terminée (le rappeler à l’utilisateur à ce moment-là).
+
+- On **porte** l’app RN existante en natif : on ne repart **pas de zéro**.
+- **Avant de coder** une fonctionnalité qui existe déjà en RN : **lire le code RN** (`lib/`, `components/`, `hooks/`) et le **calquer** (mêmes règles, seuils, délais, popups, cas limites).
+- Écart avec le RN seulement si : bug avéré, contrainte native, ou demande explicite — et le signaler à l’utilisateur.
+- **Améliorations bienvenues** sur l’existant RN : les **proposer** (court, sans jargon) à l’utilisateur ; ne les appliquer qu’après son accord.
+- **Nouvelles fonctionnalités** (inexistantes en RN) : conception libre, directement en natif.

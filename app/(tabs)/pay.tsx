@@ -1,9 +1,9 @@
 import { PayColdShell } from "@/components/pay/PayColdShell";
+import { PayHomeFullGate } from "@/components/pay/PayHomeFullGate";
 import { useAuth } from "@/contexts/authContextBase";
 import { Redirect } from "expo-router";
 import React, { lazy, Suspense } from "react";
 
-const PayHomeScreen = lazy(() => import("@/components/pay/PayHomeScreen"));
 const CommerceHomeScreen = lazy(() =>
   import("@/components/pay/CommerceHomeScreen").then((m) => ({
     default: m.CommerceHomeScreen,
@@ -23,9 +23,5 @@ export default function PayTabScreen() {
       </Suspense>
     );
   }
-  return (
-    <Suspense fallback={<PayColdShell />}>
-      <PayHomeScreen />
-    </Suspense>
-  );
+  return <PayHomeFullGate />;
 }

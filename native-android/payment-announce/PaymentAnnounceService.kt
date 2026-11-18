@@ -27,6 +27,7 @@ class PaymentAnnounceService : Service() {
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val amount = intent?.getIntExtra(EXTRA_AMOUNT, 0) ?: 0
     val lang = intent?.getStringExtra(EXTRA_LANG) ?: "fr"
+    val payerName = intent?.getStringExtra(EXTRA_PAYER)?.trim().orEmpty().ifEmpty { null }
     if (amount <= 0) {
       stopSelf()
       return START_NOT_STICKY
@@ -54,7 +55,7 @@ class PaymentAnnounceService : Service() {
       )
       stopSelf()
     }
-    PaymentAnnounceEngine.announce(applicationContext, amount, lang, ::finishOnce)
+    PaymentAnnounceEngine.announce(applicationContext, amount, lang, payerName, ::finishOnce)
     mainHandler.postDelayed({ finishOnce() }, MAX_ANNOUNCE_MS)
 
     return START_NOT_STICKY
@@ -94,12 +95,15 @@ class PaymentAnnounceService : Service() {
     private const val MAX_ANNOUNCE_MS = 12_000L
     private const val EXTRA_AMOUNT = "amount"
     private const val EXTRA_LANG = "lang"
+    private const val EXTRA_PAYER = "payer"
 
-    fun start(context: Context, amountFcfa: Int, lang: String) {
+    fun start(context: Context, amountFcfa: Int, lang: String, payerName: String? = null) {
+      PaymentAnnounceEngine.lastRequestAt = android.os.SystemClock.elapsedRealtime()
       val intent =
         Intent(context, PaymentAnnounceService::class.java).apply {
           putExtra(EXTRA_AMOUNT, amountFcfa)
           putExtra(EXTRA_LANG, lang)
+          if (!payerName.isNullOrBlank()) putExtra(EXTRA_PAYER, payerName.trim())
         }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
         context.startForegroundService(intent)

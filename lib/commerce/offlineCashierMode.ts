@@ -48,23 +48,45 @@ function parseStored(raw: string | null): OfflineCashierModeSnapshot {
   }
 }
 
-async function persist(next: OfflineCashierModeSnapshot): Promise<void> {
+async function persist(
+  next: OfflineCashierModeSnapshot,
+  options?: { pushNative?: boolean },
+): Promise<void> {
   try {
     const SS = await import("expo-secure-store");
     if (!next.active || !next.commerceId) {
       await SS.deleteItemAsync(STORE_KEY);
-      return;
+    } else {
+      await SS.setItemAsync(
+        STORE_KEY,
+        JSON.stringify({
+          commerceId: next.commerceId,
+          enabledAtIso: next.enabledAtIso,
+        }),
+      );
     }
-    await SS.setItemAsync(
-      STORE_KEY,
-      JSON.stringify({
-        commerceId: next.commerceId,
-        enabledAtIso: next.enabledAtIso,
-      }),
-    );
   } catch {
     /* RAM seule si SecureStore indisponible */
   }
+  if (options?.pushNative !== false) {
+    const { syncNativeShellOfflineCashier } = await import("@/lib/nativeShell");
+    syncNativeShellOfflineCashier(next);
+  }
+}
+
+function mergeOfflineSnapshots(
+  js: OfflineCashierModeSnapshot,
+  native: OfflineCashierModeSnapshot,
+): OfflineCashierModeSnapshot {
+  if (!native.active) return js;
+  if (!js.active) return native;
+  if (js.commerceId === native.commerceId) return js;
+  const jsMs = Date.parse(js.enabledAtIso ?? "");
+  const nativeMs = Date.parse(native.enabledAtIso ?? "");
+  if (Number.isFinite(nativeMs) && Number.isFinite(jsMs) && nativeMs > jsMs) {
+    return native;
+  }
+  return js;
 }
 
 export function getOfflineCashierModeSnapshot(): OfflineCashierModeSnapshot {
@@ -76,6 +98,11 @@ export function isOfflineCashierActiveForCommerce(
 ): boolean {
   if (!commerceId || !snapshot.active) return false;
   return snapshot.commerceId === commerceId;
+}
+
+/** Caisse offline active (quel que soit l’onglet courant). */
+export function isOfflineCashierGloballyActive(): boolean {
+  return snapshot.active;
 }
 
 export function subscribeOfflineCashierMode(listener: () => void): () => void {
@@ -91,6 +118,19 @@ export function hydrateOfflineCashierModeOnce(): void {
       const SS = await import("expo-secure-store");
       const raw = await SS.getItemAsync(STORE_KEY);
       snapshot = parseStored(raw);
+      const { pullNativeShellOfflineCashier } = await import("@/lib/nativeShell");
+      const native = await pullNativeShellOfflineCashier();
+      if (native) {
+        const merged = mergeOfflineSnapshots(snapshot, native);
+        if (
+          merged.active !== snapshot.active ||
+          merged.commerceId !== snapshot.commerceId ||
+          merged.enabledAtIso !== snapshot.enabledAtIso
+        ) {
+          snapshot = merged;
+          await persist(snapshot, { pushNative: true });
+        }
+      }
       emit();
     } catch {
       /* ignore */
@@ -118,6 +158,25 @@ export async function disableOfflineCashierMode(): Promise<void> {
   await persist(snapshot);
 }
 
+/** Après retour îlot RN → aligner SecureStore sur la coque. */
+export async function mergeNativeOfflineCashierFromShell(
+  pull: () => Promise<OfflineCashierModeSnapshot | null>,
+): Promise<void> {
+  const native = await pull();
+  if (!native) return;
+  const merged = mergeOfflineSnapshots(snapshot, native);
+  if (
+    merged.active === snapshot.active &&
+    merged.commerceId === snapshot.commerceId &&
+    merged.enabledAtIso === snapshot.enabledAtIso
+  ) {
+    return;
+  }
+  snapshot = merged;
+  emit();
+  await persist(snapshot);
+}
+
 /** Sync silencieuse après retour réseau (pas d’alerte UI). */
 export async function runOfflineCashierBackgroundSync(input: {
   token: string;
@@ -127,6 +186,19 @@ export async function runOfflineCashierBackgroundSync(input: {
 }): Promise<void> {
   const { token, phone, commerceId, refreshUser } = input;
   if (!token || !phone) return;
+  const { syncEncashedReceiptIdsForCommerce } = await import(
+    "@/lib/commerce/encashedReceiptIdsCache"
+  );
+  const { flushPendingReceiptEncashQueue } = await import(
+    "@/lib/commerce/claimCommercePaymentReceipt"
+  );
+  if (commerceId) {
+    await syncEncashedReceiptIdsForCommerce({
+      commerceId,
+      token,
+    }).catch(() => {});
+    await flushPendingReceiptEncashQueue({ commerceId, token }).catch(() => {});
+  }
   await import("@/lib/sync/transactionsSync").then((m) =>
     m.syncTransactionsFromNetwork(token, phone, {
       reason: "commerce_focus",

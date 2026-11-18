@@ -8,4 +8,12 @@
     <string name="quick_pay_not_ready">Set up a payment on Pay first</string>
     <string name="quick_pay_blyp_pin_title">Blyp PIN</string>
     <string name="quick_pay_blyp_pin_wrong">Wrong PIN</string>
+    <string name="quick_pay_other_amount">Other amount</string>
+    <string name="quick_pay_other_chip">Other</string>
+    <string name="quick_pay_amount_title">Other amount</string>
+    <string name="quick_pay_amount_hint">Amount</string>
+    <string name="quick_pay_amount_validate">Confirm</string>
+    <string name="quick_pay_amount_invalid">Enter an amount</string>
+    <string name="quick_pay_pay_sum">Pay %1$s</string>
+    <string name="quick_pay_scan_chip">Scan</string>
 </resources>

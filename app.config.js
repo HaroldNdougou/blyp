@@ -7,6 +7,14 @@ require("dotenv").config({ path: path.join(__dirname, ".env") });
  */
 const DEFAULT_INVITE_URL = "https://blyppay.com/download/blyp-pay.apk";
 
+/**
+ * Bundle embarqué (release) : seul l’îlot Messages (`app-messages/`) ; l’ancienne app RN
+ * complète (`app/`) reste en dev (Metro). `BLYP_RN_FULL_BUNDLE=1` pour la réembarquer.
+ */
+const embedsReleaseBundle = process.argv.includes("export:embed");
+const messagesOnlyBundle =
+  embedsReleaseBundle && process.env.BLYP_RN_FULL_BUNDLE !== "1";
+
 module.exports = ({ config }) => {
   const apiUrl = process.env.EXPO_PUBLIC_API_URL?.trim() ?? "";
   const assetsCdn = process.env.EXPO_PUBLIC_ASSETS_CDN_URL?.trim() ?? "";
@@ -36,6 +44,9 @@ module.exports = ({ config }) => {
     },
     extra: {
       ...config.extra,
+      ...(messagesOnlyBundle
+        ? { router: { ...config.extra?.router, root: "app-messages" } }
+        : {}),
       EXPO_PUBLIC_API_URL: apiUrl,
       EXPO_PUBLIC_ASSETS_CDN_URL: assetsCdn,
       EXPO_PUBLIC_REALTIME_WS_URL: realtimeWsUrl,

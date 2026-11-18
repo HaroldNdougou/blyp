@@ -45,6 +45,7 @@ type Styles = {
   quickAmountChipTextSelected: StyleProp<TextStyle>;
   payBalanceRow: StyleProp<ViewStyle>;
   payBalanceText: StyleProp<TextStyle>;
+  payBalancePendingText?: StyleProp<TextStyle>;
   payLineFcfaSuffix: StyleProp<TextStyle>;
   payFeeLine: StyleProp<TextStyle>;
 };
@@ -55,11 +56,15 @@ type Props = {
   resetKey: string;
   keypadDisabled?: boolean;
   payBusy?: boolean;
+  /** Montant déjà saisi sur la coquille cold start. */
+  initialDigits?: string;
   onPay: (amountFcfa: number) => void;
   /** Montant courant (null si vide / invalide) — pour recharge + sans modal. */
   onAmountFcfaChange?: (amountFcfa: number | null) => void;
   /** Solde affiché juste au-dessus du clavier (null = masqué). */
   balanceFcfa?: number | null;
+  /** Paiements commerce pas encore confirmés par le serveur. */
+  pendingConfirmCount?: number;
   /** Contrôle à droite du F, même ligne (switch Recevoir). */
   amountFooter?: React.ReactNode;
   quickAmounts?: readonly number[];
@@ -87,17 +92,22 @@ function PayAmountEntryInner({
   onPay,
   onAmountFcfaChange,
   balanceFcfa,
+  pendingConfirmCount = 0,
   quickAmounts,
   amountFooter,
   belowQuickAmounts,
   amountLabel,
+  initialDigits,
 }: Props) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const [amount, setAmount] = useState("");
+  const initial = (initialDigits ?? "")
+    .replace(/\D/g, "")
+    .slice(0, MAX_AMOUNT_DIGITS);
+  const [amount, setAmount] = useState(initial);
   /** Vert chip seulement après tap rapide — pas si le montant est tapé au pad. */
   const [quickSelected, setQuickSelected] = useState<number | null>(null);
-  const amountRef = useRef(amount);
+  const amountRef = useRef(initial);
   const onAmountFcfaChangeRef = useRef(onAmountFcfaChange);
   onAmountFcfaChangeRef.current = onAmountFcfaChange;
   amountRef.current = amount;
@@ -251,6 +261,14 @@ function PayAmountEntryInner({
               {t("pay.balanceShort", { amount: formatFcfa(balanceFcfa) })}
               <Text style={styles.payLineFcfaSuffix}>F</Text>
             </Text>
+            {pendingConfirmCount > 0 ? (
+              <Text
+                style={styles.payBalancePendingText ?? styles.payBalanceText}
+                accessibilityRole="text"
+              >
+                {t("pay.pendingConfirm", { count: pendingConfirmCount })}
+              </Text>
+            ) : null}
           </View>
         ) : null}
         <AmountNumericKeypad

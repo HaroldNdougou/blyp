@@ -3,6 +3,27 @@ export default {
     title: "Profil fictif",
     readOnly: "Profil de démonstration : aucune action réelle n’est possible.",
   },
+  messagesIsland: {
+    title: "Messages",
+    body:
+      "Îlot React Native ouvert depuis la coque Android. La liste des conversations sera branchée ici.",
+  },
+  nativeShell: {
+    openPreview: "Ouvrir la coque native (dev)",
+    backToApp: "Retour",
+  },
+  auth: {
+    sessionReplacedTitle: "Déconnecté",
+    sessionReplacedMessage:
+      "Ce compte vient d’être ouvert sur un autre téléphone. Reconnectez-vous ici si c’est vous.",
+    replaceSessionTitle: "Autre téléphone connecté",
+    replaceSessionMessage:
+      "Ce compte est déjà ouvert ailleurs. Si vous continuez ici, l’autre téléphone sera déconnecté.",
+    replaceSessionConfirm: "Continuer ici",
+    replaceSessionDoneTitle: "Connecté",
+    replaceSessionDoneMessage:
+      "L’autre téléphone a été déconnecté. Vous êtes connecté sur cet appareil.",
+  },
   common: {
     cancel: "Annuler",
     close: "Fermer",
@@ -12,6 +33,7 @@ export default {
     pay: "Payer",
     fcfa: "FCFA",
     confirm: "Confirmer",
+    retry: "Réessayer",
     ok: "OK",
     account: "Compte",
     connection: "Connexion",
@@ -48,6 +70,7 @@ export default {
   },
   pay: {
     amountLabel: "Entrer montant à payer",
+    searchingNearby: "Recherche à proximité…",
     amountLabelTo: "Montant à transférer à {{name}}",
     quickAmount: "Montant rapide {{amount}} FCFA",
     availableBalance: "Solde {{amount}} FCFA",
@@ -80,6 +103,8 @@ export default {
     insufficientBalanceMessage:
       "Votre solde ({{balance}} FCFA) ne couvre pas ce paiement de {{amount}} FCFA. Rechargez votre compte pour continuer.",
     pinTitle: "Code PIN",
+    smallPayLimitPinHint:
+      "Plafond sans code atteint — saisissez votre code pour continuer.",
     pinConfirmPayment:
       "Paiement de <amount>{{amount}} FCFA</amount> à {{name}}",
     pinConfirmTransfer:
@@ -103,6 +128,10 @@ export default {
     pinWrongRemaining_one: "Code PIN incorrect. {{count}} tentative restante.",
     pinWrongRemaining_other: "Code PIN incorrect. {{count}} tentatives restantes.",
     paymentTitle: "Paiement",
+    instantSettlementFailed:
+      "Le paiement n’a pas pu être confirmé par le serveur. Votre solde a été rétabli.",
+    pendingConfirm_one: "{{count}} paiement en attente de confirmation",
+    pendingConfirm_other: "{{count}} paiements en attente de confirmation",
     offlineOfferTitle: "Problème réseau",
     offlineOfferMessage: "Payer hors ligne ? Le paiement partira dès que le réseau reviendra.",
     offlineQueueConfirm: "Payer hors ligne",
@@ -117,6 +146,17 @@ export default {
     receiveBlocksPay:
       "Désactive Recevoir pour payer quelqu’un à proximité.",
     receivedFlashA11y: "{{amount}} FCFA reçus",
+    qrScanTitle: "Scanner un QR",
+    qrScanHint: "Cadrez le QR du commerçant ou du contact",
+    qrScanPermission: "Autorisez la caméra pour scanner un QR de paiement.",
+    qrScanA11y: "Scanner un QR code",
+    qrInvalid: "Ce QR n’est pas un code de paiement Blyp.",
+    qrShowTitle: "Mon QR de paiement",
+    qrShowHint: "Le client scanne ce code pour vous envoyer de l’argent.",
+    qrShowFallbackName: "Moi",
+    qrFromScan: "Via QR",
+    qrScanRebuild:
+      "Le scan QR nécessite une mise à jour de l’app sur le téléphone. Fermez Metro et lancez : npx expo run:android",
   },
   welcome: {
     lead:
@@ -153,6 +193,7 @@ export default {
     addPhoto: "Ajouter une photo de profil",
     skipPhotoForNow: "Pas maintenant",
     photoPickFailed: "Impossible d’ouvrir la galerie photos.",
+    photoPermissionDenied: "Autorisez l’accès aux photos dans les réglages du téléphone.",
     photoOptional: "Photo facultative",
     firstName: "Prénom",
     lastName: "Nom de famille",
@@ -273,18 +314,19 @@ export default {
     announcePaymentsLabel: "Annoncer les paiements",
     announcePaymentsHint:
       "Active pour que tes paiements soient annoncés à haute voix",
-    quickPayNotifLabel: "Payer depuis la notification",
+    quickPayNotifLabel: "Payer rapidement sans ouvrir l'application",
     quickPayNotifHint:
-      "Notif persistante · 50, 100, 200 ou 500 F vers ton dernier destinataire Pay",
-    smallPayWithoutPinLabel: "Petits montants sans code",
+      "Vous pouvez payer depuis une pastille notification, sans avoir besoin d'entrer dans l'application",
+    smallPayWithoutPinLabel: "Payer sans authentification",
     smallPayWithoutPinHint:
-      "En dessous de 500 F · max 2 000 F/jour et 5 000 F sans code avant de redemander le PIN",
+      "Vous pouvez payer des petits montants rapidement, allant de 1 à 1000F sans avoir besoin de vous authentifier.",
     quickPayNotifTitle: "Blyp — Paiement rapide",
     quickPayNotifBodyTo: "Vers {{name}} · choisis un montant",
+    quickPayNotifPickAmount: "Choisis un montant",
     quickPayNotifBodyEmpty:
-      "Approche quelqu’un en « Recevoir à proximité » pour payer depuis la notification",
+      "Aucune détection",
     quickPayNoRecipient:
-      "Personne à proximité. Active « Recevoir à proximité » sur l’autre téléphone.",
+      "Aucun commerçant à proximité. Le commerçant doit être visible (En ligne ou caisse sans connexion).",
     quickPayPinSub: "<amount>{{amount}}</amount> à {{name}}",
     quickPaySuccess: "{{amount}} envoyés à {{name}}.",
     quickPayNotifRebuildRequired:
@@ -551,13 +593,15 @@ export default {
     homeLastReceived: "Dernière réception",
     homeRecentReceived: "Réceptions du jour",
     homeLastReceivedEmpty: "Aucun paiement reçu aujourd’hui",
+    myQrCta: "Mon QR",
+    myQrA11y: "Afficher mon QR de paiement",
     receivedFlashA11y: "{{amount}} FCFA reçus",
     onlineLabel: "En ligne",
     onlineOn: "En ligne",
     onlineOff: "Hors ligne",
     onlineReconnecting: "En ligne…",
-    onlineNotificationTitle: "Blyp — En ligne",
-    onlineNotificationBody: "Diffusion active · visible pour les paiements",
+    onlineNotificationTitle: "Blyp",
+    onlineNotificationBody: "En ligne",
     onlineNotificationStop: "Arrêter",
     offlineCashierBanner: "Mode caisse sans connexion",
     offlineCashierBannerHint:
@@ -566,7 +610,7 @@ export default {
     offlineCashierExitA11y: "Désactiver le mode caisse sans connexion",
     offlineCashierOfferTitle: "Pas de connexion Internet",
     offlineCashierOfferMessage:
-      "Impossible d’activer « En ligne » sans Internet. Vous pouvez continuer à encaisser en mode caisse sans connexion :\n\n• Les clients paient via l’app Blyp (connexion requise côté client).\n• Votre écran affiche les encaissements déjà synchronisés ; le reste arrive à la reconnexion.\n• Ne quittez ce mode sans connexion que lorsque le réseau est rétabli, sinon vous ne pourrez plus encaisser normalement.\n• Toute fraude ou montant non confirmé par le serveur sera rejeté à la synchro.",
+      "Pas d’Internet : le mode caisse sans connexion s’active. Les clients paient via Blyp (connexion requise côté client). Les encaissements se confirment à la synchro.",
     offlineCashierOfferPrimary: "Travailler sans connexion",
     offlineCashierOfferCancel: "Annuler",
     offlineCashierAlreadyTitle: "Mode sans connexion actif",

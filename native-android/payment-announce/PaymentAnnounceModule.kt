@@ -61,9 +61,21 @@ class PaymentAnnounceModule(
   }
 
   @ReactMethod
-  fun announce(amountFcfa: Int, lang: String, txId: String?, promise: Promise) {
+  fun announce(
+    amountFcfa: Int,
+    lang: String,
+    txId: String?,
+    payerName: String?,
+    promise: Promise,
+  ) {
     try {
-      PaymentAnnounceController.announceFromJs(ctx, amountFcfa, lang, txId)
+      PaymentAnnounceController.announceFromJs(
+        ctx,
+        amountFcfa,
+        lang,
+        txId,
+        payerName?.trim()?.ifEmpty { null },
+      )
       promise.resolve(null)
     } catch (e: Exception) {
       promise.reject("ANNOUNCE", e.message, e)

@@ -1,6 +1,7 @@
 import { PeerAvatar } from "@/components/peers/PeerAvatar";
 import { CommerceSection } from "@/components/profile/CommerceSection";
 import { ProfileEditSheet } from "@/components/profile/ProfileEditSheet";
+import { ShellProfileIslandBack } from "@/components/profile/ShellProfileIslandBack";
 import { SignOutConfirmModal } from "@/components/profile/SignOutConfirmModal";
 import { createProfileStyles } from "@/components/profile/profileStyles";
 import { useAuth } from "@/contexts/AuthContext";
@@ -8,6 +9,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { useTaxiBroadcast } from "@/hooks/useTaxiBroadcast";
 import { resolveBleBroadcastAccount } from "@/lib/ble/broadcastAccount";
 import { showBroadcastFailureAlert } from "@/lib/ble/broadcastAlertMessage";
+import { openNativeShellPreview } from "@/lib/nativeShell";
 import { openDepositRoute } from "@/lib/nav/openDeposit";
 import { formatRegistrationFullName } from "@/lib/profile/parseRegistrationFullName";
 import {
@@ -290,6 +292,7 @@ export default function ProfileTabScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
+        <ShellProfileIslandBack />
         <View style={styles.header}>
           <Text style={styles.title}>{t("profile.title")}</Text>
           <Text style={styles.subtitle}>{t("profile.subtitle")}</Text>
@@ -721,6 +724,20 @@ export default function ProfileTabScreen() {
             </>
           )}
         </Pressable>
+
+        {__DEV__ && Platform.OS === "android" ? (
+          <Pressable
+            style={({ pressed }) => [
+              styles.signOutBtn,
+              pressed && styles.signOutBtnPressed,
+            ]}
+            onPress={() => void openNativeShellPreview()}
+            accessibilityRole="button"
+            accessibilityLabel={t("nativeShell.openPreview")}
+          >
+            <Text style={styles.signOutText}>{t("nativeShell.openPreview")}</Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.appMeta}>
           <Text style={styles.appMetaText}>{t("profile.appName")}</Text>

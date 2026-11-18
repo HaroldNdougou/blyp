@@ -12,7 +12,6 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.haroldndougou.blyp.MainActivity
 import com.haroldndougou.blyp.R
 
 /**
@@ -57,11 +56,16 @@ class BleBroadcastForegroundService : Service() {
     val channel =
       NotificationChannel(
         CHANNEL_ID,
-        "En ligne",
-        NotificationManager.IMPORTANCE_LOW,
+        getString(R.string.blyp_shell_commerce_online_notif_channel),
+        NotificationManager.IMPORTANCE_MIN,
       ).apply {
-        description = "Diffusion BLE taxi / commerce"
+        description = getString(R.string.blyp_shell_commerce_online_notif_body)
         setShowBadge(false)
+        setSound(null, null)
+        enableLights(false)
+        enableVibration(false)
+        vibrationPattern = null
+        lockscreenVisibility = Notification.VISIBILITY_SECRET
       }
     mgr.createNotificationChannel(channel)
   }
@@ -75,9 +79,7 @@ class BleBroadcastForegroundService : Service() {
       PendingIntent.getActivity(
         this,
         0,
-        Intent(this, MainActivity::class.java).apply {
-          flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        },
+        com.haroldndougou.blyp.shell.BlypShellEntry.primaryTaskIntent(this),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 
@@ -96,19 +98,22 @@ class BleBroadcastForegroundService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle(title)
       .setContentText(body)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setColor(0xFF5DC705.toInt())
+      .setSmallIcon(R.drawable.ic_stat_blyp)
       .setOngoing(true)
+      .setSilent(true)
+      .setShowWhen(false)
       .setOnlyAlertOnce(true)
       .setContentIntent(openApp)
       .addAction(0, stopLabel, stopPending)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
-      .setPriority(NotificationCompat.PRIORITY_LOW)
+      .setPriority(NotificationCompat.PRIORITY_MIN)
+      .setVisibility(NotificationCompat.VISIBILITY_SECRET)
+      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
       .build()
   }
 
   companion object {
-    const val CHANNEL_ID = "blyp_online"
+    const val CHANNEL_ID = "blyp_online_min"
     private const val NOTIFICATION_ID = 9001
     private const val ACTION_STOP = "com.haroldndougou.blyp.action.STOP_BLE_BROADCAST"
     private const val EXTRA_TITLE = "title"

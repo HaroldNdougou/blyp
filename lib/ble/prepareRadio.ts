@@ -8,6 +8,7 @@ import {
 import { isPayScanFocused } from "@/lib/ble/payScanGate";
 import { isBlePlxNativeAvailable } from "@/lib/ble/nativeAvailable";
 import {
+  bleNeedsLocation,
   checkBlePermissions,
   requestBlePermissions,
 } from "@/lib/ble/permissions";
@@ -30,6 +31,7 @@ const BT_SPIN_UP_MS = 2_500;
 const GPS_PROMPT_MS = 4_000;
 
 async function locationServicesOn(): Promise<boolean> {
+  if (!bleNeedsLocation()) return true;
   try {
     return await Location.hasServicesEnabledAsync();
   } catch {
@@ -95,6 +97,7 @@ async function promptEnableBluetooth(): Promise<boolean> {
 }
 
 async function ensureLocationServicesOn(): Promise<boolean> {
+  if (!bleNeedsLocation()) return true;
   try {
     if (await Location.hasServicesEnabledAsync()) return true;
     if (Platform.OS !== "android") return false;

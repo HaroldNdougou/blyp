@@ -2,6 +2,7 @@ import { CheckGlyph } from "@/components/pay/PayGlyphs";
 import { createPayOutcomeSheetStyles } from "@/components/pay/payOutcomeSheetStyles";
 import { useTheme } from "@/contexts/ThemeContext";
 import { formatFcfa } from "@/lib/formatFcfa";
+import { Ionicons } from "@expo/vector-icons";
 import React, { memo, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
@@ -18,17 +19,35 @@ export type PayOutcomeSheetData =
       title: string;
       message: string;
       recipientName?: string;
+      /** Bouton « Réessayer » + relance du paiement. */
+      retry?: boolean;
     };
 
 type Props = {
   outcome: PayOutcomeSheetData;
   onDismiss: () => void;
+  onRetry?: () => void;
 };
 
-function PayOutcomeSheetInner({ outcome, onDismiss }: Props) {
+function PayOutcomeSheetInner({ outcome, onDismiss, onRetry }: Props) {
   const { t } = useTranslation();
   const { colors } = useTheme();
   const styles = useMemo(() => createPayOutcomeSheetStyles(colors), [colors]);
+
+  const closeButton = (
+    <Pressable
+      style={({ pressed }) => [
+        styles.closeBtn,
+        pressed && styles.closeBtnPressed,
+      ]}
+      onPress={onDismiss}
+      hitSlop={10}
+      accessibilityRole="button"
+      accessibilityLabel={t("common.close")}
+    >
+      <Ionicons name="close" size={24} color={colors.textMuted} />
+    </Pressable>
+  );
 
   const recipientBlock = (name: string) => (
     <View style={styles.recipientBlock}>
@@ -53,6 +72,7 @@ function PayOutcomeSheetInner({ outcome, onDismiss }: Props) {
           accessibilityLabel={t("common.close")}
         />
         <View style={styles.card}>
+          {closeButton}
           <View
             style={styles.iconWrap}
             accessibilityLabel={t("pay.receiptStatusOk")}
@@ -91,6 +111,7 @@ function PayOutcomeSheetInner({ outcome, onDismiss }: Props) {
         accessibilityLabel={t("common.close")}
       />
       <View style={styles.card}>
+        {closeButton}
         <Text style={styles.titleError}>{outcome.title}</Text>
         {outcome.recipientName ? recipientBlock(outcome.recipientName) : null}
         <Text style={styles.message}>{outcome.message}</Text>

@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import {
   ApiError,
+  SessionReplaceCancelledError,
   fetchHealth,
   setOnboardingProfile,
   setOnboardingTransactionPin,
@@ -240,7 +241,10 @@ export default function PayRegisterOverlay({
     setOnboardingAvatarPickerOpen(true);
     try {
       const granted = await ensureImageLibraryPermission();
-      if (!granted) return;
+      if (!granted) {
+        blypAlert(t("register.profileTitle"), t("register.photoPermissionDenied"));
+        return;
+      }
       const assets = await pickImagesFromLibrary();
       const asset = assets?.[0];
       if (!asset?.uri) return;
@@ -364,6 +368,7 @@ export default function PayRegisterOverlay({
         setOnboardingPinConfirm("");
       }
     } catch (e) {
+      if (e instanceof SessionReplaceCancelledError) return;
       blypAlert(
         t("register.verificationTitle"),
         e instanceof ApiError ? e.message : t("common.invalidCode"),

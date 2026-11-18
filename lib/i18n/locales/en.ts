@@ -3,6 +3,27 @@ export default {
     title: "Demo profile",
     readOnly: "Demo profile: no real action is possible.",
   },
+  messagesIsland: {
+    title: "Messages",
+    body:
+      "React Native island opened from the Android shell. The conversation list will plug in here.",
+  },
+  nativeShell: {
+    openPreview: "Open native shell (dev)",
+    backToApp: "Back",
+  },
+  auth: {
+    sessionReplacedTitle: "Signed out",
+    sessionReplacedMessage:
+      "This account was just opened on another phone. Sign in here again if that was you.",
+    replaceSessionTitle: "Another phone is signed in",
+    replaceSessionMessage:
+      "This account is already open elsewhere. If you continue here, the other phone will be signed out.",
+    replaceSessionConfirm: "Use this device",
+    replaceSessionDoneTitle: "Signed in",
+    replaceSessionDoneMessage:
+      "The other phone was signed out. You are signed in on this device.",
+  },
   common: {
     cancel: "Cancel",
     close: "Close",
@@ -12,6 +33,7 @@ export default {
     pay: "Pay",
     fcfa: "FCFA",
     confirm: "Confirm",
+    retry: "Try again",
     ok: "OK",
     account: "Account",
     connection: "Sign in",
@@ -48,6 +70,7 @@ export default {
   },
   pay: {
     amountLabel: "Enter amount to pay",
+    searchingNearby: "Searching nearby…",
     amountLabelTo: "Amount to transfer to {{name}}",
     quickAmount: "Quick amount {{amount}} FCFA",
     availableBalance: "Balance {{amount}} FCFA",
@@ -80,6 +103,8 @@ export default {
     insufficientBalanceMessage:
       "Your balance ({{balance}} FCFA) does not cover this payment of {{amount}} FCFA. Top up your account to continue.",
     pinTitle: "PIN code",
+    smallPayLimitPinHint:
+      "No-PIN limit reached — enter your PIN to continue.",
     pinConfirmPayment:
       "Payment of <amount>{{amount}} FCFA</amount> to {{name}}",
     pinConfirmTransfer:
@@ -103,6 +128,10 @@ export default {
     pinWrongRemaining_one: "Incorrect PIN. {{count}} attempt remaining.",
     pinWrongRemaining_other: "Incorrect PIN. {{count}} attempts remaining.",
     paymentTitle: "Payment",
+    instantSettlementFailed:
+      "The payment could not be confirmed by the server. Your balance was restored.",
+    pendingConfirm_one: "{{count}} payment awaiting confirmation",
+    pendingConfirm_other: "{{count}} payments awaiting confirmation",
     offlineOfferTitle: "Network problem",
     offlineOfferMessage:
       "Pay offline? Your payment will send when you’re back online.",
@@ -117,6 +146,17 @@ export default {
     receiveNearbyOff: "Receive",
     receiveBlocksPay: "Turn off Receive to pay someone nearby.",
     receivedFlashA11y: "{{amount}} FCFA received",
+    qrScanTitle: "Scan QR code",
+    qrScanHint: "Frame the merchant or contact QR code",
+    qrScanPermission: "Allow camera access to scan a payment QR code.",
+    qrScanA11y: "Scan QR code",
+    qrInvalid: "This is not a Blyp payment QR code.",
+    qrShowTitle: "My payment QR",
+    qrShowHint: "Customers scan this to send you money.",
+    qrShowFallbackName: "Me",
+    qrFromScan: "From QR",
+    qrScanRebuild:
+      "QR scan needs an app rebuild on your phone. Stop Metro and run: npx expo run:android",
   },
   welcome: {
     lead: "Enter your phone number to sign in to Blyp.",
@@ -150,6 +190,7 @@ export default {
     addPhoto: "Add profile photo",
     skipPhotoForNow: "Not now",
     photoPickFailed: "Could not open the photo library.",
+    photoPermissionDenied: "Allow photo access in your phone settings.",
     photoOptional: "Photo optional",
     firstName: "First name",
     lastName: "Last name",
@@ -269,18 +310,19 @@ export default {
     announcePaymentsLabel: "Announce payments",
     announcePaymentsHint:
       "Turn on so your payments are announced out loud",
-    quickPayNotifLabel: "Pay from notification",
+    quickPayNotifLabel: "Pay quickly without opening the app",
     quickPayNotifHint:
-      "Persistent notification · 50, 100, 200 or 500 F to your last Pay recipient",
-    smallPayWithoutPinLabel: "Small amounts without PIN",
+      "You can pay from a notification chip without opening the app",
+    smallPayWithoutPinLabel: "Pay without authentication",
     smallPayWithoutPinHint:
-      "Under 500 F · max 2,000 F/day and 5,000 F without PIN before PIN is required again",
+      "You can pay small amounts quickly, from 1 to 1000 F, without having to authenticate.",
     quickPayNotifTitle: "Blyp — Quick pay",
     quickPayNotifBodyTo: "To {{name}} · pick an amount",
+    quickPayNotifPickAmount: "Pick an amount",
     quickPayNotifBodyEmpty:
-      "Move near someone with Receive nearby on to pay from the notification",
+      "No one detected",
     quickPayNoRecipient:
-      "Nobody nearby. Turn on Receive nearby on the other phone.",
+      "No merchant nearby. They must be visible (online or offline cashier mode).",
     quickPayPinSub: "<amount>{{amount}}</amount> to {{name}}",
     quickPaySuccess: "{{amount}} sent to {{name}}.",
     quickPayNotifRebuildRequired:
@@ -544,13 +586,15 @@ export default {
     homeLastReceived: "Last received",
     homeRecentReceived: "Received today",
     homeLastReceivedEmpty: "No payment received today",
+    myQrCta: "My QR",
+    myQrA11y: "Show my payment QR code",
     receivedFlashA11y: "{{amount}} FCFA received",
     onlineLabel: "Online",
     onlineOn: "Online",
     onlineOff: "Offline",
     onlineReconnecting: "Online…",
-    onlineNotificationTitle: "Blyp — Online",
-    onlineNotificationBody: "Broadcasting · visible for payments",
+    onlineNotificationTitle: "Blyp",
+    onlineNotificationBody: "Online",
     onlineNotificationStop: "Stop",
     offlineCashierBanner: "Offline cashier mode",
     offlineCashierBannerHint:

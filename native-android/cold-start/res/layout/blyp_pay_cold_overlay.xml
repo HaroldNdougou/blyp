@@ -1,0 +1,384 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/blyp_pay_cold_overlay_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_cold_start_bg"
+    android:clickable="true"
+    android:focusable="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingHorizontal="22dp"
+        android:paddingTop="28dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/blyp_cold_pay_success"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/blyp_shell_deposit_bg"
+            android:gravity="center"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:textColor="@color/blyp_cold_start_accent"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="20dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/blyp_cold_recipient_row"
+                android:contentDescription="@string/blyp_shell_pay_refresh_a11y"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <FrameLayout
+                    android:id="@+id/blyp_cold_recipient_thumb"
+                    android:layout_width="52dp"
+                    android:layout_height="52dp"
+                    android:layout_marginEnd="12dp"
+                    android:background="@drawable/blyp_cold_avatar">
+
+                    <TextView
+                        android:id="@+id/blyp_cold_recipient_initial"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="?"
+                        android:textColor="@color/blyp_cold_start_accent"
+                        android:textSize="20sp"
+                        android:textStyle="bold" />
+
+                    <ProgressBar
+                        android:id="@+id/blyp_cold_recipient_searching"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:indeterminateTint="@color/blyp_cold_start_accent"
+                        android:visibility="gone" />
+
+                    <ImageView
+                        android:id="@+id/blyp_cold_recipient_radio"
+                        android:layout_width="22dp"
+                        android:layout_height="22dp"
+                        android:layout_gravity="center"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/blyp_cold_radio_glyph"
+                        android:tint="@color/blyp_cold_start_accent"
+                        android:visibility="gone" />
+
+                    <ImageView
+                        android:id="@+id/blyp_cold_recipient_avatar"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="@string/blyp_shell_recipient_avatar_a11y"
+                        android:scaleType="centerCrop"
+                        android:visibility="gone" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:minHeight="52dp"
+                    android:gravity="center_vertical"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/blyp_cold_recipient_name"
+                        style="@style/BlypColdRecipientName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:singleLine="true"
+                        android:text="…" />
+
+                    <TextView
+                        android:id="@+id/blyp_cold_recipient_phone"
+                        style="@style/BlypColdRecipientPhone"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:singleLine="true"
+                        android:visibility="gone" />
+
+                    <TextView
+                        android:id="@+id/blyp_cold_radio_enable"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/blyp_cold_quick_chip"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="6dp"
+                        android:textColor="@color/blyp_cold_start_accent"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/blyp_pay_qr"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="@string/blyp_shell_pay_qr_a11y"
+                android:focusable="true"
+                android:padding="11dp"
+                android:src="@drawable/blyp_cold_qr_glyph"
+                android:tint="@color/blyp_cold_start_accent" />
+
+            <TextView
+                android:id="@+id/blyp_pay_top_up"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="@string/blyp_shell_pay_top_up_a11y"
+                android:focusable="true"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:text="+"
+                android:textColor="@color/blyp_cold_start_accent"
+                android:textSize="22sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/blyp_cold_amount_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:gravity="center"
+            android:letterSpacing="0.06"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:text="@string/blyp_cold_amount_label"
+            android:textColor="@color/blyp_cold_start_text_muted"
+            android:visibility="gone"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingTop="8dp">
+
+            <View
+                android:layout_width="52dp"
+                android:layout_height="1dp" />
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/blyp_cold_amount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFeatureSettings="tnum"
+                    android:includeFontPadding="false"
+                    android:letterSpacing="-0.01"
+                    android:maxLines="1"
+                    android:text="0"
+                    android:textColor="@color/blyp_cold_start_text"
+                    android:textSize="50sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="2dp"
+                    android:text="F"
+                    android:textColor="@color/blyp_cold_start_text_faint"
+                    android:textSize="19sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <FrameLayout
+                android:layout_width="52dp"
+                android:layout_height="44dp">
+
+                <ImageView
+                    android:id="@+id/blyp_pay_receive"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_gravity="end|center_vertical"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/blyp_shell_pay_receive_a11y"
+                    android:scaleType="center"
+                    android:src="@drawable/blyp_cold_receive_glyph"
+                    android:tint="@color/blyp_cold_start_text_muted"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/blyp_cold_fee"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:fontFeatureSettings="tnum"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:textColor="@color/blyp_cold_start_text_muted"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginTop="8dp"
+            android:layout_weight="1"
+            android:minHeight="28dp" />
+
+        <LinearLayout
+            android:id="@+id/blyp_cold_balance_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="2dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/blyp_cold_balance"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFeatureSettings="tnum"
+                android:textColor="@color/blyp_cold_start_text_muted"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/blyp_cold_balance_pending"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center"
+                android:textColor="@color/blyp_cold_start_placeholder"
+                android:textSize="12sp"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/blyp_cold_keypad"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp">
+
+            <LinearLayout style="@style/BlypColdKeyRow">
+
+                <TextView
+                    android:id="@+id/blyp_key_7"
+                    style="@style/BlypColdKey"
+                    android:text="7" />
+
+                <TextView
+                    android:id="@+id/blyp_key_8"
+                    style="@style/BlypColdKey"
+                    android:text="8" />
+
+                <TextView
+                    android:id="@+id/blyp_key_9"
+                    style="@style/BlypColdKey"
+                    android:text="9" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/BlypColdKeyRow">
+
+                <TextView
+                    android:id="@+id/blyp_key_4"
+                    style="@style/BlypColdKey"
+                    android:text="4" />
+
+                <TextView
+                    android:id="@+id/blyp_key_5"
+                    style="@style/BlypColdKey"
+                    android:text="5" />
+
+                <TextView
+                    android:id="@+id/blyp_key_6"
+                    style="@style/BlypColdKey"
+                    android:text="6" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/BlypColdKeyRow">
+
+                <TextView
+                    android:id="@+id/blyp_key_1"
+                    style="@style/BlypColdKey"
+                    android:text="1" />
+
+                <TextView
+                    android:id="@+id/blyp_key_2"
+                    style="@style/BlypColdKey"
+                    android:text="2" />
+
+                <TextView
+                    android:id="@+id/blyp_key_3"
+                    style="@style/BlypColdKey"
+                    android:text="3" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/BlypColdKeyRow">
+
+                <TextView
+                    android:id="@+id/blyp_key_back"
+                    style="@style/BlypColdKeyFn"
+                    android:contentDescription="@string/blyp_shell_pay_backspace_a11y"
+                    android:text="⌫" />
+
+                <TextView
+                    android:id="@+id/blyp_key_0"
+                    style="@style/BlypColdKey"
+                    android:text="0" />
+
+                <TextView
+                    android:id="@+id/blyp_key_pay"
+                    style="@style/BlypColdKeyPay"
+                    android:contentDescription="@string/blyp_shell_pay_now_a11y"
+                    android:text="↑" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/blyp_pay_quick_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp" />
+    </LinearLayout>
+</FrameLayout>

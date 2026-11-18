@@ -17,11 +17,21 @@ import {
 } from "./user.mjs";
 import { resolveAccountId } from "./accountId.mjs";
 import { isValidTxAmount } from "./wallet.mjs";
+import { emitAdminEvent } from "./adminEvents.mjs";
 
 const doc = getDocClient();
 
 /** Escrow non claimé : remboursement auto après 7 jours (job / claim path). */
 export const MONEY_TRANSFER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Journal admin : métadonnées uniquement — JAMAIS le contenu du message. */
+async function emitMessageEvent(userId, conversationId, messageId, kind, extra = {}) {
+  await emitAdminEvent({
+    type: "message",
+    userId,
+    data: { kind, conversationId, messageId, ...extra },
+  });
+}
 
 function convPk(conversationId) {
   return `CONV#${conversationId}`;
@@ -1285,6 +1295,9 @@ export async function sendTextMessage(
       createdAt: now,
     });
     queueUnregisteredPeerInvite(conversationId, userId, "text");
+    await emitMessageEvent(userId, conversationId, messageId, "text", {
+      forwarded,
+    });
   }
 
   return {
@@ -1364,6 +1377,7 @@ export async function sendVoiceMessage(
     { createdAt: now },
   );
   queueUnregisteredPeerInvite(conversationId, userId, "voice");
+  await emitMessageEvent(userId, conversationId, messageId, "voice");
 
   return {
     message: messagePublic({
@@ -1462,6 +1476,7 @@ export async function sendImageMessage(
     { createdAt: now },
   );
   queueUnregisteredPeerInvite(conversationId, userId, "image");
+  await emitMessageEvent(userId, conversationId, messageId, "image");
 
   return {
     message: messagePublic({
@@ -1580,6 +1595,7 @@ export async function sendDocumentMessage(
     },
   );
   queueUnregisteredPeerInvite(conversationId, userId, "document");
+  await emitMessageEvent(userId, conversationId, messageId, "document");
 
   return {
     message: messagePublic({
@@ -1939,6 +1955,21 @@ export async function sendMoneyMessage(
     amountFcfa: amount,
   });
   const balanceFcfa = await getUserBalance(userId);
+  await emitAdminEvent({
+    type: "transfer",
+    userId,
+    data: {
+      amountFcfa: amount,
+      transactionId: transferId,
+      via: "chat",
+      conversationId,
+      messageId,
+      payeeUserId: toUserId,
+      payeePhone: toPhone,
+      payeeName: peer.displayName || toPhone,
+      balanceAfterFcfa: balanceFcfa,
+    },
+  });
   const message = messagePublic({
     ...messageItem,
     moneyTransfer: transferPublic(transferItem),

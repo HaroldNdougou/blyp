@@ -6,6 +6,7 @@ import {
   UpdateCommand,
 } from "@aws-sdk/lib-dynamodb";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { emitAdminEvent } from "./adminEvents.mjs";
 import { getDocClient, getTableName } from "./dynamodb.mjs";
 import { makeTxReference, resolveTxReference } from "./txReference.mjs";
 import { getUserBalance, getUserProfile, userPk } from "./user.mjs";
@@ -239,6 +240,18 @@ export async function executeSyncDeposit(userId, amount, idempotencyKey) {
 
   const intent = await getDepositIntent(userId, depositIntentId);
   const balanceFcfa = await getUserBalance(userId);
+  await emitAdminEvent({
+    type: "deposit",
+    userId,
+    data: {
+      amountFcfa: amount,
+      depositIntentId,
+      transactionId: txId,
+      reference,
+      provider: "sync",
+      balanceAfterFcfa: balanceFcfa,
+    },
+  });
   return { intent, balanceFcfa, reused: false };
 }
 
@@ -424,6 +437,19 @@ export async function finalizePawapayDeposit(pawapayDepositId) {
       ],
     }),
   );
+
+  await emitAdminEvent({
+    type: "deposit",
+    userId,
+    data: {
+      amountFcfa: amount,
+      depositIntentId,
+      transactionId: txId,
+      reference,
+      provider: "pawapay",
+      providerRef: String(pawapayDepositId),
+    },
+  });
 
   return { ok: true };
 }
@@ -776,6 +802,25 @@ export async function executePayment(
     console.warn("[wallet] push enqueue import failed", err?.message ?? err);
   }
 
+  /** Journal admin (best-effort, ne bloque jamais le paiement). */
+  await emitAdminEvent({
+    type: target.type === "commerce" ? "payment" : "transfer",
+    userId,
+    data: {
+      amountFcfa: amount,
+      transactionId: txId,
+      reference,
+      payeeName: counterpartyName,
+      payeePhone: counterpartyPhone,
+      payeeAccountId: accountId,
+      payeeUserId:
+        target.type === "commerce" ? target.ownerUserId : target.userId,
+      commerceId: target.type === "commerce" ? target.commerceId : null,
+      commerceName: target.type === "commerce" ? counterpartyName : null,
+      balanceAfterFcfa: balanceFcfa,
+    },
+  });
+
   let paymentReceipt = null;
   if (target.type === "commerce") {
     try {
@@ -840,6 +885,8 @@ const RECEIVED_TX_TYPES = new Set([
   "MONEY_RECALL",
   "MONEY_EXPIRE_REFUND",
   "POCKET_OUT",
+  /** Ajustement souverain (dashboard admin) : crédit. */
+  "ADMIN_CREDIT",
 ]);
 
 function isReceivedTxType(type) {
@@ -850,6 +897,9 @@ function txCounterpartyName(t) {
   const raw = String(t.counterpartyName ?? "").trim();
   if (raw && raw !== "Message Money") return raw;
   if (t.type === "DEPOSIT") return "Rechargement";
+  if (t.type === "ADMIN_CREDIT" || t.type === "ADMIN_DEBIT") {
+    return raw || "Ajustement Blyp";
+  }
   if (t.type === "RECEIVED" || t.type === "MONEY_CLAIM") return "Paiement reçu";
   return raw || "Paiement";
 }

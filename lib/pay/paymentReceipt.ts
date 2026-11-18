@@ -3,6 +3,17 @@ import { PAY_RECEIPT_ED25519_PUBLIC_KEY_B64 } from "@/lib/pay/paymentReceiptEd25
 
 export const PAY_RECEIPT_TTL_MS = 60_000;
 export const PAY_RECEIPT_VERSION = 2;
+export const PAY_RECEIPT_BLE_VERSION = 2;
+
+/** HMAC compact retiré (relais Ed25519) — aligné sur `aws/lib/paymentReceipt.mjs`. */
+export function verifyCompactBleMac(_input: {
+  amountFcfa: number;
+  txFp: string;
+  recipientAccountId: string;
+  mac8: Uint8Array;
+}): boolean {
+  return false;
+}
 
 export type CommercePaymentReceipt = {
   v: 2;

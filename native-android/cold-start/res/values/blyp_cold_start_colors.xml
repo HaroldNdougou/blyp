@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="blyp_cold_start_bg">#FFFFFF</color>
+    <color name="blyp_cold_start_key_bg">#1A000000</color>
+    <color name="blyp_cold_start_key_border">#E8E8E8</color>
+    <color name="blyp_cold_start_accent">#5DC705</color>
+    <color name="blyp_cold_start_accent_dark">#4BB004</color>
+    <color name="blyp_cold_start_accent_on">#FFFFFF</color>
+    <color name="blyp_cold_start_key_text">#222222</color>
+    <color name="blyp_cold_start_text">#222222</color>
+    <color name="blyp_cold_start_text_muted">#888888</color>
+    <color name="blyp_cold_start_text_faint">#AAAAAA</color>
+    <color name="blyp_cold_start_placeholder">#CCCCCC</color>
+    <color name="blyp_cold_start_keypad_bg">#F3F3F3</color>
+    <color name="blyp_cold_start_keypad_fn">#EEEEEE</color>
+    <color name="blyp_cold_start_keypad_pressed">#E0E0E0</color>
+    <color name="blyp_cold_start_keypad_icon">#555555</color>
+    <color name="blyp_cold_start_disabled_button">#CCCCCC</color>
+    <color name="blyp_cold_start_surface_muted">#F5F5F5</color>
+    <color name="blyp_cold_start_border">#EEEEEE</color>
+    <color name="blyp_cold_start_border_light">#F0F0F0</color>
+</resources>

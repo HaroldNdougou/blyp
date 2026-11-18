@@ -40,6 +40,13 @@ export function createPayHomeStyles(c: ThemeColors) {
       color: c.textMuted,
       fontVariant: ["tabular-nums"],
     },
+    payBalancePendingText: {
+      fontSize: 12,
+      fontWeight: "500",
+      color: c.placeholder,
+      marginTop: 2,
+      textAlign: "center",
+    },
     payLineFcfaSuffix: {
       fontSize: 10,
       fontWeight: "600",
@@ -190,6 +197,14 @@ export function createPayHomeStyles(c: ThemeColors) {
       fontSize: 11,
       fontWeight: "600",
       color: c.destructive,
+      lineHeight: 15,
+      marginBottom: 10,
+      textAlign: "center",
+    },
+    payPinModalHint: {
+      fontSize: 11,
+      fontWeight: "500",
+      color: c.textSecondary,
       lineHeight: 15,
       marginBottom: 10,
       textAlign: "center",

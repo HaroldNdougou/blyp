@@ -5,7 +5,17 @@
     <string name="quick_pay_success">Paiement envoyé</string>
     <string name="quick_pay_failed">Paiement impossible</string>
     <string name="quick_pay_insufficient">Solde insuffisant</string>
-    <string name="quick_pay_not_ready">Configure un paiement sur Pay d’abord</string>
+    <string name="quick_pay_not_ready">Ouvre Blyp sur Pay une fois (commerçant détecté ou paiement effectué).</string>
+    <string name="quick_pay_no_recipient">Aucun commerçant à proximité. Il doit être visible pour encaisser.</string>
+    <string name="quick_pay_not_configured">Active le paiement rapide dans Profil et paie une fois sur Pay.</string>
     <string name="quick_pay_blyp_pin_title">Code PIN Blyp</string>
     <string name="quick_pay_blyp_pin_wrong">PIN incorrect</string>
+    <string name="quick_pay_other_amount">Autre montant</string>
+    <string name="quick_pay_other_chip">Autre</string>
+    <string name="quick_pay_amount_title">Autre montant</string>
+    <string name="quick_pay_amount_hint">Montant</string>
+    <string name="quick_pay_amount_validate">Valider</string>
+    <string name="quick_pay_amount_invalid">Indique un montant</string>
+    <string name="quick_pay_pay_sum">Payer %1$s</string>
+    <string name="quick_pay_scan_chip">Scanner</string>
 </resources>

@@ -9,7 +9,7 @@ let cached: boolean | null = null;
 let hydratePromise: Promise<boolean> | null = null;
 
 /**
- * Préférence « annoncer les paiements » — défaut OFF.
+ * Préférence « annoncer les paiements » — défaut ON.
  * SecureStore + RAM ; jamais sur le chemin splash.
  */
 export function getAnnouncePaymentsCached(): boolean {
@@ -22,9 +22,9 @@ export async function hydrateAnnouncePaymentsPref(): Promise<boolean> {
   hydratePromise = (async () => {
     try {
       const v = await SecureStore.getItemAsync(KEY);
-      cached = v === "1";
+      cached = v !== "0";
     } catch {
-      cached = false;
+      cached = true;
     }
     void syncAnnouncePrefNative(cached === true, resolveAppLanguage());
     return cached;
@@ -39,8 +39,7 @@ export async function hydrateAnnouncePaymentsPref(): Promise<boolean> {
 export async function setAnnouncePaymentsPref(enabled: boolean): Promise<void> {
   cached = enabled;
   try {
-    if (enabled) await SecureStore.setItemAsync(KEY, "1");
-    else await SecureStore.deleteItemAsync(KEY);
+    await SecureStore.setItemAsync(KEY, enabled ? "1" : "0");
   } catch {
     /* best effort */
   }

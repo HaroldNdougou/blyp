@@ -1,18 +1,19 @@
 ---
-description: Blyp — stratégie hybride RN + natif ciblé + infra + tuning continu (réf. WhatsApp/Telegram)
+description: Blyp — RN restant (îlot Messages v1) + natif produit ; voir blyp-native-client-target
 alwaysApply: true
 ---
 
-# Blyp — hybride RN / natif / infra
+# Blyp — hybride transition (RN îlot + natif produit)
 
-Détail complet : **`docs/HYBRIDE-RN-NATIF.md`**.  
-Discipline quotidienne vitesse : **`blyp-perf-light.mdc`**.  
-Chaque feature : **`blyp-feature-gates.mdc`** + **`docs/CHECKLIST-NOUVELLE-FEATURE.md`** (non négociable avant d’ajouter du natif).
+**Cible produit** : **`blyp-native-client-target.mdc`** + **`docs/BLYP-CLIENT-NATIF.md`**.  
+Historique hybride : **`docs/HYBRIDE-RN-NATIF.md`**.  
+Perf : **`blyp-perf-light.mdc`** · gates : **`blyp-feature-gates.mdc`**.
 
-## Posture
+## Posture (migration)
 
-- **RN (Expo)** = coquille produit : écrans, wallet, cache-first, optimiste, i18n, thème.
-- **Natif** = **moteurs chirurgicaux** uniquement (fil/gestes, voix, decode/thumb, BLE, Intent fichiers) — pas une réécriture complète.
+- **Natif** = **coquille produit v1** : Pay, Historique, Profil, auth, sync local, WS wallet (Android-first).
+- **RN (Expo)** = **îlot Messages v1** uniquement (liste + fil) — trop lourd pour la première vague ; pas de nouveaux écrans RN hors Messages.
+- **Natif modules** = cold start, realtime, BLE, quick pay, push — intégrés au shell, pas des POC isolés.
 - **Infra** = réseau invisible : delta, push → cache, S3+CloudFront, idempotence wallet, région Afrique.
 - **Tuning continu** = budgets sur **Redmi 9C** ; régression perçue = bug bloquant.
 
@@ -49,9 +50,9 @@ Chaque feature : **`blyp-feature-gates.mdc`** + **`docs/CHECKLIST-NOUVELLE-FEATU
 
 ## Interdit
 
-- « On fera natif plus tard » en laissant refetch au focus ou lag sur listes.
-- Modules natifs sans hotspot identifié.
-- Abandonner cache-first parce que la stack est RN.
+- « On fera natif plus tard » sur Pay/Historique/Profil en ajoutant du RN.
+- Nouveaux écrans RN hors **îlot Messages v1**.
+- Abandonner cache-first parce que la stack migre.
 
 ## Ordre stratégique
 

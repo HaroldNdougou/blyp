@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="32dp">
+
+        <ImageView
+            android:id="@+id/blyp_pin_change_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginStart="-12dp"
+            android:contentDescription="@string/blyp_shell_scan_back"
+            android:padding="12dp"
+            android:src="@drawable/blyp_shell_ic_back" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/blyp_shell_pin_bootstrap_title"
+            android:textColor="@color/blyp_shell_text"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/blyp_pin_change_lead"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/blyp_shell_pin_change_current"
+            android:textColor="@color/blyp_shell_text_secondary"
+            android:textSize="14sp" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="72dp"
+            android:layout_marginTop="28dp">
+
+            <LinearLayout
+                android:id="@+id/blyp_pin_change_cells"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:layout_gravity="center"
+                android:gravity="bottom"
+                android:orientation="horizontal" />
+
+            <EditText
+                android:id="@+id/blyp_pin_change_input"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:alpha="0"
+                android:background="@android:color/transparent"
+                android:contentDescription="@string/blyp_shell_pin_bootstrap_title"
+                android:cursorVisible="false"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:importantForAutofill="no"
+                android:inputType="numberPassword"
+                android:longClickable="false"
+                android:maxLength="4"
+                android:textColor="@android:color/transparent"
+                tools:ignore="UnusedAttribute" />
+        </FrameLayout>
+    </LinearLayout>
+</ScrollView>

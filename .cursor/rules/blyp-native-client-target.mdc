@@ -1,0 +1,32 @@
+---
+description: Blyp — cible client natif (app entière) ; Messages en îlot RN v1
+alwaysApply: true
+---
+
+# Blyp — client natif (cible produit)
+
+Référence : **`docs/BLYP-CLIENT-NATIF.md`**.  
+Infra : **`blyp-architecture-cible.mdc`**. Perf : **`blyp-perf-light.mdc`** · gates : **`blyp-feature-gates.mdc`**.
+
+## Décision
+
+- **Cible** : UI **native** (Android d’abord, Redmi 9C) pour **toute l’app**, pas seulement Pay ou cold start.
+- **v1 sans Messages** : liste + fil chat **restent RN** (îlot) ; tout le reste du parcours quotidien **se porte en natif**.
+- **RN legacy** : ne pas étendre RN pour **nouvelles** features Pay / Historique / Profil / wallet — porter en natif ou reporter.
+
+## Posture agents
+
+1. Nouveau travail **écran wallet / Pay / historique / profil / auth** → **Kotlin** (shell `native-android/` ou module app dédié), pas nouvel écran Expo sauf bugfix îlot Messages.
+2. Réutiliser modules existants : `cold-start`, `realtime-engine`, `quick-pay-notif`, `payment-announce`, `cashier-gatt`, BLE.
+3. **Contrats** : même API AWS, frames WS (`lib/realtime/blypWsFrame.ts` ↔ `BlypWsFrame.kt`), idempotence wallet, cache-first avant réseau.
+4. Messages v1 : toucher `app/` messages/chat seulement si bug ou contrat îlot ; pas de « refonte fil native » sans ticket phase 2.
+
+## Interdit
+
+- Traiter le clavier cold start natif comme **fin** de la stratégie perf — c’est une brique vers **Pay natif complet**.
+- Ajouter des écrans RN hors Messages en v1 « par rapidité ».
+- Abandonner cache-first / offline parce que « on passera natif ».
+
+## Livrable v1
+
+Shell natif + Pay + Historique + Profil + moteur local + WS wallet ; tab Messages → îlot RN ; cold start Pay sans dépendre du handoff JS clavier.

@@ -1,0 +1,366 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical">
+
+    <ViewFlipper
+        android:id="@+id/blyp_onboarding_flipper"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingHorizontal="24dp"
+                android:paddingTop="32dp"
+                android:paddingBottom="32dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blyp_shell_onboarding_name_title"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_onboarding_name_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+
+                <EditText
+                    android:id="@+id/blyp_onboarding_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="20dp"
+                    android:background="@drawable/blyp_shell_deposit_bg"
+                    android:hint="@string/blyp_shell_onboarding_name_hint"
+                    android:inputType="textPersonName|textCapWords"
+                    android:paddingHorizontal="16dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textColorHint="@color/blyp_shell_text_secondary"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_name_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="28dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_continue"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </ScrollView>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingHorizontal="24dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="32dp">
+
+                <ImageView
+                    android:id="@+id/blyp_onboarding_photo_back"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="start"
+                    android:layout_marginStart="-12dp"
+                    android:contentDescription="@string/blyp_shell_scan_back"
+                    android:padding="12dp"
+                    android:src="@drawable/blyp_shell_ic_back" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blyp_shell_onboarding_photo_title"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_onboarding_photo_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+
+                <FrameLayout
+                    android:id="@+id/blyp_onboarding_photo_frame"
+                    android:layout_width="120dp"
+                    android:layout_height="120dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@drawable/blyp_shell_icon_received_bg"
+                    android:clickable="false"
+                    android:contentDescription="@string/blyp_shell_profile_avatar_a11y"
+                    android:focusable="false">
+
+                    <TextView
+                        android:id="@+id/blyp_onboarding_photo_initial"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="?"
+                        android:textColor="@color/blyp_shell_text"
+                        android:textSize="40sp"
+                        android:textStyle="bold" />
+
+                    <ImageView
+                        android:id="@+id/blyp_onboarding_photo"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:contentDescription="@string/blyp_shell_profile_avatar_a11y"
+                        android:scaleType="matrix"
+                        android:visibility="gone" />
+
+                    <FrameLayout
+                        android:id="@+id/blyp_onboarding_photo_busy"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:background="@drawable/blyp_shell_photo_busy"
+                        android:clickable="false"
+                        android:visibility="gone">
+
+                        <ProgressBar
+                            style="?android:attr/progressBarStyleSmall"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:indeterminateTint="@color/blyp_shell_accent" />
+                    </FrameLayout>
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_photo_pick"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="20dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_onboarding_photo_pick"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_photo_camera"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_onboarding_photo_camera"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_photo_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="16dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_continue"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_photo_skip"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_onboarding_photo_skip"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </ScrollView>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingHorizontal="24dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="32dp">
+
+                <ImageView
+                    android:id="@+id/blyp_onboarding_pin_back"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="start"
+                    android:layout_marginStart="-12dp"
+                    android:contentDescription="@string/blyp_shell_scan_back"
+                    android:padding="12dp"
+                    android:src="@drawable/blyp_shell_ic_back" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blyp_shell_onboarding_pin_title"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_onboarding_pin_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:layout_marginTop="28dp">
+
+                    <LinearLayout
+                        android:id="@+id/blyp_onboarding_pin_cells"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:layout_gravity="center"
+                        android:gravity="bottom"
+                        android:orientation="horizontal" />
+
+                    <EditText
+                        android:id="@+id/blyp_onboarding_pin"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:alpha="0"
+                        android:focusable="true"
+                        android:focusableInTouchMode="true"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="@string/blyp_shell_onboarding_pin_title"
+                        android:cursorVisible="false"
+                        android:inputType="numberPassword"
+                        android:longClickable="false"
+                        android:maxLength="4"
+                        android:textColor="@android:color/transparent" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_pin_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="28dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_auth_continue"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </ScrollView>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fillViewport="true">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:paddingHorizontal="24dp"
+                android:paddingTop="8dp"
+                android:paddingBottom="32dp">
+
+                <ImageView
+                    android:id="@+id/blyp_onboarding_pin_confirm_back"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:layout_gravity="start"
+                    android:layout_marginStart="-12dp"
+                    android:contentDescription="@string/blyp_shell_scan_back"
+                    android:padding="12dp"
+                    android:src="@drawable/blyp_shell_ic_back" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/blyp_shell_onboarding_pin_title"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/blyp_shell_onboarding_pin_confirm_lead"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="14sp" />
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="72dp"
+                    android:layout_marginTop="28dp">
+
+                    <LinearLayout
+                        android:id="@+id/blyp_onboarding_pin_confirm_cells"
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:layout_gravity="center"
+                        android:gravity="bottom"
+                        android:orientation="horizontal" />
+
+                    <EditText
+                        android:id="@+id/blyp_onboarding_pin_confirm"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:alpha="0"
+                        android:focusable="true"
+                        android:focusableInTouchMode="true"
+                        android:background="@android:color/transparent"
+                        android:contentDescription="@string/blyp_shell_onboarding_pin_confirm_lead"
+                        android:cursorVisible="false"
+                        android:inputType="numberPassword"
+                        android:longClickable="false"
+                        android:maxLength="4"
+                        android:textColor="@android:color/transparent" />
+                </FrameLayout>
+
+                <TextView
+                    android:id="@+id/blyp_onboarding_pin_finish"
+                    android:layout_width="match_parent"
+                    android:layout_height="56dp"
+                    android:layout_marginTop="28dp"
+                    android:background="@drawable/blyp_shell_filter_chip_selected"
+                    android:gravity="center"
+                    android:text="@string/blyp_shell_onboarding_finish"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </ScrollView>
+    </ViewFlipper>
+</LinearLayout>

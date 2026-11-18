@@ -3,13 +3,23 @@ package com.haroldndougou.blyp.paymentannounce
 import android.util.Log
 import com.google.firebase.messaging.RemoteMessage
 import com.haroldndougou.blyp.BuildConfig
+import com.haroldndougou.blyp.shell.BlypShellPush
 import expo.modules.notifications.service.ExpoFirebaseMessagingService
 
 /**
  * Paiement reçu : notif native + voix — ne dépend pas d’Expo data-only.
  */
 class BlypFirebaseMessagingService : ExpoFirebaseMessagingService() {
+  override fun onNewToken(token: String) {
+    super.onNewToken(token)
+    BlypShellPush.onNewFcmToken(applicationContext)
+  }
+
   override fun onMessageReceived(remoteMessage: RemoteMessage) {
+    if (AdminAlertPresenter.isAdminAlert(remoteMessage.data)) {
+      AdminAlertPresenter.show(applicationContext, remoteMessage.data)
+      return
+    }
     val payment = PaymentPushParser.parsePaymentReceived(remoteMessage.data)
     if (payment != null) {
       if (BuildConfig.DEBUG) {
