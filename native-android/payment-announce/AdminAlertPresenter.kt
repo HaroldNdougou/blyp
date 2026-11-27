@@ -21,7 +21,7 @@ import com.haroldndougou.blyp.shell.BlypShellEntry
 object AdminAlertPresenter {
   const val TYPE = "admin_alert"
   private const val CHANNEL_ID = "admin_alerts"
-  private const val ALARM_CHANNEL_ID = "blyp_money_alarm"
+  private const val ALARM_CHANNEL_ID = "blyp_money_alarm_v2"
   private val ALARM_VIBE =
     longArrayOf(0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600)
 
@@ -96,6 +96,7 @@ object AdminAlertPresenter {
   private fun ensureAlarmChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    mgr.deleteNotificationChannel("blyp_money_alarm")
     if (mgr.getNotificationChannel(ALARM_CHANNEL_ID) != null) return
     val alarm = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
     val audio =

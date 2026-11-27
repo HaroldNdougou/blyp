@@ -160,19 +160,25 @@ export async function sendAdminPush({ title, eventId, eventType }) {
   const messages = [];
   const seen = new Set();
   const alarm = eventType === "deposit" || eventType === "withdrawal";
-  const pushExpo = (token) => {
+  const data = {
+    type: "admin_alert",
+    title: line,
+    message: line,
+    eventId: String(eventId ?? ""),
+    eventType: String(eventType ?? ""),
+    alarm: alarm ? "1" : "0",
+    channelId: alarm ? "blyp_money_alarm_v2" : "admin_alerts",
+  };
+  /** Blyp (téléphones fondateur) : data-only → sonnerie native même app tuée. */
+  const pushBlyp = (token) => {
     if (!token || seen.has(token)) return;
     seen.add(token);
-    const data = {
-      type: "admin_alert",
-      title: line,
-      message: line,
-      eventId: String(eventId ?? ""),
-      eventType: String(eventType ?? ""),
-      alarm: alarm ? "1" : "0",
-      channelId: alarm ? "blyp_money_alarm" : "admin_alerts",
-      sound: alarm ? "default" : "",
-    };
+    messages.push({ to: token, priority: "high", _contentAvailable: true, data });
+  };
+  /** App admin : notif système (canal alarme) même process mort. */
+  const pushAdmin = (token) => {
+    if (!token || seen.has(token)) return;
+    seen.add(token);
     if (alarm) {
       messages.push({
         to: token,
@@ -180,23 +186,18 @@ export async function sendAdminPush({ title, eventId, eventType }) {
         body: line,
         sound: "default",
         priority: "high",
-        channelId: "blyp_money_alarm",
+        channelId: "blyp_money_alarm_v2",
         data,
       });
     } else {
-      messages.push({
-        to: token,
-        priority: "high",
-        _contentAvailable: true,
-        data,
-      });
+      messages.push({ to: token, priority: "high", _contentAvailable: true, data });
     }
   };
   for (const dev of adminDevices) {
     const token = String(dev.token ?? "");
-    if (EXPO_TOKEN_RE.test(token)) pushExpo(token);
+    if (EXPO_TOKEN_RE.test(token)) pushAdmin(token);
   }
-  for (const token of await founderExpoTokens()) pushExpo(token);
+  for (const token of await founderExpoTokens()) pushBlyp(token);
   if (!messages.length) return { skipped: "NO_DEVICES" };
 
   const res = await fetch(EXPO_PUSH_URL, {

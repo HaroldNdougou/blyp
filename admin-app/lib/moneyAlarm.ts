@@ -15,7 +15,8 @@ export function moneyLine(kind: "deposit" | "withdrawal", amount: number, phone:
 export async function ringMoney(title: string) {
   Vibration.vibrate(VIBE, false);
   if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("blyp_money_alarm", {
+    await Notifications.deleteNotificationChannelAsync("blyp_money_alarm").catch(() => {});
+    await Notifications.setNotificationChannelAsync("blyp_money_alarm_v2", {
       name: "Demandes d'argent",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: VIBE,
@@ -33,7 +34,7 @@ export async function ringMoney(title: string) {
       vibrate: VIBE,
       priority: Notifications.AndroidNotificationPriority.MAX,
       sticky: true,
-      data: { channelId: "blyp_money_alarm" },
+      data: { channelId: "blyp_money_alarm_v2" },
     },
     trigger: null,
   }).catch(() => {});

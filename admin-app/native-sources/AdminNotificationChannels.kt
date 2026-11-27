@@ -10,7 +10,7 @@ import android.os.Build
 
 /** Copier dans android/.../blypadmin après prebuild. */
 object AdminNotificationChannels {
-  private const val MONEY_ID = "blyp_money_alarm"
+  private const val MONEY_ID = "blyp_money_alarm_v2"
   private const val ADMIN_ID = "admin_alerts"
   private val MONEY_VIBE =
     longArrayOf(0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600)
@@ -18,6 +18,7 @@ object AdminNotificationChannels {
   fun ensure(app: Application) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val mgr = app.getSystemService(NotificationManager::class.java) ?: return
+    mgr.deleteNotificationChannel("blyp_money_alarm")
 
     val alarm = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
     val alarmAudio =

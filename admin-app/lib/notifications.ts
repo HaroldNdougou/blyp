@@ -28,7 +28,8 @@ Notifications.setNotificationHandler({
 /** Canaux Android (secours si le natif n’a pas encore tourné). */
 export async function ensureAndroidChannels(): Promise<void> {
   if (Platform.OS !== "android") return;
-  await Notifications.setNotificationChannelAsync("blyp_money_alarm", {
+  await Notifications.deleteNotificationChannelAsync("blyp_money_alarm").catch(() => {});
+  await Notifications.setNotificationChannelAsync("blyp_money_alarm_v2", {
     name: "Demandes d'argent",
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600],

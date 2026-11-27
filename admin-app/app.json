@@ -49,7 +49,7 @@
         {
           "icon": "./assets/icon.png",
           "color": "#5dc705",
-          "defaultChannel": "blyp_money_alarm"
+          "defaultChannel": "blyp_money_alarm_v2"
         }
       ]
     ],
