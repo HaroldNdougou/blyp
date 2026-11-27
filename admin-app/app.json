@@ -22,7 +22,7 @@
     },
     "android": {
       "package": "com.haroldndougou.blypadmin",
-      "versionCode": 8,
+      "versionCode": 9,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",

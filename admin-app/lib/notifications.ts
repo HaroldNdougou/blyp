@@ -4,36 +4,52 @@ import { Platform } from "react-native";
 import { api } from "./api";
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = (notification.request.content.data ?? {}) as Record<string, unknown>;
+    const eventType = String(data.eventType ?? "");
+    const money =
+      eventType === "deposit" ||
+      eventType === "withdrawal" ||
+      data.alarm === "1" ||
+      data.alarm === 1;
+    return {
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+      priority: money
+        ? Notifications.AndroidNotificationPriority.MAX
+        : Notifications.AndroidNotificationPriority.HIGH,
+    };
+  },
 });
+
+/** Canaux Android (secours si le natif n’a pas encore tourné). */
+export async function ensureAndroidChannels(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  await Notifications.setNotificationChannelAsync("blyp_money_alarm", {
+    name: "Demandes d'argent",
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600],
+    enableVibrate: true,
+    sound: "default",
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    bypassDnd: true,
+  });
+  await Notifications.setNotificationChannelAsync("admin_alerts", {
+    name: "Alertes Blyp",
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 120, 250],
+    lightColor: "#5dc705",
+    sound: "default",
+  });
+}
 
 export async function ensurePushRegistered(): Promise<{ ok: boolean; reason?: string }> {
   if (!Device.isDevice) return { ok: false, reason: "simulator" };
 
-  if (Platform.OS === "android") {
-    await Notifications.setNotificationChannelAsync("admin_alerts", {
-      name: "Alertes Blyp",
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 250, 120, 250],
-      lightColor: "#5dc705",
-      sound: "default",
-    });
-    await Notifications.setNotificationChannelAsync("blyp_money_alarm", {
-      name: "Demandes d'argent",
-      importance: Notifications.AndroidImportance.MAX,
-      vibrationPattern: [0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600],
-      enableVibrate: true,
-      sound: "default",
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
-    }).catch(() => {});
-  }
+  await ensureAndroidChannels();
 
   const current = await Notifications.getPermissionsAsync();
   let status = current.status;

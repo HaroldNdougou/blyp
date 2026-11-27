@@ -5,8 +5,10 @@ import { useEffect, useMemo } from "react";
 import { StyleSheet, View } from "react-native";
 import { AppLoader } from "../components/AppLoader";
 import { ThemeProvider, useTheme } from "../contexts/ThemeContext";
+import { ensureAndroidChannels } from "../lib/notifications";
 
 void SplashScreen.hideAsync();
+void ensureAndroidChannels();
 
 function RootNavigation() {
   const { colors, statusBarStyle } = useTheme();
