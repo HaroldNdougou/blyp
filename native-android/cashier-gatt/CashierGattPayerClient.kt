@@ -241,7 +241,7 @@ object CashierGattPayerClient {
         .toString(StandardCharsets.UTF_8)
         .trim()
         .uppercase()
-    if (!acc.startsWith("BLYP-C-")) return null
+    if (!acc.startsWith("BLYP-C-") && !acc.startsWith("BLYP-U-")) return null
     return sessionId to acc
   }
 

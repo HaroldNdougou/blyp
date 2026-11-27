@@ -160,7 +160,7 @@ async function loadHiddenMessageIds(conversationId, userId) {
   return out;
 }
 
-const REACTION_EMOJIS = new Set(["👍", "❤️", "😂", "😮", "😢", "🙏"]);
+const REACTION_EMOJIS = new Set(["❤️", "👍", "👎", "😂", "‼️", "❓", "😮", "😢", "🙏"]);
 const REACTION_SYNC_PREFIXES = ["BLYP_R|", "\u200b\u200bR|"];
 
 function parseReactionSyncBody(body) {
@@ -890,6 +890,12 @@ export async function markConversationRead(userId, conversationId) {
   await notifyConversationReceipt(conversationId, userId, "read", now);
   await touchMemberPresenceAt(userId, conversationId);
   await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "conversation_receipt",
+    conversationId,
+    kind: "read",
+    at: now,
+  });
+  await notifyConversationRealtimePeers(conversationId, userId, {
     type: "conversation_presence",
     conversationId,
     at: now,
@@ -1294,6 +1300,17 @@ export async function sendTextMessage(
     await notifyMessagePush(conversationId, userId, messageId, preview, "text", {
       createdAt: now,
     });
+    const senderProfile = await getUserProfile(userId);
+    await notifyConversationRealtimePeers(conversationId, userId, {
+      type: "message_received",
+      conversationId,
+      messageId,
+      fromName: senderLabel(senderProfile),
+      body: text,
+      messageType: "text",
+      senderUserId: userId,
+      createdAt: now,
+    });
     queueUnregisteredPeerInvite(conversationId, userId, "text");
     await emitMessageEvent(userId, conversationId, messageId, "text", {
       forwarded,
@@ -1376,6 +1393,20 @@ export async function sendVoiceMessage(
     "voice",
     { createdAt: now },
   );
+  const senderProfile = await getUserProfile(userId);
+  await notifyConversationRealtimePeers(conversationId, userId, {
+    type: "message_received",
+    conversationId,
+    messageId,
+    fromName: senderLabel(senderProfile),
+    body: preview,
+    messageType: "voice",
+    senderUserId: userId,
+    createdAt: now,
+    voiceKey: key,
+    durationMs: dur,
+    clientId: clientId || "",
+  });
   queueUnregisteredPeerInvite(conversationId, userId, "voice");
   await emitMessageEvent(userId, conversationId, messageId, "voice");
 

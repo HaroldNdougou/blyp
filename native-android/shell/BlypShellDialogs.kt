@@ -105,11 +105,12 @@ object BlypShellDialogs {
       } else {
         titleView.text = titleText
       }
-      val messageText = message?.toString()?.trim().orEmpty()
+      val rawMessage = message
+      val messageText = rawMessage?.toString()?.trim().orEmpty()
       if (messageText.isEmpty()) {
         messageView.visibility = View.GONE
       } else {
-        messageView.text = messageText
+        messageView.text = if (rawMessage is android.text.Spanned) rawMessage else messageText
         if (titleText.isEmpty()) {
           (messageView.layoutParams as ViewGroup.MarginLayoutParams).topMargin = 0
         }
@@ -217,7 +218,10 @@ object BlypShellDialogs {
 
     private fun button(dialog: Dialog, spec: ButtonSpec, gap: Boolean): TextView {
       val signOut = spec.text.toString() == context.getString(R.string.blyp_shell_sign_out_confirm)
-      val primary = spec.which == DialogInterface.BUTTON_POSITIVE && !signOut
+      val delete =
+        spec.text.toString() == context.getString(R.string.blyp_shell_status_delete_confirm)
+      val destructive = signOut || delete
+      val primary = spec.which == DialogInterface.BUTTON_POSITIVE && !destructive
       return TextView(context).apply {
         text = spec.text
         gravity = Gravity.CENTER
@@ -227,7 +231,7 @@ object BlypShellDialogs {
         setPadding(context.dp(12), 0, context.dp(12), 0)
         setBackgroundResource(
           when {
-            signOut -> R.drawable.blyp_shell_dialog_destructive
+            destructive -> R.drawable.blyp_shell_dialog_destructive
             primary -> R.drawable.blyp_shell_btn_primary_pill
             else -> R.drawable.blyp_shell_btn_secondary_pill
           },
@@ -236,7 +240,7 @@ object BlypShellDialogs {
           ContextCompat.getColor(
             context,
             when {
-              signOut -> R.color.blyp_shell_destructive
+              destructive -> R.color.blyp_shell_destructive
               primary -> R.color.blyp_shell_accent_on
               else -> R.color.blyp_shell_text
             },

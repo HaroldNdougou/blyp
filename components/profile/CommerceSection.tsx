@@ -119,8 +119,19 @@ export function CommerceSection({ styles, onContextChanged }: Props) {
       try {
         await setActiveContext(input);
         onContextChanged?.(input.type);
-      } catch {
-        setErrorLine(t("commerce.switchFailed"));
+      } catch (e) {
+        const offline =
+          typeof navigator !== "undefined" && navigator.onLine === false;
+        const network =
+          e instanceof TypeError ||
+          (e instanceof Error && /network|fetch|internet/i.test(e.message));
+        setErrorLine(
+          offline
+            ? t("commerce.switchOffline")
+            : network
+              ? t("commerce.switchNetwork")
+              : t("commerce.switchFailed"),
+        );
       } finally {
         setBusyId(null);
       }

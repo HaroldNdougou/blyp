@@ -96,11 +96,7 @@ class CommerceShellFragment : Fragment() {
     recentList?.adapter = recentAdapter
     onlineRow?.setOnClickListener { onOnlineToggleRequested() }
     root.findViewById<View>(R.id.blyp_commerce_withdraw)?.setOnClickListener {
-      BlypShellDialogs.alertBuilder(requireContext())
-        .setTitle(R.string.blyp_shell_profile_withdraw_title)
-        .setMessage(R.string.blyp_shell_profile_withdraw_soon)
-        .setPositiveButton(android.R.string.ok, null)
-        .show()
+      ShellDepositActivity.startWithdraw(requireContext())
     }
     root.findViewById<View>(R.id.blyp_commerce_qr_cta)?.setOnClickListener {
       ShellMerchantQrActivity.start(requireContext())

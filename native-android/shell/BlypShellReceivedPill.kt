@@ -31,6 +31,8 @@ object BlypShellReceivedPill {
     pillOf(act)?.visibility = View.GONE
   }
 
+  fun foreground(): Activity? = current?.get()
+
   fun install(app: Application) {
     if (!installed.compareAndSet(false, true)) return
     app.registerActivityLifecycleCallbacks(

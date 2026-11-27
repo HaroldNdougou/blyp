@@ -3,6 +3,7 @@ import { api } from "./api";
 export type WithdrawalRequestRow = {
   id: string;
   userId: string | null;
+  kind: "deposit" | "withdrawal";
   name: string;
   phone: string;
   amountFcfa: number;
@@ -19,6 +20,17 @@ export function markWithdrawalHandled(id: string) {
 
 export function isWithdrawalHandled(id: string) {
   return handledIds.has(id);
+}
+
+/** Même logique que le mail admin (UTC stocké → heure Cameroun). */
+export function formatRequestWhen(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "—";
+  const d = new Date(ms + 3_600_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${p(d.getUTCHours())}:${p(
+    d.getUTCMinutes(),
+  )}`;
 }
 
 function parseAmount(lines: [string, string][] | undefined, summary: string) {
@@ -42,28 +54,31 @@ function parseStatus(lines: [string, string][] | undefined) {
 export async function fetchWithdrawalRequests(): Promise<WithdrawalRequestRow[]> {
   const data = await api<{
     items: {
-      id: string;
-      type: string;
+      requestId: string;
       userId?: string | null;
+      kind?: string;
       name?: string;
       phone?: string;
-      summary: string;
-      at: string;
-      lines?: [string, string][];
+      amountFcfa?: number;
+      status?: string;
+      createdAt?: string;
     }[];
-  }>("/api/events?types=withdrawal&limit=80");
+  }>("/api/money-requests");
 
   return (data.items ?? [])
-    .filter((e) => e.type === "withdrawal" && !isWithdrawalHandled(e.id))
+    .filter((e) => !isWithdrawalHandled(e.requestId))
     .map((e) => ({
-      id: e.id,
+      id: e.requestId,
       userId: e.userId ?? null,
+      kind: (e.kind === "deposit" ? "deposit" : "withdrawal") as WithdrawalRequestRow["kind"],
       name: (e.name ?? "").trim() || "Client",
       phone: (e.phone ?? "").trim() || "—",
-      amountFcfa: parseAmount(e.lines, e.summary),
-      summary: e.summary,
-      at: e.at,
-      status: parseStatus(e.lines),
+      amountFcfa: Math.floor(e.amountFcfa ?? 0),
+      summary: e.kind === "deposit" ? "Recharge" : "Retrait",
+      at: e.createdAt ?? "",
+      status: e.status ?? "pending",
     }))
-    .filter((e) => e.userId && e.amountFcfa > 0);
+    .filter(
+      (e) => e.userId && e.amountFcfa > 0 && (e.status === "pending" || !e.status),
+    );
 }

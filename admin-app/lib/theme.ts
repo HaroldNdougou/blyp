@@ -6,6 +6,7 @@ export type ThemeColors = {
   text: string;
   muted: string;
   danger: string;
+  onDanger: string;
   money: string;
   onAccent: string;
 };
@@ -20,6 +21,7 @@ export const lightColors: ThemeColors = {
   text: "#18181B",
   muted: "#71717A",
   danger: "#DC2626",
+  onDanger: "#FFFFFF",
   money: "#2563EB",
   onAccent: "#0B0B0C",
 };
@@ -32,6 +34,7 @@ export const darkColors: ThemeColors = {
   text: "#F5F5F5",
   muted: "#9CA3AF",
   danger: "#F87171",
+  onDanger: "#FFFFFF",
   money: "#60A5FA",
   onAccent: "#0B0B0C",
 };

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -15,8 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../contexts/ThemeContext";
 import {
   adjustUserBalance,
+  confirmMoneyRequest,
   listAdminUsers,
   newIdempotencyKey,
+  rejectMoneyRequest,
   userLabel,
   type AdminUserSummary,
 } from "../lib/adminWallet";
@@ -24,15 +27,44 @@ import { money } from "../lib/adminTypes";
 import type { ThemeColors } from "../lib/theme";
 import {
   fetchWithdrawalRequests,
+  formatRequestWhen,
   markWithdrawalHandled,
   type WithdrawalRequestRow,
 } from "../lib/withdrawalRequests";
 
 type Props = {
   visible: boolean;
+  mode?: "deposit" | "withdrawal";
   onClose: () => void;
   onBalanceChanged?: () => void;
 };
+
+function digits9(raw: string) {
+  let d = raw.replace(/\D/g, "");
+  if (d.startsWith("237") && d.length >= 12) d = d.slice(3);
+  if (d.length > 9) d = d.slice(-9);
+  return d;
+}
+
+function isOrange(raw: string) {
+  const d = digits9(raw);
+  if (d.length < 3 || d[0] !== "6") return false;
+  if (d.startsWith("69") || d.startsWith("640") || d.startsWith("686")) return true;
+  if (d.startsWith("65")) {
+    const third = Number(d[2]);
+    if (third >= 5 && third <= 9) return true;
+  }
+  return false;
+}
+
+function dialWithdrawal(phone: string, amount: number) {
+  const tel = digits9(phone);
+  if (tel.length < 9 || amount < 1) return;
+  const code = isOrange(tel)
+    ? `#150*11*${tel}*${amount}*2#`
+    : `*126*11*${tel}*${amount}#`;
+  void Linking.openURL(`tel:${code.replace(/#/g, "%23")}`);
+}
 
 function createStyles(c: ThemeColors) {
   return StyleSheet.create({
@@ -127,7 +159,7 @@ function createStyles(c: ThemeColors) {
   });
 }
 
-export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
+export function RechargeModal({ visible, mode = "deposit", onClose, onBalanceChanged }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
@@ -150,13 +182,13 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
     setError(null);
     try {
       const items = await fetchWithdrawalRequests();
-      setRequests(items);
+      setRequests(items.filter((row) => row.kind === mode));
     } catch (e: any) {
       setError(e?.message || "Chargement impossible");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     if (!visible) return;
@@ -169,12 +201,20 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
 
   const onReject = useCallback(
     (row: WithdrawalRequestRow) => {
-      markWithdrawalHandled(row.id);
-      setRequests((prev) => prev.filter((r) => r.id !== row.id));
-      setPicked(null);
-      setOk("Demande rejetée.");
+      if (busy) return;
+      setBusy(true);
+      setError(null);
+      void rejectMoneyRequest(row.id)
+        .then(() => {
+          markWithdrawalHandled(row.id);
+          setRequests((prev) => prev.filter((r) => r.id !== row.id));
+          setPicked(null);
+          setOk("Demande rejetée.");
+        })
+        .catch((e: any) => setError(e?.message || "Rejet impossible"))
+        .finally(() => setBusy(false));
     },
-    [],
+    [busy],
   );
 
   const onAccept = useCallback(
@@ -183,25 +223,21 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
       setBusy(true);
       setError(null);
       try {
-        await adjustUserBalance({
-          userId: row.userId,
-          direction: "credit",
-          amountFcfa: row.amountFcfa,
-          idempotencyKey: newIdempotencyKey(),
-          reason: "Recharge",
-        });
+        if (mode === "withdrawal") dialWithdrawal(row.phone, row.amountFcfa);
+        await confirmMoneyRequest(row.id);
         markWithdrawalHandled(row.id);
         setRequests((prev) => prev.filter((r) => r.id !== row.id));
         setPicked(null);
-        setOk(`${row.name} rechargé · ${money(row.amountFcfa)}`);
+        const label = row.kind === "deposit" ? "rechargée" : "retirée";
+        setOk(`${row.name} ${label} · ${money(row.amountFcfa)}`);
         onBalanceChanged?.();
       } catch (e: any) {
-        setError(e?.message || "Recharge échouée");
+        setError(e?.message || "Confirmation impossible");
       } finally {
         setBusy(false);
       }
     },
-    [busy, onBalanceChanged],
+    [busy, mode, onBalanceChanged],
   );
 
   const findUser = useCallback(async () => {
@@ -239,10 +275,10 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
     try {
       const res = await adjustUserBalance({
         userId: user.userId,
-        direction: credit ? "credit" : "debit",
+        direction: mode === "withdrawal" ? "debit" : credit ? "credit" : "debit",
         amountFcfa: amt,
         idempotencyKey: newIdempotencyKey(),
-        reason: "Recharge",
+        reason: mode === "withdrawal" ? "Retrait" : "Recharge",
       });
       setOk(`Nouveau solde : ${money(res.balanceAfterFcfa)}`);
       setAmount("");
@@ -253,21 +289,25 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
     } finally {
       setBusy(false);
     }
-  }, [amount, busy, credit, onBalanceChanged, user]);
+  }, [amount, busy, credit, mode, onBalanceChanged, user]);
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={styles.backdrop} behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={[styles.sheet, { paddingTop: insets.top > 0 ? 12 : 16, paddingBottom: insets.bottom + 8 }]}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
+        <Pressable
+          style={[styles.sheet, { paddingTop: insets.top > 0 ? 12 : 16, paddingBottom: insets.bottom + 8 }]}
+          onPress={() => {}}
+        >
           <View style={styles.header}>
-            <Text style={styles.title}>Recharges</Text>
+            <Text style={styles.title}>{mode === "withdrawal" ? "Retraits" : "Recharges"}</Text>
             <Pressable onPress={onClose} hitSlop={12}>
               <Text style={styles.close}>Fermer</Text>
             </Pressable>
           </View>
 
           <ScrollView keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
-            <Text style={styles.section}>Demandes de retrait</Text>
+            <Text style={styles.section}>Demandes</Text>
             {loading ? (
               <ActivityIndicator color={colors.accent} style={{ marginVertical: 16 }} />
             ) : requests.length === 0 ? (
@@ -281,7 +321,9 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
                     onPress={() => setPicked(picked?.id === row.id ? null : row)}
                   >
                     <Text style={styles.name}>{row.name}</Text>
-                    <Text style={styles.meta}>{row.phone}</Text>
+                    <Text style={styles.meta}>
+                      {row.summary} · {row.phone} · {formatRequestWhen(row.at)}
+                    </Text>
                     <Text style={styles.amount}>{money(row.amountFcfa)}</Text>
                     {picked?.id === row.id ? (
                       <View style={styles.actionRow}>
@@ -290,7 +332,7 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
                           disabled={busy}
                           onPress={() => void onAccept(row)}
                         >
-                          <Text style={styles.acceptText}>Accepter</Text>
+                          <Text style={styles.acceptText}>Confirmer</Text>
                         </Pressable>
                         <Pressable style={styles.reject} onPress={() => onReject(row)}>
                           <Text style={styles.rejectText}>Rejeter</Text>
@@ -304,7 +346,13 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
 
             <Pressable style={styles.link} onPress={() => setShowFree((v) => !v)}>
               <Text style={styles.linkText}>
-                {showFree ? "Masquer la recharge libre" : "Recharge libre (manuelle)"}
+                {showFree
+                  ? mode === "withdrawal"
+                    ? "Masquer le retrait libre"
+                    : "Masquer la recharge libre"
+                  : mode === "withdrawal"
+                    ? "Retrait libre"
+                    : "Recharge libre (manuelle)"}
               </Text>
             </Pressable>
 
@@ -327,6 +375,7 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
                     <Text style={styles.meta}>
                       {user.phone ?? "—"} · {money(user.balanceFcfa)}
                     </Text>
+                    {mode === "deposit" ? (
                     <View style={[styles.signRow, { marginTop: 10 }]}>
                       <Pressable
                         style={[styles.signBtn, credit && styles.signOn]}
@@ -341,6 +390,7 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
                         <Text style={[styles.signText, !credit && styles.signTextOn]}>− Retirer</Text>
                       </Pressable>
                     </View>
+                    ) : null}
                     <Text style={styles.label}>Montant (F)</Text>
                     <TextInput
                       style={styles.input}
@@ -365,8 +415,9 @@ export function RechargeModal({ visible, onClose, onBalanceChanged }: Props) {
             {error ? <Text style={styles.err}>{error}</Text> : null}
             {ok ? <Text style={styles.ok}>{ok}</Text> : null}
           </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
+        </Pressable>
+        </KeyboardAvoidingView>
+      </Pressable>
     </Modal>
   );
 }

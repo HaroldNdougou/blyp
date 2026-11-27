@@ -234,6 +234,22 @@ object BlypShellCommerceSession {
     prefs.edit().putString(KEY_COMMERCES_JSON, arr.toString()).apply()
   }
 
+  fun withoutOwnerLastName(context: Context, name: String): String {
+    val raw = name.trim()
+    val personal = personalDisplayName(context)
+    val last = personal.substringAfterLast(' ').trim()
+    if (last.length > 1 && raw.endsWith(" $last", ignoreCase = true)) {
+      return raw.dropLast(last.length + 1).trim().ifEmpty { raw }
+    }
+    return raw
+  }
+
+  fun strictCommerceName(context: Context): String =
+    withoutOwnerLastName(context, activeCommerceName(context))
+
+  fun commerceAvatarFile(context: Context, commerceId: String): java.io.File =
+    java.io.File(context.applicationContext.filesDir, "commerce-avatars/${commerceId.trim()}.jpg")
+
   fun activeCommerceName(context: Context): String {
     val id = activeCommerceId(context) ?: return "—"
     val listed = listCommerces(context).firstOrNull { it.id == id }?.name?.trim().orEmpty()

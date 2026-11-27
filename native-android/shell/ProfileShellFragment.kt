@@ -74,8 +74,12 @@ class ProfileShellFragment : Fragment() {
     root.findViewById<View>(R.id.blyp_profile_top_up).setOnClickListener {
       context?.let { PayShellHandoff.openDeposit(it) }
     }
-    root.findViewById<View>(R.id.blyp_profile_withdraw).setOnClickListener { showWithdrawSoon() }
-    root.findViewById<View>(R.id.blyp_profile_commerce_withdraw).setOnClickListener { showWithdrawSoon() }
+    root.findViewById<View>(R.id.blyp_profile_withdraw).setOnClickListener {
+      context?.let { ShellDepositActivity.startWithdraw(it) }
+    }
+    root.findViewById<View>(R.id.blyp_profile_commerce_withdraw).setOnClickListener {
+      context?.let { ShellDepositActivity.startWithdraw(it) }
+    }
     val createCommerce = root.findViewById<View>(R.id.blyp_profile_create_commerce)
     lingerOutline(createCommerce)
     createCommerce.setOnClickListener {
@@ -111,6 +115,9 @@ class ProfileShellFragment : Fragment() {
     }
     root.findViewById<View>(R.id.blyp_profile_kyc_cta).setOnClickListener {
       context?.let { ProfileShellHandoff.openKyc(it) }
+    }
+    root.findViewById<View>(R.id.blyp_profile_plus).setOnClickListener {
+      context?.let { ShellPlusActivity.start(it) }
     }
     root.findViewById<View>(R.id.blyp_profile_change_pin).setOnClickListener {
       context?.let { ShellChangePinActivity.start(it) }
@@ -174,7 +181,9 @@ class ProfileShellFragment : Fragment() {
     val dash = getString(R.string.blyp_shell_profile_dash)
     val displayName =
       if (commerceMode) {
-        profile.displayName.trim().takeIf { it.isNotEmpty() && it != dash } ?: fallback
+        BlypShellCommerceSession.strictCommerceName(ctx)
+          .takeIf { it.isNotEmpty() && it != "—" && it != dash }
+          ?: fallback
       } else {
         personalName.takeIf { it.isNotEmpty() && it != dash } ?: fallback
       }
@@ -206,8 +215,23 @@ class ProfileShellFragment : Fragment() {
     root.findViewById<View>(R.id.blyp_profile_onboarding).visibility =
       if (onboarding) View.VISIBLE else View.GONE
 
-    root.findViewById<TextView>(R.id.blyp_profile_balance).text =
-      amountFmt.format(profile.balanceFcfa)
+    val balanceView = root.findViewById<TextView>(R.id.blyp_profile_balance)
+    balanceView.text = amountFmt.format(profile.balanceFcfa)
+    androidx.core.widget.TextViewCompat.setAutoSizeTextTypeUniformWithConfiguration(
+      balanceView,
+      14,
+      28,
+      1,
+      android.util.TypedValue.COMPLEX_UNIT_SP,
+    )
+    val fullBalance = getString(R.string.blyp_shell_profile_balance_full, amountFmt.format(profile.balanceFcfa))
+    root.findViewById<View>(R.id.blyp_profile_balance_card).setOnClickListener {
+      BlypShellDialogs.alertBuilder(ctx)
+        .setTitle(R.string.blyp_shell_profile_balance_label)
+        .setMessage(fullBalance)
+        .setPositiveButton(android.R.string.ok, null)
+        .show()
+    }
     root.findViewById<View>(R.id.blyp_profile_balance_actions).visibility =
       if (canEdit) View.VISIBLE else View.GONE
     root.findViewById<View>(R.id.blyp_profile_commerce_withdraw).visibility =
@@ -218,7 +242,25 @@ class ProfileShellFragment : Fragment() {
     val initialView = root.findViewById<TextView>(R.id.blyp_profile_avatar_initial)
     val imageView = root.findViewById<ImageView>(R.id.blyp_profile_avatar_image)
     initialView.text = initial
-    BlypShellAvatarLoader.loadInto(profile.avatarUrl, imageView, initialView, initial)
+    val commercePhoto =
+      if (commerceMode) {
+        BlypShellCommerceSession.activeCommerceId(ctx)?.let {
+          BlypShellCommerceSession.commerceAvatarFile(ctx, it)
+        }
+      } else {
+        null
+      }
+    if (commercePhoto != null && commercePhoto.isFile) {
+      imageView.setImageBitmap(android.graphics.BitmapFactory.decodeFile(commercePhoto.absolutePath))
+      imageView.visibility = View.VISIBLE
+      initialView.visibility = View.GONE
+    } else if (commerceMode) {
+      imageView.setImageDrawable(null)
+      imageView.visibility = View.GONE
+      initialView.visibility = View.VISIBLE
+    } else {
+      BlypShellAvatarLoader.loadInto(profile.avatarUrl, imageView, initialView, initial)
+    }
 
     root.findViewById<TextView>(R.id.blyp_profile_phone_value).text = formatPhone(profile.phone)
     root.findViewById<TextView>(R.id.blyp_profile_name_value).text = accountName
@@ -230,6 +272,7 @@ class ProfileShellFragment : Fragment() {
     bindKyc(root, profile.kycStatus, amountFmt)
     bindVersion(root)
     updateReceiptsBadge()
+    BlypShellClicks.arm(root)
   }
 
   private fun bindCommerces(root: View, amountFmt: NumberFormat) {
@@ -280,7 +323,7 @@ class ProfileShellFragment : Fragment() {
           inflater,
           list,
           key = c.id,
-          title = c.name,
+          title = BlypShellCommerceSession.withoutOwnerLastName(ctx, c.name),
           meta = "${amountFmt.format(c.balanceFcfa)} F",
           active = active,
           onClick = { switchContext(personal = false, commerceId = c.id) },
@@ -328,17 +371,31 @@ class ProfileShellFragment : Fragment() {
           BlypShellCommerceSession.activeCommerceId(ctx) == commerceId
       }
     if (already) return
+    if (BlypShellSession.isCommerceMode(ctx)) {
+      BlypShellTaxiBroadcast.stopImmediately(ctx)
+    }
     commerceBusyKey = if (personal) "personal" else commerceId
     commercesSig = ""
     view?.let { bindCommerces(it, amountFmt()) }
-    BlypShellCommerceClient.setActiveContextAsync(ctx, personal, commerceId) { ok ->
+    BlypShellCommerceClient.setActiveContextAsync(ctx, personal, commerceId) { outcome ->
       view?.post {
         commerceBusyKey = null
         commercesSig = ""
-        if (!ok) {
-          Toast.makeText(ctx, R.string.blyp_shell_commerce_switch_failed, Toast.LENGTH_SHORT).show()
+        val msg =
+          when (outcome) {
+            BlypShellCommerceClient.SwitchOutcome.Ok -> 0
+            BlypShellCommerceClient.SwitchOutcome.Offline -> R.string.blyp_shell_switch_offline
+            BlypShellCommerceClient.SwitchOutcome.Network -> R.string.blyp_shell_switch_network
+            BlypShellCommerceClient.SwitchOutcome.Failed -> R.string.blyp_shell_commerce_switch_failed
+          }
+        if (msg != 0) {
+          Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
         } else {
-          (activity as? BlypNativeShellActivity)?.ensurePayTabMatchesCommerceMode()
+          (activity as? BlypNativeShellActivity)?.let { shell ->
+            shell.ensurePayTabMatchesCommerceMode()
+            shell.paintPayTabTitle()
+            if (!personal) shell.openPayTab()
+          }
         }
         bindProfile()
       }
@@ -531,6 +588,19 @@ class ProfileShellFragment : Fragment() {
   private fun uploadAvatar(uri: Uri) {
     val ctx = context ?: return
     if (avatarBusy) return
+    if (BlypShellSession.isCommerceMode(ctx)) {
+      val id = BlypShellCommerceSession.activeCommerceId(ctx)
+      val dest = id?.let { BlypShellCommerceSession.commerceAvatarFile(ctx, it) }
+      val copied = copyPickToCache(uri)
+      if (dest == null || copied == null) {
+        Toast.makeText(ctx, R.string.blyp_shell_profile_photo_failed, Toast.LENGTH_SHORT).show()
+        return
+      }
+      dest.parentFile?.mkdirs()
+      copied.copyTo(dest, overwrite = true)
+      bindProfile()
+      return
+    }
     val file = copyPickToCache(uri) ?: run {
       Toast.makeText(ctx, R.string.blyp_shell_profile_photo_failed, Toast.LENGTH_SHORT).show()
       return
@@ -565,15 +635,6 @@ class ProfileShellFragment : Fragment() {
     } catch (_: Exception) {
       null
     }
-  }
-
-  private fun showWithdrawSoon() {
-    val ctx = context ?: return
-    BlypShellDialogs.alertBuilder(ctx)
-      .setTitle(R.string.blyp_shell_profile_withdraw_title)
-      .setMessage(R.string.blyp_shell_profile_withdraw_soon)
-      .setPositiveButton(android.R.string.ok, null)
-      .show()
   }
 
   private fun confirmSignOut() {

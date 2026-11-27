@@ -1,6 +1,9 @@
 import { SESv2Client, SendEmailCommand } from "@aws-sdk/client-sesv2";
 import { adminConfig } from "./adminAuth.mjs";
 import { listAdminDevices, deleteAdminDeviceByToken } from "./adminDevices.mjs";
+import { listDeviceTokens } from "./devices.mjs";
+import { normalizeCameroonPhone } from "./phone.mjs";
+import { getUserIdByPhone } from "./user.mjs";
 
 /**
  * Notifications fondateur : push (app admin) + email (SES).
@@ -41,19 +44,49 @@ export function formatLocal(iso) {
 }
 
 const MESSAGE_KIND_FR = {
-  text: "texte",
-  voice: "vocal",
-  image: "photo",
-  document: "document",
+  text: "Message",
+  voice: "Vocal",
+  image: "Photo",
+  document: "Doc",
 };
 
+function whoShort(ev) {
+  const name = String(ev.name ?? "").trim();
+  if (name) return name.split(/\s+/)[0];
+  const digits = String(ev.phone ?? "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length > 9 ? digits.slice(-9) : digits;
+}
+
+function amountShort(n) {
+  const v = Math.round(Number(n) || 0);
+  return v.toLocaleString("fr-FR").replace(/\u202f|\u00a0/g, " ");
+}
+
+function amountF(n) {
+  return `${Math.max(0, Math.round(Number(n) || 0))}F`;
+}
+
+function requestPhone(ev) {
+  const raw = ev.phone || ev.data?.phone || ev.data?.destination || "";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length < 9) return "";
+  const n = digits.slice(-9);
+  return n.replace(/(\d{3})(\d{2})(\d{2})(\d{2})/, "$1 $2 $3 $4");
+}
+
+function brief(title, lines, severity) {
+  return { title, summary: title, lines, severity };
+}
+
 /**
- * Description lisible d'un événement.
+ * Une seule ligne, pour la notification et le mail.
  * @returns {{ title: string, summary: string, lines: Array<[string,string]>, severity: "info"|"money"|"alert" }}
  */
 export function describeEvent(ev) {
   const d = ev.data ?? {};
-  const who = ev.name || formatPhone(ev.phone);
+  const who = whoShort(ev);
+  const tail = who ? ` · ${who}` : "";
   const base = [
     ["Utilisateur", ev.name || "—"],
     ["Téléphone", formatPhone(ev.phone)],
@@ -62,134 +95,35 @@ export function describeEvent(ev) {
   ];
   switch (ev.type) {
     case "signup":
-      return {
-        title: `Nouvelle inscription — ${who}`,
-        summary: `${who} vient de créer son compte.`,
-        lines: base,
-        severity: "info",
-      };
+      return brief(`Inscription${tail}`, base, "info");
     case "login":
-      return {
-        title: `Connexion — ${who}`,
-        summary: d.isNewAccount
-          ? `${who} se connecte pour la première fois (inscription en cours).`
-          : `${who} s'est connecté.`,
-        lines: [
-          ...base,
-          ["Nouveau compte", d.isNewAccount ? "oui" : "non"],
-          ["Ancienne session remplacée", d.replacedPreviousSession ? "oui" : "non"],
-        ],
-        severity: "info",
-      };
+      return brief(`Connexion${tail}`, base, "info");
     case "app_open":
-      return {
-        title: `Ouverture de l'app — ${who}`,
-        summary: `${who} a ouvert l'application.`,
-        lines: [...base, ["Appareil", d.userAgent || "—"], ["IP", d.ip || "—"]],
-        severity: "info",
-      };
+      return brief(`Ouvert${tail}`, base, "info");
     case "message": {
-      const kind = MESSAGE_KIND_FR[d.kind] ?? d.kind ?? "message";
-      const to = d.toName ? ` à ${d.toName}` : "";
-      return {
-        title: `Message (${kind}) — ${who}`,
-        summary: `${who} a envoyé un message ${kind}${to}.`,
-        lines: [
-          ...base,
-          ["Type", kind],
-          ["Destinataire", d.toName ? `${d.toName} (${formatPhone(d.toPhone)})` : "—"],
-          ["Conversation", d.conversationId || "—"],
-          ["Contenu", "non stocké (confidentialité)"],
-        ],
-        severity: "info",
-      };
+      const kind = MESSAGE_KIND_FR[d.kind] ?? "Message";
+      return brief(`${kind}${tail}`, base, "info");
     }
     case "payment":
-      return {
-        title: `Paiement ${fcfa(d.amountFcfa)} — ${who}`,
-        summary: `${who} a payé ${fcfa(d.amountFcfa)} à ${d.commerceName || d.payeeName || "—"}.`,
-        lines: [
-          ...base,
-          ["Montant", fcfa(d.amountFcfa)],
-          ["Commerce", d.commerceName || d.payeeName || "—"],
-          ["Tél. commerce", formatPhone(d.payeePhone)],
-          ["Compte payé", d.payeeAccountId || "—"],
-          ["Solde payeur après", d.balanceAfterFcfa != null ? fcfa(d.balanceAfterFcfa) : "—"],
-          ["Transaction", d.transactionId || "—"],
-          ["Référence", d.reference || "—"],
-        ],
-        severity: "money",
-      };
+      return brief(`Paiement ${amountShort(d.amountFcfa)}${tail}`, base, "money");
     case "transfer":
-      return {
-        title: `Envoi ${fcfa(d.amountFcfa)} — ${who}`,
-        summary: `${who} a envoyé ${fcfa(d.amountFcfa)} à ${d.payeeName || "—"}.`,
-        lines: [
-          ...base,
-          ["Montant", fcfa(d.amountFcfa)],
-          ["Bénéficiaire", d.payeeName || "—"],
-          ["Tél. bénéficiaire", formatPhone(d.payeePhone)],
-          ["Canal", d.via === "chat" ? "message money" : "paiement direct"],
-          ["Solde après", d.balanceAfterFcfa != null ? fcfa(d.balanceAfterFcfa) : "—"],
-          ["Transaction", d.transactionId || "—"],
-          ["Référence", d.reference || "—"],
-        ],
-        severity: "money",
-      };
-    case "deposit":
-      return {
-        title: `RECHARGE ${fcfa(d.amountFcfa)} — ${who}`,
-        summary: `${who} a rechargé son solde de ${fcfa(d.amountFcfa)}.`,
-        lines: [
-          ...base,
-          ["Montant", fcfa(d.amountFcfa)],
-          ["Opérateur / mode", d.provider || "—"],
-          ["Réf. opérateur", d.providerRef || "—"],
-          ["Transaction", d.transactionId || "—"],
-          ["Référence", d.reference || "—"],
-          ["Solde après", d.balanceAfterFcfa != null ? fcfa(d.balanceAfterFcfa) : "—"],
-        ],
-        severity: "alert",
-      };
-    case "withdrawal":
-      return {
-        title: `RETRAIT ${fcfa(d.amountFcfa)} — ${who}`,
-        summary: `${who} a demandé un retrait de ${fcfa(d.amountFcfa)}.`,
-        lines: [
-          ...base,
-          ["Montant", fcfa(d.amountFcfa)],
-          ["Destination", d.destination || "—"],
-          ["Opérateur / mode", d.provider || "—"],
-          ["Frais", d.feeFcfa != null ? fcfa(d.feeFcfa) : "—"],
-          ["Statut", d.status || "—"],
-          ["Transaction", d.transactionId || "—"],
-          ["Solde après", d.balanceAfterFcfa != null ? fcfa(d.balanceAfterFcfa) : "—"],
-        ],
-        severity: "alert",
-      };
+      return brief(`Envoi ${amountShort(d.amountFcfa)}${tail}`, base, "money");
+    case "deposit": {
+      const phone = requestPhone(ev);
+      const tailPhone = phone ? ` · ${phone}` : "";
+      return brief(`Recharge demandée ${amountF(d.amountFcfa)}${tailPhone}`, base, "alert");
+    }
+    case "withdrawal": {
+      const phone = requestPhone(ev);
+      const tailPhone = phone ? ` · ${phone}` : "";
+      return brief(`Retrait demandé ${amountF(d.amountFcfa)}${tailPhone}`, base, "alert");
+    }
     case "user_deleted":
-      return {
-        title: `Compte supprimé — ${who}`,
-        summary: `Le compte de ${who} a été supprimé.`,
-        lines: [...base, ["Motif", d.reason || "—"], ["Solde au moment de la suppression", fcfa(d.balanceFcfa ?? 0)]],
-        severity: "alert",
-      };
+      return brief(`Supprimé${tail}`, base, "alert");
     case "admin_action":
-      return {
-        title: `Action admin — ${d.action || "?"}`,
-        summary: `${d.action || "Action"} sur ${d.targetLabel || who}.`,
-        lines: [
-          ...base,
-          ["Action", d.action || "—"],
-          ["Cible", d.targetLabel || "—"],
-          ["Montant", d.amountFcfa != null ? fcfa(d.amountFcfa) : "—"],
-          ["Motif", d.reason || "—"],
-          ["IP admin", d.ip || "—"],
-        ],
-        severity: "alert",
-      };
+      return brief(`Admin${tail}`, base, "alert");
     default:
-      return { title: `Événement ${ev.type}`, summary: ev.type, lines: base, severity: "info" };
+      return brief(String(ev.type || "Alerte"), base, "info");
   }
 }
 
@@ -197,27 +131,63 @@ export function describeEvent(ev) {
 /* Push                                                                        */
 /* -------------------------------------------------------------------------- */
 
-/** Push visible vers l'app admin (pas l'app client Blyp). */
-export async function sendAdminPush({ title, body, eventId, eventType }) {
-  const devices = await listAdminDevices();
-  if (!devices.length) return { skipped: "NO_DEVICES" };
+const EXPO_TOKEN_RE = /^ExponentPushToken\[.+\]$/;
 
-  const messages = devices.map((dev) => ({
-    to: dev.token,
-    title: String(title).slice(0, 120),
-    body: String(body).slice(0, 400),
-    sound: "default",
-    priority: "high",
-    channelId: "admin_alerts",
-    data: {
+async function founderExpoTokens() {
+  const out = [];
+  for (const raw of adminConfig().pushPhones) {
+    const phone = normalizeCameroonPhone(raw);
+    if (!phone) continue;
+    try {
+      const userId = await getUserIdByPhone(phone);
+      if (!userId) continue;
+      const devices = await listDeviceTokens(userId);
+      for (const d of devices) {
+        const token = String(d.token ?? "");
+        if (EXPO_TOKEN_RE.test(token)) out.push(token);
+      }
+    } catch {
+      /* un téléphone en moins ne bloque pas les autres */
+    }
+  }
+  return out;
+}
+
+/** Une ligne, sur l'app admin et sur les téléphones déjà connus. */
+export async function sendAdminPush({ title, eventId, eventType }) {
+  const line = String(title).slice(0, 80);
+  const adminDevices = await listAdminDevices();
+  const messages = [];
+  const seen = new Set();
+  const alarm = eventType === "deposit" || eventType === "withdrawal";
+  const pushExpo = (token) => {
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    const data = {
       type: "admin_alert",
-      title: String(title).slice(0, 120),
-      message: String(body).slice(0, 400),
+      title: line,
+      message: line,
       eventId: String(eventId ?? ""),
       eventType: String(eventType ?? ""),
-      channelId: "admin_alerts",
-    },
-  }));
+      alarm: alarm ? "1" : "0",
+      channelId: alarm ? "blyp_money_alarm" : "admin_alerts",
+      sound: alarm ? "default" : "",
+    };
+    /** Data-only : recharge/retrait sonnent via `AdminAlertPresenter` même téléphone verrouillé. */
+    messages.push({
+      to: token,
+      priority: "high",
+      _contentAvailable: true,
+      data,
+    });
+  };
+  for (const dev of adminDevices) {
+    const token = String(dev.token ?? "");
+    if (EXPO_TOKEN_RE.test(token)) pushExpo(token);
+  }
+  for (const token of await founderExpoTokens()) pushExpo(token);
+  if (!messages.length) return { skipped: "NO_DEVICES" };
+
   const res = await fetch(EXPO_PUSH_URL, {
     method: "POST",
     headers: {
@@ -236,9 +206,9 @@ export async function sendAdminPush({ title, body, eventId, eventType }) {
     if (
       t?.status === "error" &&
       String(t.details?.error ?? "").includes("DeviceNotRegistered") &&
-      devices[i]?.token
+      messages[i]?.to
     ) {
-      await deleteAdminDeviceByToken(devices[i].token).catch(() => {});
+      await deleteAdminDeviceByToken(messages[i].to).catch(() => {});
     }
   }
   return { sent: messages.length };
@@ -318,7 +288,6 @@ export async function notifyAdminOfEvent(item, prefs, { emailAllowed = true } = 
     try {
       out.push = await sendAdminPush({
         title: d.title,
-        body: d.summary,
         eventId: item.id,
         eventType: item.type,
       });
@@ -329,16 +298,17 @@ export async function notifyAdminOfEvent(item, prefs, { emailAllowed = true } = 
   }
   if (prefs?.email && emailAllowed) {
     try {
-      const mail = {
-        heading: d.title,
-        intro: d.summary,
-        lines: d.lines,
-        accent: d.severity === "alert" ? "#d97706" : d.severity === "money" ? "#2563eb" : "#5dc705",
-      };
+      const moneyMail = item.type === "deposit" || item.type === "withdrawal";
+      const phone = requestPhone(item).replace(/\s/g, "");
+      const amount = Math.max(0, Math.round(Number(item.data?.amountFcfa) || 0));
+      const subject = moneyMail
+        ? `${item.type === "deposit" ? "Rch" : "Rt"}, ${phone || "—"}, ${amount}`
+        : d.title;
+      const body = moneyMail ? subject : d.title;
       out.email = await sendAdminEmail({
-        subject: `[Blyp] ${d.title}`,
-        html: renderEmailHtml(mail),
-        text: renderEmailText(mail),
+        subject,
+        html: `<p style="font-family:sans-serif;font-size:16px;margin:12px">${escapeHtml(body)}</p>`,
+        text: body,
       });
     } catch (err) {
       out.email = { error: String(err?.message ?? err) };

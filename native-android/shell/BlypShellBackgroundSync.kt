@@ -61,6 +61,7 @@ object BlypShellProductEngine {
     BlypShellQuickPayPref.attachShell(context)
     BlypShellReceivedPill.install(context.applicationContext as android.app.Application)
     BlypShellWalletRealtime.start(context)
+    BlypShellChatOutbox.install(context)
     BlypShellBackgroundSync.onShellForeground(context)
     BlypShellTaxiBroadcast.attachShell(context)
   }

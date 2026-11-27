@@ -59,6 +59,27 @@ export async function api<T = unknown>(path: string, opts: ApiOpts = {}): Promis
   return data as T;
 }
 
+export async function unlockWithDevice() {
+  const key = String(Constants.expoConfig?.extra?.adminDeviceKey ?? "");
+  if (key.length < 32) {
+    throw new Error("Ouverture impossible");
+  }
+  const data = await api<{
+    ok: boolean;
+    token: string;
+    elevation: string;
+    elevationExpiresInSec: number;
+  }>("/api/device-unlock", {
+    method: "POST",
+    body: { key },
+    token: null,
+  });
+  await setToken(data.token);
+  const { rememberElevation } = await import("./adminWallet");
+  rememberElevation(data.elevation, data.elevationExpiresInSec);
+  return data;
+}
+
 export async function login(email: string, password: string, totp: string) {
   const data = await api<{ ok: boolean; token: string; expiresInSec: number }>("/api/login", {
     method: "POST",

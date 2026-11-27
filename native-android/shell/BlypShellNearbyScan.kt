@@ -158,6 +158,7 @@ object BlypShellNearbyScan {
 
   @Volatile private var payWants = false
   @Volatile private var quickPayWants = false
+  @Volatile private var chatWants = false
 
   /** Interrupteur « Bluetooth » du profil : coupe ou relance la détection tout de suite. */
   fun onBlePayPrefChanged(context: Context) {
@@ -166,10 +167,20 @@ object BlypShellNearbyScan {
       if (!BlypShellBlePayPref.isEnabled(app)) {
         haltEngine()
         emitPeer(null)
-      } else if (payWants || quickPayWants) {
+      } else if (payWants || quickPayWants || chatWants) {
         startOnMain(app)
       }
     }
+  }
+
+  fun startForChat(context: Context) {
+    chatWants = true
+    main.post { startOnMain(context.applicationContext) }
+  }
+
+  fun stopForChat() {
+    chatWants = false
+    main.post { if (!payWants && !quickPayWants && !chatWants) haltEngine() }
   }
 
   fun start(context: Context) {
@@ -184,12 +195,12 @@ object BlypShellNearbyScan {
 
   fun stop() {
     payWants = false
-    main.post { if (!payWants && !quickPayWants) haltEngine() }
+    main.post { if (!payWants && !quickPayWants && !chatWants) haltEngine() }
   }
 
   fun stopForQuickPay() {
     quickPayWants = false
-    main.post { if (!payWants && !quickPayWants) haltEngine() }
+    main.post { if (!payWants && !quickPayWants && !chatWants) haltEngine() }
   }
 
   private fun startOnMain(context: Context) {

@@ -40,7 +40,9 @@ object BlypShellClosedCashier {
   /** Démarre la caisse (réception des paiements à proximité) si elle ne tourne pas. */
   fun ensureRunning(context: Context, fromBroadcast: Boolean = false) {
     val ctx = context.applicationContext
-    val accountId = BlypShellSession.accountId(ctx)?.trim().orEmpty()
+    val accountId =
+      BlypShellBleAccount.resolveForBroadcast(ctx)?.accountId?.trim()?.uppercase().orEmpty()
+        .ifEmpty { BlypShellSession.accountId(ctx)?.trim()?.uppercase().orEmpty() }
     if (accountId.isEmpty()) {
       stop(ctx)
       return
@@ -52,12 +54,17 @@ object BlypShellClosedCashier {
     if (PaymentAnnouncePrefs.isEnabled(ctx)) PaymentAnnounceEngine.startKeepWarm(ctx)
     val identity =
       if (BlypShellTaxiBroadcast.snapshot(ctx).wantOn) {
-        BlypShellBleAccount.resolveCommerce(ctx)?.let {
+        BlypShellBleAccount.resolveForBroadcast(ctx)?.let {
           BlypShellBlePayload.encodeManufBytes(it.accountId, it.phone, it.category)
         }
       } else {
         null
       }
+    if (CashierGattController.isRunning() &&
+      !CashierGattController.merchantAccountId().equals(accountId, ignoreCase = true)
+    ) {
+      CashierGattController.stop(ctx)
+    }
     if (!CashierGattController.isRunning()) {
       if (!BlypShellBluetooth.ensureOnSilently(ctx) &&
         BlypShellBluetooth.canEnableSilently() &&

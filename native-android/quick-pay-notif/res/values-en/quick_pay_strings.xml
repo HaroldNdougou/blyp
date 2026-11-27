@@ -15,5 +15,7 @@
     <string name="quick_pay_amount_validate">Confirm</string>
     <string name="quick_pay_amount_invalid">Enter an amount</string>
     <string name="quick_pay_pay_sum">Pay %1$s</string>
+    <string name="quick_pay_pay">Pay</string>
+    <string name="quick_pay_clear">Clear</string>
     <string name="quick_pay_scan_chip">Scan</string>
 </resources>

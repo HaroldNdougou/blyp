@@ -22,6 +22,15 @@ class QuickPayActionReceiver : BroadcastReceiver() {
         ).show()
         return
       }
+      ACTION_ADD -> {
+        val add = intent?.getIntExtra(EXTRA_AMOUNT, 0) ?: 0
+        if (add > 0) QuickPayNotifService.addAmount(context, add)
+        return
+      }
+      ACTION_CLEAR -> {
+        QuickPayNotifService.clearBasket(context)
+        return
+      }
     }
     val amount = intent?.getIntExtra(EXTRA_AMOUNT, 0) ?: 0
     if (amount <= 0) return
@@ -32,6 +41,8 @@ class QuickPayActionReceiver : BroadcastReceiver() {
 
   companion object {
     const val EXTRA_AMOUNT = "amountFcfa"
+    const val ACTION_ADD = "com.haroldndougou.blyp.action.QUICK_PAY_ADD"
+    const val ACTION_CLEAR = "com.haroldndougou.blyp.action.QUICK_PAY_CLEAR_BASKET"
     const val ACTION_SCAN = "com.haroldndougou.blyp.action.QUICK_PAY_SCAN"
     const val ACTION_STAY = "com.haroldndougou.blyp.action.QUICK_PAY_STAY"
     const val ACTION_NOT_READY = "com.haroldndougou.blyp.action.QUICK_PAY_NOT_READY"

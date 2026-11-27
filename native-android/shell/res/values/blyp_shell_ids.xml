@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <item name="blyp_click_armed" type="id" />
+    <item name="blyp_avatar_load_url" type="id" />
+    <item name="blyp_avatar_load_gen" type="id" />
     <item name="blyp_button_spinner_drawable" type="id" />
     <item name="blyp_button_spinner_colors" type="id" />
-    <item name="blyp_shell_received_pill" type="id" />
     <item name="blyp_shell_messages_loading" type="id" />
-    <item name="blyp_avatar_load_gen" type="id" />
-    <item name="blyp_avatar_load_url" type="id" />
+    <item name="blyp_shell_received_pill" type="id" />
 </resources>

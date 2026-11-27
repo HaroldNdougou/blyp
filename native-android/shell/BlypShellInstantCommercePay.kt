@@ -70,6 +70,35 @@ object BlypShellInstantCommercePay {
     return Outcome.Started
   }
 
+  /** Paiement perso via la flèche : l'autre téléphone est prévenu tout de suite. */
+  fun deliverArrow(context: Context, amountFcfa: Int, snap: BlypShellPayRuntime.Snapshot) {
+    if (isCommerceRecipient(snap)) return
+    val amount = amountFcfa.coerceAtLeast(0)
+    if (amount <= 0) return
+    val recipient = JSONObject(snap.recipientJson)
+    val accountId = recipient.optString("accountId", "").trim().uppercase()
+    if (accountId.isEmpty()) return
+    val idem = UUID.randomUUID().toString()
+    val optimisticId = optimisticTxId(idem)
+    val payerName =
+      BlypShellSession.profile(context)?.displayName?.trim()?.ifEmpty { null } ?: "—"
+    val userPhone = BlypShellSession.phone(context)?.trim().orEmpty()
+    val app = context.applicationContext
+    bleIo.execute {
+      CashierGattPayerClient.deliverWithSessionSync(app, accountId) { session ->
+        BlypShellLocalCommerceNotice.build(
+          idempotencyKey = idem,
+          optimisticTxId = optimisticId,
+          amountFcfa = amount,
+          recipientAccountId = accountId,
+          cashierSession = session,
+          payerName = payerName,
+          payerPhone = userPhone.ifEmpty { null },
+        )?.apply { put("arrow", true) }?.toString()
+      }
+    }
+  }
+
   /** Paiement notif vers un commerçant : débit + annonce tout de suite, serveur en fond. */
   fun runWithRecipient(context: Context, amountFcfa: Int, recipientJson: String): Outcome {
     val raw = recipientJson.trim()

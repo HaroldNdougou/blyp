@@ -33,12 +33,13 @@ class ShellPayAuthActivity : FragmentActivity() {
       finish()
       return
     }
+    setContentView(android.widget.FrameLayout(this))
   }
 
   override fun onResume() {
     super.onResume()
     if (authStarted || amountFcfa <= 0) return
-    window.decorView.post { startBiometricAuth() }
+    startBiometricAuth()
   }
 
   private fun startBiometricAuth() {
@@ -47,7 +48,14 @@ class ShellPayAuthActivity : FragmentActivity() {
       BiometricManager.Authenticators.BIOMETRIC_STRONG or
         BiometricManager.Authenticators.BIOMETRIC_WEAK or
         BiometricManager.Authenticators.DEVICE_CREDENTIAL
-    val can = BiometricManager.from(this).canAuthenticate(allowed)
+    val can =
+      try {
+        BiometricManager.from(this).canAuthenticate(allowed)
+      } catch (_: Exception) {
+        authStarted = true
+        showBlypPinFallback()
+        return
+      }
     if (can != BiometricManager.BIOMETRIC_SUCCESS) {
       authStarted = true
       showBlypPinFallback()
@@ -55,6 +63,7 @@ class ShellPayAuthActivity : FragmentActivity() {
     }
     authStarted = true
     val amount = amountFcfa
+    try {
     val executor: Executor = ContextCompat.getMainExecutor(this)
     val prompt =
       BiometricPrompt(
@@ -74,7 +83,9 @@ class ShellPayAuthActivity : FragmentActivity() {
           }
 
           override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-            runPay(amount)
+            window.decorView.post {
+              if (!isFinishing) runPay(amount)
+            }
           }
 
           override fun onAuthenticationFailed() {
@@ -89,6 +100,9 @@ class ShellPayAuthActivity : FragmentActivity() {
         .setAllowedAuthenticators(allowed)
         .build()
     prompt.authenticate(info)
+    } catch (_: Exception) {
+      showBlypPinFallback()
+    }
   }
 
   private fun showBlypPinFallback() {
@@ -124,7 +138,22 @@ class ShellPayAuthActivity : FragmentActivity() {
   }
 
   private fun runPay(amount: Int) {
-    if (!BlypShellNetwork.isOnline(this)) {
+    try {
+      runPayInner(amount)
+    } catch (_: Exception) {
+      toast(getString(R.string.quick_pay_not_ready))
+      finish()
+    }
+  }
+
+  private fun runPayInner(amount: Int) {
+    val snapNow = BlypShellPayRuntime.read(this)
+    val commerceNearby = snapNow != null && BlypShellInstantCommercePay.isCommerceRecipient(snapNow)
+    val arrowPay =
+      snapNow != null &&
+        BlypShellPayRuntime.activeRecipientFromBle(this) &&
+        !commerceNearby
+    if (!commerceNearby && !arrowPay && !BlypShellNetwork.isOnline(this)) {
       toast(getString(R.string.blyp_shell_pay_no_internet))
       finish()
       return
@@ -158,6 +187,10 @@ class ShellPayAuthActivity : FragmentActivity() {
     BlypShellPayRuntime.updateBalance(this, prevBal - amount)
     BlypShellPayFeedback.markPaySuccess(amount)
     BlypShellUiRefresh.notifyWalletChanged()
+    if (arrowPay && snapNow != null) {
+      BlypShellInstantCommercePay.deliverArrow(this, amount, snapNow)
+      ShellNearbyCashActivity.start(applicationContext, amount)
+    }
     toast(getString(R.string.quick_pay_success))
     finish()
     BlypShellPayExecutor.payAsync(applicationContext, amount, { pay ->

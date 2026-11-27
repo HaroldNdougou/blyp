@@ -97,6 +97,20 @@ export function createAdminScreenStyles(c: ThemeColors) {
       fontSize: 17,
       fontWeight: "700",
     },
+    badge: {
+      position: "absolute",
+      top: -6,
+      right: -4,
+      minWidth: 22,
+      height: 22,
+      borderRadius: 11,
+      paddingHorizontal: 5,
+      backgroundColor: c.danger,
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 2,
+    },
+    badgeText: { color: c.onDanger, fontSize: 12, fontWeight: "800" },
   });
 }
 

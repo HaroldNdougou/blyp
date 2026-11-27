@@ -7,6 +7,7 @@ object BlypShellAuthComplete {
   /** Mise à jour profil / contexte sans ré-enfiler l’auth JS. */
   fun applyUserUpdate(context: Context, accessToken: String, user: JSONObject) {
     val app = context.applicationContext
+    val wasCommerce = BlypShellSession.isCommerceMode(app)
     BlypShellUserParse.apply(app, user)
     BlypShellCommerceSession.applyFromUser(app, user)
     val api = BlypShellConfig.apiBaseUrl(app)
@@ -40,6 +41,9 @@ object BlypShellAuthComplete {
       kyc,
       onboarding,
     )
+    if (wasCommerce && !commerce) {
+      BlypShellTaxiBroadcast.stopImmediately(app)
+    }
     BlypShellPayRuntime.updateBalance(app, balance)
     BlypShellUiRefresh.notifyWalletChanged()
   }

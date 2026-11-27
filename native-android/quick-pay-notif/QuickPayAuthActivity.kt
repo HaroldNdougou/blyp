@@ -184,7 +184,11 @@ class QuickPayAuthActivity : FragmentActivity() {
 
   private fun runPay(amount: Int) {
     ensureSharedRecipient()
-    if (!com.haroldndougou.blyp.shell.BlypShellNetwork.isOnline(this)) {
+    val snapNow = com.haroldndougou.blyp.shell.BlypShellPayRuntime.read(this)
+    val commerceNearby =
+      snapNow != null &&
+        com.haroldndougou.blyp.shell.BlypShellInstantCommercePay.isCommerceRecipient(snapNow)
+    if (!commerceNearby && !com.haroldndougou.blyp.shell.BlypShellNetwork.isOnline(this)) {
       toast(getString(R.string.blyp_shell_pay_no_internet))
       leaveWithoutApp()
       return
@@ -196,7 +200,7 @@ class QuickPayAuthActivity : FragmentActivity() {
         com.haroldndougou.blyp.shell.BlypShellPayFeedback.markPaySuccess(amount)
         com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
         toast(getString(R.string.quick_pay_success))
-        QuickPayNotifService.clearHighlight(this)
+        QuickPayNotifService.clearBasket(this)
         leaveWithoutApp()
         return
       }
@@ -228,7 +232,7 @@ class QuickPayAuthActivity : FragmentActivity() {
     com.haroldndougou.blyp.shell.BlypShellPayFeedback.markPaySuccess(amount)
     com.haroldndougou.blyp.shell.BlypShellUiRefresh.notifyWalletChanged()
     toast(getString(R.string.quick_pay_success))
-    QuickPayNotifService.clearHighlight(this)
+    QuickPayNotifService.clearBasket(this)
     leaveWithoutApp()
     com.haroldndougou.blyp.shell.BlypShellPayExecutor.payAsync(applicationContext, amount, { pay ->
       when {

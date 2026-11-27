@@ -3,6 +3,7 @@ package com.haroldndougou.blyp.shell
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import org.json.JSONObject
 
 /** Token + API pour sync réseau depuis la coque (miroir JS, chiffré). */
 object BlypShellRuntime {
@@ -62,6 +63,23 @@ object BlypShellRuntime {
   }
 
   data class Snapshot(val apiBaseUrl: String, val accessToken: String)
+
+  /** Sujet du jeton (identifiant interne), pour savoir quels messages sont les miens. */
+  fun accessSubject(context: Context): String? {
+    val token = read(context)?.accessToken ?: return null
+    val parts = token.split('.')
+    if (parts.size < 2) return null
+    return try {
+      val payload =
+        android.util.Base64.decode(
+          parts[1],
+          android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP,
+        )
+      JSONObject(String(payload, Charsets.UTF_8)).optString("sub").trim().ifEmpty { null }
+    } catch (_: Exception) {
+      null
+    }
+  }
 
   fun read(context: Context): Snapshot? {
     val p = prefs(context)

@@ -148,6 +148,12 @@ Parameters:
     Default: ""
     Description: Secret de session admin (32+ caractères, distinct de JwtSecret)
 
+  AdminDeviceKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Clé des téléphones admin (empreinte ou code du téléphone). Vide = désactivé.
+
   AdminPushPhone:
     Type: String
     Default: ""
@@ -553,6 +559,18 @@ Resources:
                 - execute-api:ManageConnections
               Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RealtimeApi}/${Stage}/POST/@connections/*"
       Events:
+        WalletMoneyRequests:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /wallet/money-requests
+            Method: POST
+        WalletMoneyRequestsList:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlypApi
+            Path: /wallet/money-requests
+            Method: GET
         WalletDeposit:
           Type: HttpApi
           Properties:
@@ -1063,6 +1081,7 @@ Resources:
           ADMIN_PASSWORD_HASH: !Ref AdminPasswordHash
           ADMIN_TOTP_SECRET: !Ref AdminTotpSecret
           ADMIN_JWT_SECRET: !Ref AdminJwtSecret
+          ADMIN_DEVICE_KEY: !Ref AdminDeviceKey
           ADMIN_PUSH_PHONE: !Ref AdminPushPhone
           ADMIN_ALLOWED_IPS: !Ref AdminAllowedIps
           REALTIME_WS_API_ENDPOINT: !Sub "https://${RealtimeApi}.execute-api.${AWS::Region}.amazonaws.com/${Stage}"

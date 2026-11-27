@@ -66,6 +66,72 @@ object PaymentPushPresenter {
     mgr.notify(notifId, notification)
   }
 
+  private val bleShown = ArrayDeque<Pair<Int, Long>>()
+
+  fun showBle(context: Context, amountFcfa: Int, fromName: String?, txId: String) {
+    val app = context.applicationContext
+    buzz(app)
+    val lang = PaymentAnnouncePrefs.getLang(app)
+    showPaymentReceived(
+      app,
+      mapOf(
+        "amountFcfa" to amountFcfa.toString(),
+        "fromName" to (fromName?.trim().orEmpty()),
+        "transactionId" to txId,
+        "contextType" to "commerce",
+        "title" to if (lang == "fr") "Paiement reçu" else "Payment received",
+      ),
+    )
+  }
+
+  private fun buzz(context: Context) {
+    val pattern = longArrayOf(0, 280, 140, 280)
+    val app = context.applicationContext
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      val vm =
+        app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+      val effect = android.os.VibrationEffect.createWaveform(pattern, -1)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        vm.defaultVibrator.vibrate(
+          effect,
+          android.os.VibrationAttributes.createForUsage(
+            android.os.VibrationAttributes.USAGE_ALARM,
+          ),
+        )
+      } else {
+        vm.defaultVibrator.vibrate(effect)
+      }
+      return
+    }
+    @Suppress("DEPRECATION")
+    val vibrator = app.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+      vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
+    } else {
+      @Suppress("DEPRECATION")
+      vibrator.vibrate(pattern, -1)
+    }
+  }
+
+  fun rememberBle(amountFcfa: Int) {
+    if (amountFcfa <= 0) return
+    synchronized(bleShown) {
+      bleShown.addLast(amountFcfa to System.currentTimeMillis() + 60_000L)
+      while (bleShown.size > 40) bleShown.removeFirst()
+    }
+  }
+
+  fun takeBle(amountFcfa: Int): Boolean {
+    val now = System.currentTimeMillis()
+    synchronized(bleShown) {
+      bleShown.removeAll { it.second < now }
+      val i = bleShown.indexOfFirst { it.first == amountFcfa }
+      if (i < 0) return false
+      bleShown.removeAt(i)
+      return true
+    }
+  }
+
   private fun formatTitle(lang: String, transfer: Boolean): String {
     return if (lang == "fr") {
       if (transfer) "Transfert reçu" else "Paiement reçu"

@@ -1,6 +1,7 @@
 import { GetCommand, PutCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { SignJWT, jwtVerify } from "jose";
 import {
+  createHash,
   createHmac,
   randomBytes,
   scrypt as scryptCb,
@@ -59,6 +60,7 @@ export function adminConfig() {
     passwordHash: String(env.ADMIN_PASSWORD_HASH ?? "").trim(),
     totpSecret: String(env.ADMIN_TOTP_SECRET ?? "").trim(),
     jwtSecret: String(env.ADMIN_JWT_SECRET ?? "").trim(),
+    deviceKey: String(env.ADMIN_DEVICE_KEY ?? "").trim(),
     senderEmail: String(env.ADMIN_SENDER_EMAIL ?? "").trim(),
     pushPhone: pushPhones[0] ?? "",
     allowedIps: String(env.ADMIN_ALLOWED_IPS ?? "")
@@ -66,6 +68,15 @@ export function adminConfig() {
       .map((s) => s.trim())
       .filter(Boolean),
   };
+}
+
+/** Comparaison à temps constant. La clé vide n'est jamais acceptée. */
+export function deviceKeyMatches(given, cfg = adminConfig()) {
+  const expected = String(cfg.deviceKey ?? "");
+  if (expected.length < 32) return false;
+  const a = createHash("sha256").update(expected).digest();
+  const b = createHash("sha256").update(String(given ?? "")).digest();
+  return timingSafeEqual(a, b);
 }
 
 export function isAdminConfigured(cfg = adminConfig()) {

@@ -86,6 +86,11 @@ object BlypShellTaxiBroadcast {
     }
   }
 
+  fun stopImmediately(context: Context) {
+    setWantOn(context, false)
+    BlypShellClosedCashier.stop(context.applicationContext)
+  }
+
   fun setWantOn(context: Context, enabled: Boolean, fromNotification: Boolean = false) {
     val app = context.applicationContext
     wantOn = enabled
@@ -157,15 +162,9 @@ object BlypShellTaxiBroadcast {
       pausedInApp = false
       return
     }
-    pausedInApp = true
+    pausedInApp = false
     if (!wantOn) return
-    on = false
-    emit()
-    io.execute {
-      stopAdvertisingQuietly()
-      BleBroadcastForegroundService.stop(app)
-      emit()
-    }
+    io.execute { startInternal(app, forcePrompt = false) }
   }
 
   private fun onAppBackground(context: Context) {
@@ -177,7 +176,6 @@ object BlypShellTaxiBroadcast {
 
   private fun startInternal(context: Context, forcePrompt: Boolean) {
     if (!wantOn) return
-    if (pausedInApp && !BlypShellSession.isCommerceMode(context)) return
     if (busy) return
     busy = true
     emit()
@@ -216,6 +214,17 @@ object BlypShellTaxiBroadcast {
       stopAdvertisingQuietly()
       val commerce = BlypShellSession.isCommerceMode(context)
       if (commerce) {
+        if (!CashierGattController.isRunning()) {
+          BlypShellClosedCashier.ensureRunning(context, fromBroadcast = true)
+        }
+        if (CashierGattController.isRunning()) {
+          CashierGattController.setIdentity(manuf)
+          on = true
+          startForegroundNotif(context)
+          return
+        }
+      }
+      if (!commerce) {
         if (!CashierGattController.isRunning()) {
           BlypShellClosedCashier.ensureRunning(context, fromBroadcast = true)
         }
@@ -275,14 +284,6 @@ object BlypShellTaxiBroadcast {
         }
       }
       if (!started) {
-        try {
-          adv.stopAdvertising(callback)
-        } catch (_: Exception) {
-        }
-        on = false
-        return
-      }
-      if (pausedInApp && !BlypShellSession.isCommerceMode(context)) {
         try {
           adv.stopAdvertising(callback)
         } catch (_: Exception) {

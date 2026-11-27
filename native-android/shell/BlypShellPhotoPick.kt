@@ -1,27 +1,14 @@
 package com.haroldndougou.blyp.shell
 
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.provider.MediaStore
 import java.io.File
 
-/** Galerie / caméra — priorité Xiaomi (MIUI) puis sélecteurs standards. */
+/** Galerie / caméra — sélecteurs standards + applis galerie courantes en secours. */
 object BlypShellPhotoPick {
-  fun isXiaomiFamily(): Boolean {
-    val m = Build.MANUFACTURER.lowercase()
-    val b = Build.BRAND.lowercase()
-    return m.contains("xiaomi") ||
-      m.contains("redmi") ||
-      m.contains("poco") ||
-      b.contains("xiaomi") ||
-      b.contains("redmi") ||
-      b.contains("poco")
-  }
-
-  /** Extrait l’URI renvoyé par la galerie (formats MIUI / Samsung / stock). */
+  /** Extrait l’URI renvoyé par la galerie (clipData, stream, chemins OEM). */
   fun onePhotoFromResult(data: Intent?): Uri? {
     if (data == null) return null
     data.data?.let { return it }
@@ -45,7 +32,7 @@ object BlypShellPhotoPick {
 
   fun copyToCache(context: Context, uri: Uri): File? {
     return try {
-      val out = File(context.cacheDir, "avatar-pick-${System.currentTimeMillis()}.jpg")
+      val out = File(context.cacheDir, "chat-pick-${java.util.UUID.randomUUID()}.jpg")
       when (uri.scheme?.lowercase()) {
         "file" -> {
           val path = uri.path ?: return null
@@ -63,7 +50,7 @@ object BlypShellPhotoPick {
               Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
           } catch (_: Exception) {
-            /* URI ponctuelle — normal sur MIUI */
+            /* URI ponctuelle sans permission persistante */
           }
           val stream =
             cr.openInputStream(uri)
@@ -94,25 +81,18 @@ object BlypShellPhotoPick {
         addCategory(Intent.CATEGORY_OPENABLE)
         putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
       }
-    val miui =
+    val fallbacks =
       listOf(
-        Intent(pick).apply {
-          component =
-            ComponentName("com.miui.gallery", "com.miui.gallery.picker.PickGalleryActivity")
-        },
-        Intent(pick).apply { setPackage("com.miui.gallery") },
-        Intent(getContent).apply { setPackage("com.miui.gallery") },
-        Intent(Intent.ACTION_PICK).apply {
-          type = "image/*"
-          setPackage("com.miui.gallery")
-        },
+        Intent(pick).apply { setPackage("com.sec.android.gallery3d") },
+        Intent(getContent).apply { setPackage("com.google.android.apps.photos") },
+        Intent(pick).apply { setPackage("com.google.android.apps.photos") },
       )
     val generic =
       listOf(
-        pick,
         getContent,
+        pick,
         Intent.createChooser(getContent, null),
       )
-    return if (isXiaomiFamily()) miui + generic else generic + miui
+    return generic + fallbacks
   }
 }

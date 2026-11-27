@@ -182,7 +182,10 @@ class PayShellKeypadFragment : Fragment() {
         }
       }
     registerRadioReceiver()
-    startNearbyScan()
+    view?.post {
+      if (!isAdded || isHidden) return@post
+      startNearbyScan()
+    }
   }
 
   override fun onStop() {
@@ -222,6 +225,12 @@ class PayShellKeypadFragment : Fragment() {
       lastNearbyAppliedId = null
       bindRecipient()
       BlypShellQuickPayPref.mirrorCleared(ctx)
+    }
+    if (BlypShellTaxiBroadcast.snapshot(ctx).wantOn &&
+      !BlypShellSession.isCommerceMode(ctx)
+    ) {
+      BlypShellNearbyScan.stop()
+      return
     }
     if (BlypShellTaxiBroadcast.snapshot(ctx).on && BlypShellSession.isCommerceMode(ctx)) return
     if (!BlypShellBlePayPref.isEnabled(ctx)) {
@@ -469,9 +478,7 @@ class PayShellKeypadFragment : Fragment() {
       return
     }
     if (isOwnPeer(ctx, peer)) return
-    if (BlypShellPayEligibility.isCommercePayAccountId(peer.accountId)) {
-      BlypShellPayDossierRam.prefetchMerchant(ctx.applicationContext, peer.accountId.uppercase())
-    }
+    BlypShellPayDossierRam.prefetchMerchant(ctx.applicationContext, peer.accountId.uppercase())
     qrRecipientId?.let { qrId ->
       if (peer.accountId.equals(qrId, ignoreCase = true) ||
         peer.accountId == qrBleBaselineId ||
@@ -640,6 +647,11 @@ class PayShellKeypadFragment : Fragment() {
     banner.text = getString(R.string.blyp_shell_pay_success_banner, fmt.format(amount))
     banner.visibility = View.VISIBLE
     successHideRunnable?.let { mainHandler.removeCallbacks(it) }
+    val chatSheet = parentFragment as? ShellChatPaySheetDialogFragment
+    if (chatSheet != null) {
+      chatSheet.collapseAfterPaySuccess()
+      return
+    }
     val hide =
       Runnable {
         banner.visibility = View.GONE
@@ -674,8 +686,14 @@ class PayShellKeypadFragment : Fragment() {
 
   /** Intent visible en fond ; à l’écran Payer on scanne toujours. */
   private fun setReceiveNearby(ctx: android.content.Context, on: Boolean) {
+    if (on && !BlypShellSession.isCommerceMode(ctx)) {
+      BlypShellNearbyScan.stop()
+      if (!BlypShellBluetooth.isOn(ctx) && !BlypShellBluetooth.canEnableSilently()) {
+        Toast.makeText(ctx, R.string.blyp_shell_ble_off_title, Toast.LENGTH_LONG).show()
+      }
+    }
     BlypShellTaxiBroadcast.setWantOn(ctx, on)
-    startNearbyScan()
+    if (!on) startNearbyScan()
     bindReceiveToggle()
     bindRecipient()
   }
@@ -684,9 +702,11 @@ class PayShellKeypadFragment : Fragment() {
     val ctx = context ?: return
     val v = receiveView ?: return
     val on = BlypShellTaxiBroadcast.snapshot(ctx).wantOn
+    v.visibility = View.VISIBLE
+    v.imageTintMode = android.graphics.PorterDuff.Mode.SRC_IN
     v.imageTintList =
       android.content.res.ColorStateList.valueOf(
-        ctx.getColor(if (on) R.color.blyp_cold_start_accent else R.color.blyp_cold_start_text_muted),
+        if (on) ctx.getColor(R.color.blyp_cold_start_accent) else 0xFF888888.toInt(),
       )
     v.isActivated = on
   }
@@ -694,8 +714,12 @@ class PayShellKeypadFragment : Fragment() {
   private fun attemptPay(amount: Int) {
     if (amount <= 0) return
     val ctx = context ?: return
-    /** Pas de paiement sans Internet (paiement hors ligne : plus tard). */
-    if (!BlypShellNetwork.isOnline(ctx)) {
+    val accountId = BlypShellPayRuntime.activeRecipientAccountId(ctx)?.trim().orEmpty()
+    val commerceNearby =
+      accountId.isNotEmpty() && BlypShellPayEligibility.isCommercePayAccountId(accountId)
+    val arrowPay =
+      BlypShellPayRuntime.activeRecipientFromBle(ctx) && !commerceNearby
+    if (!commerceNearby && !arrowPay && !BlypShellNetwork.isOnline(ctx)) {
       Toast.makeText(ctx, R.string.blyp_shell_pay_no_internet, Toast.LENGTH_LONG).show()
       return
     }
@@ -708,7 +732,6 @@ class PayShellKeypadFragment : Fragment() {
       ShellPinBootstrapActivity.startIfNeeded(ctx)
       return
     }
-    val accountId = BlypShellPayRuntime.activeRecipientAccountId(ctx)?.trim().orEmpty()
     if (accountId.isEmpty()) {
       showNoMerchant()
       return
@@ -717,12 +740,7 @@ class PayShellKeypadFragment : Fragment() {
       BlypShellPayEligibility.isCommercePayAccountId(accountId) &&
         !BlypShellPayDossierRam.isReadyForPay(amount, accountId.uppercase())
     ) {
-      // Vérif locale (quelques ms) si le préchauffage n’a pas encore tourné — pas de faux refus.
-      BlypShellPayDossierRam.warmSync(ctx.applicationContext, amount)
-      if (!BlypShellPayDossierRam.isReadyForPay(amount, accountId.uppercase())) {
-        Toast.makeText(ctx, BlypShellPayDossierRam.denyMessageRes(), Toast.LENGTH_SHORT).show()
-        return
-      }
+      BlypShellPayDossierRam.scheduleWarm(ctx.applicationContext, amount)
     }
     val paySnap = BlypShellPayRuntime.read(ctx)
     if (paySnap != null && amount > paySnap.balanceFcfa) {
@@ -774,37 +792,8 @@ class PayShellKeypadFragment : Fragment() {
     }
   }
 
-  private fun formatFcfa(amount: Int): String {
-    val locale = if (Locale.getDefault().language == "fr") Locale.FRENCH else Locale.US
-    return NumberFormat.getIntegerInstance(locale).format(amount)
-  }
-
-  private fun withSmallF(text: String, ratio: Float): CharSequence {
-    val s = android.text.SpannableString("${text}F")
-    s.setSpan(
-      android.text.style.RelativeSizeSpan(ratio),
-      text.length,
-      s.length,
-      android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
-    )
-    return s
-  }
-
-  /** Frais Pay : 10 % sous 100 F, 10 F fixes à partir de 100 F (`lib/pay/fees.ts`). */
-  private fun bindFee(amount: Int) {
-    val v = feeView ?: return
-    val fee =
-      when {
-        amount <= 0 -> 0
-        amount >= 100 -> 10
-        else -> Math.round(amount * 0.1f)
-      }
-    if (fee <= 0) {
-      v.visibility = View.GONE
-      return
-    }
-    v.visibility = View.VISIBLE
-    v.text = withSmallF(getString(R.string.blyp_shell_pay_fee_line, formatFcfa(fee)), 10f / 12f)
+  private fun bindFee() {
+    feeView?.visibility = View.GONE
   }
 
   /** Commerce (ou aucun destinataire) + détection coupée → l’en-tête montre « Bluetooth éteint ». */
@@ -918,6 +907,9 @@ class PayShellKeypadFragment : Fragment() {
     }
     setThumbDetected(true)
     recipientNameView?.text = label.trim()
+    recipientNameView?.setTypeface(
+      android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD),
+    )
     recipientNameView?.setTextColor(ctx.getColor(R.color.blyp_cold_start_text))
     recipientNameView?.isSingleLine = true
     recipientNameView?.ellipsize = android.text.TextUtils.TruncateAt.END
@@ -1058,7 +1050,7 @@ class PayShellKeypadFragment : Fragment() {
     amountView?.text = PayShellState.formatDisplay()
     val amount = PayShellState.amountFcfa()
     view?.let { PayOverlayUi.syncPayKey(it, amount) }
-    bindFee(amount)
+    bindFee()
     warmDossierForCurrentAmount()
   }
 

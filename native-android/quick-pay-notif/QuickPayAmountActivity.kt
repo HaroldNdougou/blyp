@@ -34,7 +34,7 @@ class QuickPayAmountActivity : AppCompatActivity() {
         Toast.makeText(this, R.string.quick_pay_no_recipient, Toast.LENGTH_SHORT).show()
         return@setOnClickListener
       }
-      QuickPayAuthActivity.start(this, amount)
+      QuickPayNotifService.addAmount(this, amount)
       finishAndRemoveTask()
     }
     field.requestFocus()

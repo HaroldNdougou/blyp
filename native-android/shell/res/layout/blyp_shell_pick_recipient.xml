@@ -22,6 +22,7 @@
             android:src="@drawable/blyp_shell_ic_back" />
 
         <TextView
+            android:id="@+id/blyp_pick_recipient_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -42,6 +43,7 @@
         android:background="@color/blyp_shell_border_light" />
 
     <LinearLayout
+        android:id="@+id/blyp_pick_recipient_manual"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -102,6 +104,7 @@
     </LinearLayout>
 
     <TextView
+        android:id="@+id/blyp_pick_recipient_section"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingHorizontal="20dp"
@@ -123,6 +126,15 @@
             android:layout_height="match_parent"
             android:clipToPadding="false"
             android:paddingVertical="4dp" />
+
+        <ProgressBar
+            android:id="@+id/blyp_pick_recipient_busy"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:indeterminateTint="@color/blyp_shell_accent"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/blyp_pick_recipient_empty"

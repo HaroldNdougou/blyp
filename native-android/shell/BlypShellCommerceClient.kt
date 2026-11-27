@@ -31,7 +31,7 @@ object BlypShellCommerceClient {
     context: Context,
     personal: Boolean,
     commerceId: String?,
-    onDone: (Boolean) -> Unit,
+    onDone: (SwitchOutcome) -> Unit,
   ) {
     io.execute {
       onDone(setActiveContextSync(context.applicationContext, personal, commerceId))
@@ -148,12 +148,20 @@ object BlypShellCommerceClient {
     return true
   }
 
+  enum class SwitchOutcome {
+    Ok,
+    Offline,
+    Network,
+    Failed,
+  }
+
   private fun setActiveContextSync(
     context: Context,
     personal: Boolean,
     commerceId: String?,
-  ): Boolean {
-    val runtime = BlypShellRuntime.readFresh(context) ?: return false
+  ): SwitchOutcome {
+    if (!BlypShellNetwork.isOnline(context)) return SwitchOutcome.Offline
+    val runtime = BlypShellRuntime.readFresh(context) ?: return SwitchOutcome.Failed
     val body =
       JSONObject().apply {
         if (personal) {
@@ -164,11 +172,11 @@ object BlypShellCommerceClient {
         }
       }
     val (ok, json) =
-      putJson(runtime, "${runtime.apiBaseUrl}/me/context", body) ?: return false
-    if (!ok || json == null) return false
-    val user = json.optJSONObject("user") ?: return false
+      putJson(runtime, "${runtime.apiBaseUrl}/me/context", body) ?: return SwitchOutcome.Network
+    if (!ok || json == null) return SwitchOutcome.Failed
+    val user = json.optJSONObject("user") ?: return SwitchOutcome.Failed
     BlypShellAuthComplete.applyUserUpdate(context, runtime.accessToken, user)
-    return true
+    return SwitchOutcome.Ok
   }
 
   private fun getJson(

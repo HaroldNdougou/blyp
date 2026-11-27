@@ -17,10 +17,14 @@ import {
   ELEVATION_TTL_SEC,
   adminConfig,
   checkCredentials,
+  clearFailures,
   clearSessionCookie,
   clientIp,
+  deviceKeyMatches,
   headerOf,
   ipAllowed,
+  lockRemainingSec,
+  recordFailure,
   isAdminConfigured,
   requireSession,
   sessionCookie,
@@ -37,6 +41,11 @@ import {
   toCsv,
 } from "../../lib/adminMetrics.mjs";
 import { describeEvent } from "../../lib/adminNotify.mjs";
+import {
+  confirmMoneyRequest,
+  listPendingMoneyRequests,
+  rejectMoneyRequest,
+} from "../../lib/moneyRequests.mjs";
 import { runRecaps } from "../../lib/adminRecap.mjs";
 import {
   eventsForRange,
@@ -145,6 +154,10 @@ const ERROR_FR = {
   IDEMPOTENCY_REQUIRED: "Clé d'opération manquante — rechargez la page.",
   USER_NOT_FOUND: "Utilisateur introuvable.",
   INSUFFICIENT_BALANCE: "Solde insuffisant pour ce débit.",
+  NOT_FOUND: "Demande introuvable.",
+  NOT_PENDING: "Cette demande n'est plus en attente.",
+  ID_INVALID: "Demande invalide.",
+  KIND_INVALID: "Type de demande invalide.",
   PHONE_INVALID: "Numéro de téléphone invalide (format camerounais).",
   NAME_REQUIRED: "Prénom et nom obligatoires.",
   USER_EXISTS: "Ce numéro a déjà un compte.",
@@ -231,6 +244,48 @@ export async function handler(event) {
     return reply(200, { ok: true, token, expiresInSec: SESSION_TTL_SEC }, {}, [sessionCookie(token)]);
   }
 
+  if (method === "POST" && sub === "/api/device-unlock") {
+    const body = parseBody(event);
+    if (!body) return reply(400, { error: "Requête invalide" });
+    if (headerOf(event, "x-requested-with") !== "blyp-admin") {
+      return reply(400, { error: "Requête invalide" });
+    }
+    const locked = await lockRemainingSec();
+    if (locked > 0) {
+      return reply(429, { error: "Trop d'essais. Réessayez plus tard.", retryAfterSec: locked });
+    }
+    if (!deviceKeyMatches(body.key, cfg)) {
+      await recordFailure();
+      const retry = await lockRemainingSec();
+      await writeAudit({
+        admin: cfg.email || "device",
+        action: "device_unlock_failed",
+        result: retry > 0 ? "LOCKED" : "INVALID",
+        ip,
+      });
+      if (retry > 0) {
+        return reply(429, { error: "Trop d'essais. Réessayez plus tard.", retryAfterSec: retry });
+      }
+      return reply(401, { error: "Accès refusé" });
+    }
+    await clearFailures();
+    const token = await signSession(cfg, cfg.email);
+    const elevation = await signElevation(cfg, cfg.email);
+    await writeAudit({ admin: cfg.email, action: "device_unlock", result: "ok", ip });
+    return reply(
+      200,
+      {
+        ok: true,
+        token,
+        elevation,
+        expiresInSec: SESSION_TTL_SEC,
+        elevationExpiresInSec: ELEVATION_TTL_SEC,
+      },
+      {},
+      [sessionCookie(token)],
+    );
+  }
+
   if (method === "POST" && sub === "/api/logout") {
     return reply(200, { ok: true }, {}, [clearSessionCookie()]);
   }
@@ -269,6 +324,29 @@ export async function handler(event) {
 
   if (method === "GET" && sub === "/api/overview") {
     return reply(200, await overview());
+  }
+
+  if (method === "GET" && sub === "/api/money-requests") {
+    return reply(200, { items: await listPendingMoneyRequests() });
+  }
+
+  const moneyMatch = sub.match(/^\/api\/money-requests\/([^/]+)\/(confirm|reject)$/);
+  if (moneyMatch && method === "POST") {
+    if (!(await requireElevation())) return ELEVATION_ERROR;
+    const requestId = decodeURIComponent(moneyMatch[1]);
+    const res =
+      moneyMatch[2] === "confirm"
+        ? await confirmMoneyRequest({ requestId, admin, ip })
+        : await rejectMoneyRequest({ requestId });
+    await writeAudit({
+      admin,
+      action: moneyMatch[2] === "confirm" ? "money_request_confirm" : "money_request_reject",
+      target: requestId,
+      result: res.error ?? (res.reused ? "ok_reused" : "ok"),
+      ip,
+    });
+    if (res.error === "NOT_FOUND") return reply(404, { error: ERROR_FR.NOT_FOUND, code: res.error });
+    return res.error ? actionError(res.error) : reply(200, res);
   }
 
   if (method === "GET" && sub === "/api/events") {

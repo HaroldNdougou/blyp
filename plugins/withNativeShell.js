@@ -83,13 +83,28 @@ function withNativeShellSources(config) {
         "app/src/main/java/com/haroldndougou/blyp/shell",
       );
       fs.mkdirSync(destDir, { recursive: true });
-      for (const file of fs.readdirSync(destDir)) {
-        if (file.endsWith(".kt")) fs.rmSync(path.join(destDir, file));
+
+      function rmKtRecursive(dir) {
+        if (!fs.existsSync(dir)) return;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const p = path.join(dir, entry.name);
+          if (entry.isDirectory()) rmKtRecursive(p);
+          else if (entry.name.endsWith(".kt")) fs.rmSync(p);
+        }
       }
-      for (const file of fs.readdirSync(srcDir)) {
-        if (!file.endsWith(".kt")) continue;
-        fs.copyFileSync(path.join(srcDir, file), path.join(destDir, file));
+
+      function copyKtRecursive(fromDir, toDir) {
+        fs.mkdirSync(toDir, { recursive: true });
+        for (const entry of fs.readdirSync(fromDir, { withFileTypes: true })) {
+          const from = path.join(fromDir, entry.name);
+          const to = path.join(toDir, entry.name);
+          if (entry.isDirectory()) copyKtRecursive(from, to);
+          else if (entry.name.endsWith(".kt")) fs.copyFileSync(from, to);
+        }
       }
+
+      rmKtRecursive(destDir);
+      copyKtRecursive(srcDir, destDir);
       const srcRes = path.join(srcDir, "res");
       if (fs.existsSync(srcRes)) {
         copyDirRecursive(
@@ -191,13 +206,25 @@ function withNativeShellManifest(config) {
       [SHELL_COMMERCE_SWITCH, "@style/AppTheme"],
       [SHELL_COMMERCE_CREATE, "@style/AppTheme"],
       [".shell.ShellSoaReportActivity", "@style/AppTheme"],
+      [".shell.ShellChatThreadActivity", "@style/AppTheme"],
+      [".shell.ShellNewChatActivity", "@style/AppTheme"],
+      [".shell.ShellChatMoneyActivity", "@style/AppTheme"],
+      [".shell.ShellChatMoneyReceiptActivity", "@style/AppTheme"],
+      [".shell.ShellForwardChatActivity", "@style/AppTheme"],
+      [".shell.ShellStatusViewActivity", "@style/Theme.AppCompat.NoActionBar"],
+      [".shell.ShellStatusCreateActivity", "@style/AppTheme"],
     ]) {
       if (!app.activity.some((a) => a.$["android:name"] === name)) {
+        const extra =
+          name === ".shell.ShellChatThreadActivity"
+            ? { "android:windowSoftInputMode": "adjustResize" }
+            : {};
         app.activity.push({
           $: {
             "android:name": name,
             "android:exported": "false",
             "android:theme": theme,
+            ...extra,
           },
         });
       }
@@ -410,6 +437,13 @@ function withNativeShellGradle(config) {
         /dependencies\s*\{/,
         `dependencies {
     implementation "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0"`,
+      );
+    }
+    if (!src.includes("androidx.viewpager2:viewpager2")) {
+      src = src.replace(
+        /dependencies\s*\{/,
+        `dependencies {
+    implementation "androidx.viewpager2:viewpager2:1.1.0"`,
       );
     }
     if (!src.includes("security-crypto")) {

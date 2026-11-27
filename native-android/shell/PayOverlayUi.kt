@@ -27,11 +27,11 @@ object PayOverlayUi {
     val fmt = NumberFormat.getIntegerInstance(locale)
     val gap = (8 * ctx.resources.displayMetrics.density).toInt()
     QUICK_AMOUNTS.forEachIndexed { i, amount ->
-      val label = fmt.format(amount)
+      val number = fmt.format(amount)
       val chip =
         TextView(ctx, null, 0, R.style.BlypColdQuickChip).apply {
-          text = label
-          contentDescription = ctx.getString(R.string.blyp_shell_pay_quick_a11y, label)
+          text = chipLabel(number)
+          contentDescription = ctx.getString(R.string.blyp_shell_pay_quick_a11y, number)
           val lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
           if (i > 0) lp.marginStart = gap
           layoutParams = lp
@@ -62,6 +62,8 @@ object PayOverlayUi {
     }
   }
 
+  fun chipLabel(number: String): CharSequence = number
+
   /** Vert seulement après un tap rapide — effacé dès qu’on tape au clavier. */
   fun clearQuickSelection(root: View) {
     val row = root.findViewById<LinearLayout>(R.id.blyp_pay_quick_row) ?: return
@@ -80,7 +82,7 @@ object PayOverlayUi {
       val sel = c === chip
       c.isSelected = sel
       c.setTextColor(
-        ctx.getColor(if (sel) R.color.blyp_cold_start_accent else R.color.blyp_cold_start_text_muted),
+        ctx.getColor(if (sel) R.color.blyp_cold_start_accent_on else R.color.blyp_cold_start_text_muted),
       )
     }
   }

@@ -162,18 +162,28 @@ class ShellCommerceSwitchActivity : AppCompatActivity() {
 
   private fun onPick(row: SwitchRow) {
     if (busy || row.active) return
+    if (BlypShellSession.isCommerceMode(this)) {
+      BlypShellTaxiBroadcast.stopImmediately(this)
+    }
     busy = true
     findViewById<View>(R.id.blyp_commerce_switch_progress)?.visibility = View.VISIBLE
     BlypShellCommerceClient.setActiveContextAsync(
       this,
       personal = row.personal,
       commerceId = row.commerceId,
-    ) { ok ->
+    ) { outcome ->
       runOnUiThread {
         busy = false
         findViewById<View>(R.id.blyp_commerce_switch_progress)?.visibility = View.GONE
-        if (!ok) {
-          toast(getString(R.string.blyp_shell_commerce_switch_failed))
+        val msg =
+          when (outcome) {
+            BlypShellCommerceClient.SwitchOutcome.Ok -> 0
+            BlypShellCommerceClient.SwitchOutcome.Offline -> R.string.blyp_shell_switch_offline
+            BlypShellCommerceClient.SwitchOutcome.Network -> R.string.blyp_shell_switch_network
+            BlypShellCommerceClient.SwitchOutcome.Failed -> R.string.blyp_shell_commerce_switch_failed
+          }
+        if (msg != 0) {
+          toast(getString(msg))
           return@runOnUiThread
         }
         val i =

@@ -572,6 +572,8 @@ export default {
     open: "Open",
     emptyHint: "Create a business to receive in pro mode.",
     switchFailed: "Could not switch context.",
+    switchOffline: "No internet connection.",
+    switchNetwork: "Network problem. Try again.",
     createFailed: "Could not create the business.",
     nameTooShort: "Enter a name (min. 2 characters).",
     payAsPersonalTitle: "Pro mode",

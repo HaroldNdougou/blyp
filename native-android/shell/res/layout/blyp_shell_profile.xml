@@ -164,29 +164,26 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
-            <LinearLayout
+            <TextView
+                android:id="@+id/blyp_profile_balance"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
-                android:gravity="bottom"
-                android:orientation="horizontal">
+                android:maxLines="1"
+                android:textColor="@color/blyp_shell_text_secondary"
+                android:textSize="28sp"
+                android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/blyp_profile_balance"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:textColor="@color/blyp_shell_text_secondary"
-                    android:textSize="28sp"
-                    android:textStyle="bold" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="12dp"
-                    android:layout_marginBottom="4dp"
                     android:text="@string/blyp_shell_history_fcfa"
                     android:textColor="@color/blyp_shell_text_faint"
                     android:textSize="13sp"
@@ -781,6 +778,19 @@
                 android:textColor="@color/blyp_shell_muted"
                 android:textSize="12sp" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/blyp_profile_plus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/blyp_shell_menu_row_btn"
+            android:gravity="center"
+            android:paddingVertical="14dp"
+            android:text="@string/blyp_shell_plus_open"
+            android:textColor="@color/blyp_shell_text"
+            android:textSize="15sp"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/blyp_profile_change_pin"

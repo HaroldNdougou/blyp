@@ -30,10 +30,13 @@ class QuickPayNotifService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (intent?.action != ACTION_STOP) {
+    if (intent?.action != ACTION_STOP &&
+      intent?.action != ACTION_ADD &&
+      intent?.action != ACTION_CLEAR_BASKET
+    ) {
       /** Visible tout de suite (état gardé en mémoire) ; le moteur de détection démarre juste après. */
       ensureChannel()
-      postForeground(buildNotification())
+      show(buildNotification())
       val app = applicationContext
       Handler(Looper.getMainLooper()).post {
         com.haroldndougou.blyp.shell.BlypShellQuickPayPref.ensureRunning(app)
@@ -48,7 +51,7 @@ class QuickPayNotifService : Service() {
         val amount = intent.getIntExtra(EXTRA_PAY_AMOUNT, 0)
         if (amount > 0 && merchantReady()) {
           ensureChannel()
-          postForeground(buildNotification())
+          show(buildNotification())
           QuickPayAuthActivity.start(this, amount)
         }
         return START_STICKY
@@ -56,13 +59,26 @@ class QuickPayNotifService : Service() {
       ACTION_REFRESH -> {
         highlighted = intent.getIntExtra(EXTRA_HIGHLIGHT, 0)
         ensureChannel()
-        postForeground(buildNotification())
+        show(buildNotification())
         return START_STICKY
       }
       ACTION_CLEAR_HIGHLIGHT -> {
         highlighted = 0
         ensureChannel()
-        postForeground(buildNotification())
+        show(buildNotification())
+        return START_STICKY
+      }
+      ACTION_ADD -> {
+        val add = intent.getIntExtra(QuickPayActionReceiver.EXTRA_AMOUNT, 0)
+        if (add > 0) bumpBasket(add)
+        ensureChannel()
+        show(buildNotification())
+        return START_STICKY
+      }
+      ACTION_CLEAR_BASKET -> {
+        resetBasket()
+        ensureChannel()
+        show(buildNotification())
         return START_STICKY
       }
     }
@@ -79,6 +95,7 @@ class QuickPayNotifService : Service() {
       loadedAvatarPhone = ""
       avatarInFlight = ""
       cachedPhone = ""
+      resetBasket()
     }
     if (intent?.hasExtra(EXTRA_PHONE) == true) {
       cachedPhone = intent.getStringExtra(EXTRA_PHONE).orEmpty()
@@ -94,18 +111,47 @@ class QuickPayNotifService : Service() {
     cachedL500 = intent?.getStringExtra(EXTRA_L500) ?: cachedL500.ifBlank { "500" }
 
     ensureChannel()
-    postForeground(buildNotification())
+    show(buildNotification())
     val phone = intent?.getStringExtra(EXTRA_PHONE)
     if (phone != null) maybeLoadAvatar(phone)
     return START_STICKY
   }
 
+  override fun onCreate() {
+    super.onCreate()
+    live = this
+  }
+
   override fun onDestroy() {
+    if (live === this) live = null
     ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
     super.onDestroy()
   }
 
+  private fun paintHighlight(amount: Int) {
+    highlighted = amount
+    ensureChannel()
+    show(buildNotification())
+  }
+
+  private fun repaint() {
+    ensureChannel()
+    show(buildNotification())
+  }
+
   private fun merchantReady(): Boolean = QuickPayNativeSecrets.isReady(this)
+
+  private var shown = false
+
+  private fun show(notification: Notification) {
+    if (!shown) {
+      postForeground(notification)
+      shown = true
+    } else {
+      val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+      mgr.notify(NOTIFICATION_ID, notification)
+    }
+  }
 
   private fun postForeground(notification: Notification) {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -125,7 +171,7 @@ class QuickPayNotifService : Service() {
       NotificationChannel(
         CHANNEL_ID,
         "Paiement rapide",
-        NotificationManager.IMPORTANCE_HIGH,
+        NotificationManager.IMPORTANCE_LOW,
       ).apply {
         description = "Montants rapides depuis la barre de notifications"
         setShowBadge(false)
@@ -133,7 +179,35 @@ class QuickPayNotifService : Service() {
         enableVibration(false)
         setSound(null, null)
       }
+    mgr.deleteNotificationChannel("blyp_quick_pay")
     mgr.createNotificationChannel(channel)
+  }
+
+  private fun clearPending(): PendingIntent {
+    val intent =
+      Intent(this, QuickPayActionReceiver::class.java).apply {
+        action = QuickPayActionReceiver.ACTION_CLEAR
+      }
+    return PendingIntent.getBroadcast(
+      this,
+      8,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+  }
+
+  private fun addPending(amount: Int, requestCode: Int): PendingIntent {
+    val intent =
+      Intent(this, QuickPayActionReceiver::class.java).apply {
+        action = ACTION_ADD
+        putExtra(QuickPayActionReceiver.EXTRA_AMOUNT, amount)
+      }
+    return PendingIntent.getBroadcast(
+      this,
+      40 + requestCode,
+      intent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
   }
 
   private fun payActivityPending(amount: Int, requestCode: Int): PendingIntent {
@@ -154,31 +228,41 @@ class QuickPayNotifService : Service() {
   private fun bindAmountChip(
     remote: RemoteViews,
     amount: Int,
-    label: String,
+    label: CharSequence,
     viewId: Int,
     requestCode: Int,
     openApp: PendingIntent,
   ) {
     remote.setTextViewText(viewId, label)
+    val n = countFor(amount)
+    val countId = countViewId(amount)
     if (!merchantReady()) {
       remote.setOnClickPendingIntent(viewId, notReadyPending(requestCode))
       remote.setFloat(viewId, "setAlpha", 0.42f)
       remote.setInt(viewId, "setBackgroundResource", R.drawable.quick_pay_chip_default)
       remote.setTextColor(viewId, getColor(R.color.quick_pay_chip_text))
+      if (countId != 0) remote.setViewVisibility(countId, View.GONE)
       return
     }
     remote.setFloat(viewId, "setAlpha", 1f)
-    remote.setOnClickPendingIntent(viewId, payActivityPending(amount, requestCode))
-    val picked = highlighted == amount
-    remote.setInt(
-      viewId,
-      "setBackgroundResource",
-      if (picked) R.drawable.quick_pay_chip_selected else R.drawable.quick_pay_chip_default,
-    )
-    remote.setTextColor(
-      viewId,
-      getColor(if (picked) R.color.quick_pay_chip_text_selected else R.color.quick_pay_chip_text),
-    )
+    val tap = addPending(amount, requestCode)
+    remote.setOnClickPendingIntent(viewId, tap)
+    val chipId = chipViewId(amount)
+    if (chipId != 0) remote.setOnClickPendingIntent(chipId, tap)
+    if (n > 0) {
+      remote.setInt(viewId, "setBackgroundColor", 0xFF5DC705.toInt())
+      remote.setTextColor(viewId, 0xFFFFFFFF.toInt())
+    } else {
+      remote.setInt(viewId, "setBackgroundResource", R.drawable.quick_pay_chip_default)
+      remote.setTextColor(viewId, getColor(R.color.quick_pay_chip_text))
+    }
+    if (countId != 0 && n > 1) {
+      remote.setViewVisibility(countId, View.VISIBLE)
+      remote.setTextViewText(countId, "x$n")
+      remote.setOnClickPendingIntent(countId, tap)
+    } else if (countId != 0) {
+      remote.setViewVisibility(countId, View.GONE)
+    }
   }
 
   private fun bindMerchantProfile(remote: RemoteViews) {
@@ -238,7 +322,7 @@ class QuickPayNotifService : Service() {
         loadedAvatarPhone = phone
         cachedAvatar = circle
         ensureChannel()
-        postForeground(buildNotification())
+        show(buildNotification())
       }
     }.start()
   }
@@ -254,7 +338,7 @@ class QuickPayNotifService : Service() {
         if (cachedAvatarBase64 != b64 || bmp == null) return@post
         cachedAvatar = bmp
         ensureChannel()
-        postForeground(buildNotification())
+        show(buildNotification())
       }
     }.start()
   }
@@ -328,16 +412,23 @@ class QuickPayNotifService : Service() {
     remote.setOnClickPendingIntent(R.id.quick_pay_scan, scanPending())
     val loc = if (Locale.getDefault().language == "fr") Locale.FRENCH else Locale.US
     val fmt = NumberFormat.getIntegerInstance(loc)
-    val amounts = intArrayOf(100, 150, 200, 250, 300, 350, 400, 500)
+    remote.setViewVisibility(R.id.quick_pay_sum_row, View.VISIBLE)
+    if (basket > 0) {
+      remote.setViewVisibility(R.id.quick_pay_total, View.VISIBLE)
+      remote.setTextViewText(R.id.quick_pay_total, fmt.format(basket))
+      remote.setViewVisibility(R.id.quick_pay_clear, View.VISIBLE)
+      remote.setOnClickPendingIntent(R.id.quick_pay_clear, clearPending())
+      remote.setOnClickPendingIntent(R.id.quick_pay_pay, payActivityPending(basket, 9))
+    } else {
+      remote.setViewVisibility(R.id.quick_pay_total, View.INVISIBLE)
+      remote.setViewVisibility(R.id.quick_pay_clear, View.GONE)
+      remote.setOnClickPendingIntent(R.id.quick_pay_pay, openApp)
+    }
+    val amounts = intArrayOf(50, 100, 500)
     val ids =
       intArrayOf(
+        R.id.quick_pay_amount_50,
         R.id.quick_pay_amount_100,
-        R.id.quick_pay_amount_150,
-        R.id.quick_pay_amount_200,
-        R.id.quick_pay_amount_250,
-        R.id.quick_pay_amount_300,
-        R.id.quick_pay_amount_350,
-        R.id.quick_pay_amount_400,
         R.id.quick_pay_amount_500,
       )
     for (i in amounts.indices) {
@@ -391,30 +482,33 @@ class QuickPayNotifService : Service() {
 
   private fun buildNotification(): Notification {
     val openApp = if (merchantReady()) stayPending() else openPayPending()
+    val contentLine = if (merchantReady()) cachedMerchantName else cachedBody
 
-    val amounts = buildAmountRemoteViews(openApp)
-    val contentLine =
-      if (merchantReady()) cachedMerchantName else cachedBody
+    val collapsed = buildAmountRemoteViews(openApp)
+    collapsed.setViewVisibility(R.id.quick_pay_amounts, View.GONE)
+    collapsed.setViewVisibility(R.id.quick_pay_sum_row, View.GONE)
+    val expanded = buildAmountRemoteViews(openApp)
 
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle(cachedTitle)
       .setContentText(contentLine)
-      .setSmallIcon(R.mipmap.ic_launcher)
-      .setColor(getColor(R.color.quick_pay_notif_tint))
+      .setSmallIcon(R.drawable.ic_stat_blyp)
+      .setColor(0xFF5DC705.toInt())
       .setOngoing(true)
       .setOnlyAlertOnce(true)
+      .setSilent(true)
       .setContentIntent(openApp)
       .setCategory(NotificationCompat.CATEGORY_SERVICE)
-      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .setPriority(NotificationCompat.PRIORITY_LOW)
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setStyle(NotificationCompat.DecoratedCustomViewStyle())
-      .setCustomContentView(amounts)
-      .setCustomBigContentView(amounts)
+      .setCustomContentView(collapsed)
+      .setCustomBigContentView(expanded)
       .build()
   }
 
   companion object {
-    const val CHANNEL_ID = "blyp_quick_pay"
+    const val CHANNEL_ID = "blyp_quick_pay_quiet"
     private const val NOTIFICATION_ID = 9002
     private const val ACTION_STOP = "com.haroldndougou.blyp.action.STOP_QUICK_PAY_NOTIF"
     private const val ACTION_PAY = "com.haroldndougou.blyp.action.QUICK_PAY_AMOUNT"
@@ -437,10 +531,18 @@ class QuickPayNotifService : Service() {
     private const val EXTRA_PAY_AMOUNT = "payAmountFcfa"
     private const val EXTRA_MERCHANT_KEY = "merchantKey"
     private const val EXTRA_PHONE = "phoneDigits"
+    private const val ACTION_ADD = "com.haroldndougou.blyp.action.QUICK_PAY_ADD"
+    private const val ACTION_CLEAR_BASKET = "com.haroldndougou.blyp.action.QUICK_PAY_CLEAR_BASKET"
     private const val ACTION_TOGGLE = "com.haroldndougou.blyp.action.QUICK_PAY_TOGGLE"
 
-    /** Montant touché : vert tant que l’authentification / le paiement est en cours. */
+    /** Montant touché : vert tant que l’utilisateur n’a pas choisi un autre bouton. */
     @Volatile private var highlighted = 0
+    @Volatile private var basket = 0
+    @Volatile private var count50 = 0
+    @Volatile private var count100 = 0
+    @Volatile private var count500 = 0
+    @Volatile private var extra = 0
+    @Volatile private var live: QuickPayNotifService? = null
     private var cachedTitle = ""
     private var cachedBody = ""
     private var cachedMerchantName = ""
@@ -491,7 +593,87 @@ class QuickPayNotifService : Service() {
       startServiceIntent(context, intent)
     }
 
+    fun addAmount(context: Context, amountFcfa: Int) {
+      if (amountFcfa <= 0) return
+      val svc = live
+      if (svc != null) {
+        bumpBasket(amountFcfa)
+        svc.repaint()
+        return
+      }
+      val intent =
+        Intent(context, QuickPayNotifService::class.java).apply {
+          action = ACTION_ADD
+          putExtra(QuickPayActionReceiver.EXTRA_AMOUNT, amountFcfa)
+        }
+      startServiceIntent(context, intent)
+    }
+
+    fun clearBasket(context: Context) {
+      val svc = live
+      if (svc != null) {
+        resetBasket()
+        svc.repaint()
+        return
+      }
+      resetBasket()
+      val intent =
+        Intent(context, QuickPayNotifService::class.java).apply {
+          action = ACTION_CLEAR_BASKET
+        }
+      startServiceIntent(context, intent)
+    }
+
+    private fun bumpBasket(amount: Int) {
+      when (amount) {
+        50 -> count50++
+        100 -> count100++
+        500 -> count500++
+        else -> extra = (extra + amount).coerceAtMost(9_999_999)
+      }
+      basket = (50 * count50 + 100 * count100 + 500 * count500 + extra).coerceAtMost(9_999_999)
+      highlighted = amount
+    }
+
+    private fun resetBasket() {
+      count50 = 0
+      count100 = 0
+      count500 = 0
+      extra = 0
+      basket = 0
+      highlighted = 0
+    }
+
+    private fun countFor(amount: Int): Int =
+      when (amount) {
+        50 -> count50
+        100 -> count100
+        500 -> count500
+        else -> 0
+      }
+
+    private fun countViewId(amount: Int): Int =
+      when (amount) {
+        50 -> R.id.quick_pay_count_50
+        100 -> R.id.quick_pay_count_100
+        500 -> R.id.quick_pay_count_500
+        else -> 0
+      }
+
+    private fun chipViewId(amount: Int): Int =
+      when (amount) {
+        50 -> R.id.quick_pay_chip_50
+        100 -> R.id.quick_pay_chip_100
+        500 -> R.id.quick_pay_chip_500
+        else -> 0
+      }
+
     fun highlightAmount(context: Context, amountFcfa: Int) {
+      val svc = live
+      if (svc != null) {
+        svc.paintHighlight(amountFcfa)
+        return
+      }
       val intent =
         Intent(context, QuickPayNotifService::class.java).apply {
           action = ACTION_REFRESH
@@ -501,6 +683,11 @@ class QuickPayNotifService : Service() {
     }
 
     fun clearHighlight(context: Context) {
+      val svc = live
+      if (svc != null) {
+        svc.paintHighlight(0)
+        return
+      }
       val intent =
         Intent(context, QuickPayNotifService::class.java).apply {
           action = ACTION_CLEAR_HIGHLIGHT

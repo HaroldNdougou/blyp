@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="end"
+    android:orientation="vertical"
+    android:paddingStart="56dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="3dp"
+    android:paddingBottom="3dp">
+
+    <TextView
+        android:id="@+id/blyp_chat_reply_quote"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:layout_marginBottom="4dp"
+        android:background="@color/blyp_shell_surface_muted"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:textColor="@color/blyp_shell_text_secondary"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <FrameLayout
+        android:id="@+id/blyp_chat_video_box"
+        android:layout_width="200dp"
+        android:layout_height="140dp"
+        android:layout_gravity="end"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/blyp_chat_video_thumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/blyp_shell_input_bg"
+            android:contentDescription="@string/blyp_shell_chat_type_document"
+            android:scaleType="centerCrop" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="▶"
+            android:textColor="@color/blyp_shell_accent_on"
+            android:textSize="28sp" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/blyp_chat_doc_bubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end"
+        android:background="@drawable/blyp_shell_chat_bubble_mine"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📄"
+            android:textSize="22sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/blyp_chat_doc_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="middle"
+                android:maxWidth="220dp"
+                android:singleLine="true"
+                android:textColor="@color/blyp_shell_bubble_mine_text"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/blyp_chat_doc_meta"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/blyp_shell_bubble_mine_text"
+                android:alpha="0.85"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <ProgressBar
+            android:id="@+id/blyp_chat_doc_progress"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginStart="8dp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <include layout="@layout/blyp_shell_chat_time_row" />
+</LinearLayout>

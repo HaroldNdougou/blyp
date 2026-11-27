@@ -4,6 +4,8 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
+import android.view.ViewTreeObserver
+import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,11 +17,12 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.fragment.app.Fragment
 import com.haroldndougou.blyp.R
+import com.haroldndougou.blyp.paymentannounce.AdminAlertPresenter
 
-/** Coque produit native — Pay / Historique / Profil ; Messages → îlot RN. */
+/** Coque produit native — Pay / Historique / Profil / Messages. */
 class BlypNativeShellActivity : AppCompatActivity() {
   private var appliedNightMode: Int = Configuration.UI_MODE_NIGHT_UNDEFINED
-  private var activeTabId: Int = R.id.blyp_shell_tab_pay
+  private var activeTabId: Int = R.id.blyp_shell_tab_messages
   private val notifPermission =
     registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
       BlypShellPush.onPermissionResult(this, granted)
@@ -58,28 +61,55 @@ class BlypNativeShellActivity : AppCompatActivity() {
     bindTab(R.id.blyp_shell_tab_pay, Tab.PAY)
     bindTab(R.id.blyp_shell_tab_history, Tab.HISTORY)
     bindTab(R.id.blyp_shell_tab_profile, Tab.PROFILE)
-    findViewById<View>(R.id.blyp_shell_tab_messages)?.setOnClickListener {
-      startActivity(
-        BlypShellLaunchBridge.buildMessagesIslandIntent(com.haroldndougou.blyp.MainActivity::class.java),
-      )
+    bindTab(R.id.blyp_shell_tab_messages, Tab.MESSAGES)
+
+    findViewById<View>(R.id.blyp_shell_money_rail)?.setOnClickListener {
+      val stub =
+        View(this).apply {
+          layoutParams = ViewGroup.LayoutParams(1, (24 * resources.displayMetrics.density).toInt())
+        }
+      BlypShellDialogs.alertBuilder(this)
+        .setView(stub)
+        .setCancelable(true)
+        .show()
     }
 
     if (savedInstanceState == null) {
-      selectTab(Tab.PAY)
+      selectTab(Tab.MESSAGES)
     } else {
-      activeTabId = savedInstanceState.getInt(STATE_TAB_ID, R.id.blyp_shell_tab_pay)
+      activeTabId = savedInstanceState.getInt(STATE_TAB_ID, R.id.blyp_shell_tab_messages)
       selectTab(tabFromViewId(activeTabId))
     }
     BlypShellPerfMarks.end("shell_open")
     appliedNightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+    BlypShellLaunchBridge.captureFromIntent(intent)
     openPayIfAsked(intent)
-    root.post { if (!isFinishing) BlypShellPush.onShellReady(this, notifPermission) }
+    maybeOpenPendingChat(intent)
+    root.viewTreeObserver.addOnPreDrawListener(
+      object : ViewTreeObserver.OnPreDrawListener {
+        override fun onPreDraw(): Boolean {
+          if (root.viewTreeObserver.isAlive) {
+            root.viewTreeObserver.removeOnPreDrawListener(this)
+          }
+          root.post {
+            if (isFinishing) return@post
+            BlypShellChatHistoryWipe.startOnce(this@BlypNativeShellActivity)
+            BlypShellChatSounds.warm()
+            AdminAlertPresenter.prepare(this@BlypNativeShellActivity)
+            BlypShellPush.onShellReady(this@BlypNativeShellActivity, notifPermission)
+          }
+          return true
+        }
+      },
+    )
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    BlypShellLaunchBridge.captureFromIntent(intent)
     openPayIfAsked(intent)
+    maybeOpenPendingChat(intent)
   }
 
   private fun openPayIfAsked(intent: Intent?) {
@@ -88,9 +118,37 @@ class BlypNativeShellActivity : AppCompatActivity() {
     selectTab(Tab.PAY)
   }
 
+  private fun maybeOpenPendingChat(intent: Intent?) {
+    val direct = intent?.getStringExtra(BlypShellLaunchBridge.EXTRA_OPEN_CHAT_ID)?.trim().orEmpty()
+    if (direct.isNotEmpty()) {
+      intent?.removeExtra(BlypShellLaunchBridge.EXTRA_OPEN_CHAT_ID)
+      selectTab(Tab.MESSAGES)
+      ShellChatThreadActivity.start(this, direct, null)
+      return
+    }
+    val staged = BlypShellLaunchBridge.consumeStagedChat() ?: return
+    selectTab(Tab.MESSAGES)
+    ShellChatThreadActivity.start(this, staged.first, null)
+  }
+
   override fun onStart() {
     super.onStart()
-    BlypShellProductEngine.onShellStarted(this)
+    val root = window.decorView
+    root.viewTreeObserver.addOnPreDrawListener(
+      object : ViewTreeObserver.OnPreDrawListener {
+        override fun onPreDraw(): Boolean {
+          if (root.viewTreeObserver.isAlive) {
+            root.viewTreeObserver.removeOnPreDrawListener(this)
+          }
+          root.post {
+            if (isFinishing) return@post
+            BlypLateInit.afterFirstFrame(applicationContext)
+            startShellWork()
+          }
+          return true
+        }
+      },
+    )
   }
 
   override fun onStop() {
@@ -107,6 +165,20 @@ class BlypNativeShellActivity : AppCompatActivity() {
       return
     }
     ensurePayTabMatchesCommerceMode()
+    paintPayTabTitle()
+    BlypShellClicks.arm(window.decorView)
+    BlypShellMoneyRequests.pullAsync(this)
+    val prefs = getSharedPreferences("blyp_shell_session", MODE_PRIVATE)
+    if (!prefs.getBoolean("tx_keep_claude_v1", false)) {
+      prefs.edit().putBoolean("tx_keep_claude_v1", true).apply()
+      Thread {
+        BlypTransactionStore.purgeExceptCounterparty(applicationContext, "Claude Bessong")
+      }.start()
+    }
+  }
+
+  private fun startShellWork() {
+    BlypShellProductEngine.onShellStarted(this)
     BlypShellUiRefresh.notifyWalletChanged()
     BlypShellUiRefresh.notifyShellBadgesChanged()
     BlypShellBadgeNativeSync.hydrateBadgesFromKv(this)
@@ -159,7 +231,6 @@ class BlypNativeShellActivity : AppCompatActivity() {
   fun isPayTabVisible(): Boolean = activeTabId == R.id.blyp_shell_tab_pay
 
   private fun selectTab(tab: Tab) {
-    if (tab == Tab.MESSAGES) return
     val viewId =
       when (tab) {
         Tab.PAY -> R.id.blyp_shell_tab_pay
@@ -194,7 +265,7 @@ class BlypNativeShellActivity : AppCompatActivity() {
       Tab.PAY -> payTabFragment()
       Tab.HISTORY -> HistoryShellFragment()
       Tab.PROFILE -> ProfileShellFragment()
-      Tab.MESSAGES -> throw IllegalArgumentException("messages")
+      Tab.MESSAGES -> MessagesInboxFragment()
     }
 
   private fun payTabFragment(): Fragment {
@@ -222,8 +293,12 @@ class BlypNativeShellActivity : AppCompatActivity() {
         commerce && !soa && payFrag !is CommerceShellFragment -> true
         else -> false
       }
-    if (!wrong) return
+    if (!wrong) {
+      paintPayTabTitle()
+      return
+    }
     fm.beginTransaction().remove(payFrag).commitNowAllowingStateLoss()
+    paintPayTabTitle()
     if (activeTabId == R.id.blyp_shell_tab_pay) {
       selectTab(Tab.PAY)
     }
@@ -237,7 +312,26 @@ class BlypNativeShellActivity : AppCompatActivity() {
       Tab.MESSAGES -> TAG_TAB_MESSAGES
     }
 
+  internal fun paintPayTabTitle() {
+    val tab = findViewById<TextView>(R.id.blyp_shell_tab_pay) ?: return
+    val commerce = BlypShellSession.isCommerceMode(this)
+    tab.setText(
+      if (commerce) R.string.blyp_shell_tab_collect else R.string.blyp_shell_tab_pay,
+    )
+    val icon =
+      if (commerce) R.drawable.blyp_shell_tab_ic_cash else R.drawable.blyp_shell_tab_ic_pay
+    tab.setCompoundDrawablesWithIntrinsicBounds(0, icon, 0, 0)
+    val selected = activeTabId == R.id.blyp_shell_tab_pay
+    val color =
+      ContextCompat.getColor(
+        this,
+        if (selected) R.color.blyp_shell_accent else R.color.blyp_shell_tab_inactive,
+      )
+    tab.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(color)
+  }
+
   private fun highlightTab(selectedId: Int) {
+    paintPayTabTitle()
     val accent = ContextCompat.getColor(this, R.color.blyp_shell_accent)
     val inactive = ContextCompat.getColor(this, R.color.blyp_shell_tab_inactive)
     for (id in TAB_IDS) {
@@ -252,23 +346,24 @@ class BlypNativeShellActivity : AppCompatActivity() {
     when (viewId) {
       R.id.blyp_shell_tab_history -> Tab.HISTORY
       R.id.blyp_shell_tab_profile -> Tab.PROFILE
-      else -> Tab.PAY
+      R.id.blyp_shell_tab_messages -> Tab.MESSAGES
+      else -> Tab.MESSAGES
     }
 
   companion object {
     private const val STATE_TAB_ID = "blyp_shell_tab_id"
     private val TAB_IDS =
       intArrayOf(
+        R.id.blyp_shell_tab_messages,
         R.id.blyp_shell_tab_pay,
         R.id.blyp_shell_tab_history,
         R.id.blyp_shell_tab_profile,
-        R.id.blyp_shell_tab_messages,
       )
     const val EXTRA_OPEN_PAY = "blyp_shell_open_pay"
     private const val TAG_TAB_PAY = "blyp_shell_tab_pay"
     private const val TAG_TAB_HISTORY = "blyp_shell_tab_history"
     private const val TAG_TAB_PROFILE = "blyp_shell_tab_profile"
     private const val TAG_TAB_MESSAGES = "blyp_shell_tab_messages"
-    private val TAB_CONTENT = arrayOf(Tab.PAY, Tab.HISTORY, Tab.PROFILE)
+    private val TAB_CONTENT = arrayOf(Tab.PAY, Tab.HISTORY, Tab.PROFILE, Tab.MESSAGES)
   }
 }

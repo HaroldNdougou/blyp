@@ -1,6 +1,7 @@
 package com.haroldndougou.blyp.paymentannounce
 
 import android.util.Log
+import com.google.firebase.FirebaseApp
 import com.google.firebase.messaging.RemoteMessage
 import com.haroldndougou.blyp.BuildConfig
 import com.haroldndougou.blyp.shell.BlypShellPush
@@ -10,6 +11,11 @@ import expo.modules.notifications.service.ExpoFirebaseMessagingService
  * Paiement reçu : notif native + voix — ne dépend pas d’Expo data-only.
  */
 class BlypFirebaseMessagingService : ExpoFirebaseMessagingService() {
+  override fun onCreate() {
+    if (FirebaseApp.getApps(this).isEmpty()) FirebaseApp.initializeApp(this)
+    super.onCreate()
+  }
+
   override fun onNewToken(token: String) {
     super.onNewToken(token)
     BlypShellPush.onNewFcmToken(applicationContext)
@@ -58,21 +64,34 @@ class BlypFirebaseMessagingService : ExpoFirebaseMessagingService() {
       if (BuildConfig.DEBUG) {
         Log.d(TAG, "receipt ${receipt["kind"]} conv=${receipt["conversationId"]}")
       }
+      com.haroldndougou.blyp.shell.BlypShellChatReceipts.ingest(
+        applicationContext,
+        org.json.JSONObject(receipt),
+      )
       PaymentAnnounceModule.emitConversationReceipt(receipt)
       return
     }
     val typing = PaymentPushParser.parseConversationTyping(remoteMessage.data)
     if (typing != null) {
+      com.haroldndougou.blyp.shell.BlypShellChatTyping.ingest(org.json.JSONObject(typing))
       PaymentAnnounceModule.emitConversationTyping(typing)
       return
     }
     val presence = PaymentPushParser.parseConversationPresence(remoteMessage.data)
     if (presence != null) {
+      com.haroldndougou.blyp.shell.BlypShellChatReceipts.ingest(
+        applicationContext,
+        org.json.JSONObject(presence),
+      )
       PaymentAnnounceModule.emitConversationPresence(presence)
       return
     }
     val moneyUpdated = PaymentPushParser.parseMoneyUpdated(remoteMessage.data)
     if (moneyUpdated != null) {
+      com.haroldndougou.blyp.shell.BlypShellChatMessagesStore.applyMoneySignal(
+        applicationContext,
+        moneyUpdated,
+      )
       PaymentAnnounceModule.emitMoneyUpdated(moneyUpdated)
       return
     }

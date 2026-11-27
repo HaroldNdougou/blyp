@@ -11,8 +11,10 @@ import android.media.RingtoneManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.haroldndougou.blyp.R
+import com.haroldndougou.blyp.shell.BlypShellChatRealtime
 import com.haroldndougou.blyp.shell.BlypShellDeepLink
 import com.haroldndougou.blyp.shell.BlypShellLaunchBridge
+import com.haroldndougou.blyp.shell.BlypShellMessageBanner
 
 /**
  * Notif message reçu — même chemin que le paiement (indépendant d’Expo / MIUI).
@@ -21,10 +23,25 @@ object MessagePushPresenter {
   const val CHANNEL_ID = "messages"
 
   fun handle(context: Context, data: Map<String, String>) {
+    PaymentAnnounceModule.emitIncomingMessage(data)
+    val json = org.json.JSONObject()
+    for ((key, value) in data) json.put(key, value)
+    if (!BlypShellChatRealtime.ingest(context, json)) return
+    showIncoming(context, data)
+  }
+
+  fun showIncoming(context: Context, data: Map<String, String>) {
+    val conversationId = data["conversationId"]?.trim().orEmpty()
+    if (conversationId.isEmpty()) return
+    showMessageReceived(context, conversationId, data)
   }
 
   /** Notif « Harold a récupéré les 1000F » — tap ouvre la bulle money. */
   fun handleMoneyClaimed(context: Context, data: Map<String, String>) {
+    com.haroldndougou.blyp.shell.BlypShellChatMessagesStore.applyMoneySignal(
+      context,
+      data + ("type" to "money_claimed"),
+    )
     PaymentAnnounceModule.emitMoneyClaimed(data)
     val conversationId = data["conversationId"]?.trim().orEmpty()
     val transferId = data["transferId"]?.trim().orEmpty()
@@ -80,6 +97,12 @@ object MessagePushPresenter {
         PaymentAnnouncePrefs.getLang(app),
         parseReactionEmoji(rawBody, data),
       ).ifEmpty { fromName }
+
+    if (isAppInForeground(app) &&
+      BlypShellMessageBanner.show(app, conversationId, fromName, body)
+    ) {
+      return
+    }
 
     val openChat =
       PendingIntent.getActivity(

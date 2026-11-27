@@ -1,0 +1,253 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="4dp"
+        android:paddingVertical="6dp">
+
+        <ImageView
+            android:id="@+id/blyp_money_receipt_back"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:contentDescription="@string/blyp_shell_scan_back"
+            android:padding="12dp"
+            android:src="@drawable/blyp_shell_ic_back" />
+
+        <TextView
+            android:id="@+id/blyp_money_receipt_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:textColor="@color/blyp_shell_text"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/blyp_shell_border" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <TextView
+                android:id="@+id/blyp_money_receipt_lead"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="3dp"
+                android:textColor="@color/blyp_shell_text_secondary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:id="@+id/blyp_money_receipt_stamp_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/blyp_shell_money_receipt_stamp_line1"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/blyp_money_receipt_stamp_line1"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/blyp_shell_filter_chip"
+                    android:hint="@string/blyp_shell_money_receipt_stamp_line1_hint"
+                    android:inputType="textCapWords"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="12dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textColorHint="@color/blyp_shell_muted"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/blyp_shell_money_receipt_stamp_line2"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/blyp_money_receipt_stamp_line2"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/blyp_shell_filter_chip"
+                    android:hint="@string/blyp_shell_money_receipt_stamp_line2_hint"
+                    android:inputType="textCapWords"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="12dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textColorHint="@color/blyp_shell_muted"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/blyp_money_receipt_stamp_save"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:background="@color/blyp_shell_accent"
+                    android:gravity="center"
+                    android:paddingVertical="14dp"
+                    android:text="@string/blyp_shell_money_receipt_stamp_save"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/blyp_money_receipt_claim_panel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/blyp_money_receipt_stamp_edit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/blyp_shell_money_receipt_stamp_edit"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:text="@string/blyp_shell_money_receipt_client"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/blyp_money_receipt_client"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/blyp_shell_filter_chip"
+                    android:hint="@string/blyp_shell_money_receipt_client_hint"
+                    android:inputType="textCapWords"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="12dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textColorHint="@color/blyp_shell_muted"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/blyp_shell_money_receipt_amount_label"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/blyp_money_receipt_amount"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textSize="22sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/blyp_shell_money_receipt_reason"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <EditText
+                    android:id="@+id/blyp_money_receipt_reason"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/blyp_shell_filter_chip"
+                    android:hint="@string/blyp_shell_money_receipt_reason_hint"
+                    android:inputType="textCapSentences"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="12dp"
+                    android:textColor="@color/blyp_shell_text"
+                    android:textColorHint="@color/blyp_shell_muted"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/blyp_shell_money_receipt_signature"
+                    android:textColor="@color/blyp_shell_text_secondary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <com.haroldndougou.blyp.shell.ShellMoneyReceiptSignatureView
+                    android:id="@+id/blyp_money_receipt_signature"
+                    android:layout_width="match_parent"
+                    android:layout_height="140dp"
+                    android:layout_marginTop="6dp" />
+
+                <TextView
+                    android:id="@+id/blyp_money_receipt_sig_clear"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:padding="4dp"
+                    android:text="@string/blyp_shell_money_receipt_sig_clear"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/blyp_money_receipt_submit"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:alpha="0.5"
+                    android:background="@color/blyp_shell_accent"
+                    android:enabled="false"
+                    android:gravity="center"
+                    android:paddingVertical="14dp"
+                    android:text="@string/blyp_shell_money_receipt_submit"
+                    android:textColor="@color/blyp_shell_accent_on"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

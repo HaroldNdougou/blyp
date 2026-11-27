@@ -64,6 +64,21 @@ object BlypShellWalletRealtime {
     main.postDelayed(pingRunnable, PING_MS)
   }
 
+  fun sendText(text: String) {
+    try {
+      webSocket?.send(text)
+    } catch (_: Exception) {
+    }
+  }
+
+  fun sendFrame(bytes: ByteArray) {
+    try {
+      webSocket?.send(ByteString.of(*bytes))
+    } catch (_: Exception) {
+      /* ignore */
+    }
+  }
+
   fun stop() {
     running = false
     main.removeCallbacks(pingRunnable)
@@ -138,15 +153,21 @@ object BlypShellWalletRealtime {
       return
     }
     val type = data.optString("type", "")
-    if (
-      type == "message_received" ||
-        type == "conversation_typing" ||
-        type == "conversation_presence"
-    ) {
+    if (type == "message_received") {
+      BlypShellChatRealtime.dispatch(context.applicationContext, data)
+      return
+    }
+    if (type == "conversation_receipt" || type == "conversation_presence") {
+      BlypShellChatReceipts.ingest(context.applicationContext, data)
+      return
+    }
+    if (type == "conversation_typing") {
+      BlypShellChatTyping.ingest(data)
       return
     }
     BlypShellWalletIngest.ingestPayload(context.applicationContext, data)
     if (type == "money_updated") {
+      BlypShellChatMessagesStore.applyMoneySignal(context.applicationContext, data)
       BlypShellBridge.emitRealtimePayload(data)
     }
   }

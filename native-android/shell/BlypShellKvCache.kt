@@ -58,11 +58,72 @@ object BlypShellKvCache {
     for (path in paths) {
       if (!path.isFile) continue
       return try {
-        SQLiteDatabase.openDatabase(path.absolutePath, null, flag)
+        SQLiteDatabase.openDatabase(path.absolutePath, null, flag).also {
+          if (writable) ensureSchema(it)
+        }
       } catch (_: Exception) {
         null
       }
     }
-    return null
+    if (!writable) return null
+    val primary = paths[0]
+    return try {
+      primary.parentFile?.mkdirs()
+      SQLiteDatabase.openOrCreateDatabase(primary.absolutePath, null).also { ensureSchema(it) }
+    } catch (_: Exception) {
+      null
+    }
+  }
+
+  private fun ensureSchema(db: SQLiteDatabase) {
+    try {
+      db.execSQL("PRAGMA journal_mode=WAL")
+    } catch (_: Exception) {
+    }
+    val statements =
+      arrayOf(
+        """
+        CREATE TABLE IF NOT EXISTS conversations (
+          phone TEXT NOT NULL,
+          id TEXT NOT NULL,
+          json TEXT NOT NULL,
+          updatedAt TEXT NOT NULL,
+          PRIMARY KEY (phone, id)
+        )
+        """.trimIndent(),
+        "CREATE INDEX IF NOT EXISTS idx_conv_phone_upd ON conversations(phone, updatedAt DESC)",
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+          phone TEXT NOT NULL,
+          conversationId TEXT NOT NULL,
+          json TEXT NOT NULL,
+          PRIMARY KEY (phone, conversationId)
+        )
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS chat_receipts (
+          phone TEXT NOT NULL,
+          conversationId TEXT NOT NULL,
+          peerLastReadAt TEXT,
+          peerLastDeliveredAt TEXT,
+          PRIMARY KEY (phone, conversationId)
+        )
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS kv_cache (
+          phone TEXT NOT NULL,
+          key TEXT NOT NULL,
+          json TEXT NOT NULL,
+          PRIMARY KEY (phone, key)
+        )
+        """.trimIndent(),
+      )
+    for (sql in statements) {
+      try {
+        db.execSQL(sql)
+      } catch (_: Exception) {
+        /* table déjà là */
+      }
+    }
   }
 }

@@ -31,6 +31,7 @@ import {
 } from "../../lib/smallPay.mjs";
 import { updateSmallPayDailyStats, resetSmallPayPeriodWithoutPin } from "../../lib/user.mjs";
 import { warmWalletLedger } from "../../lib/walletWarm.mjs";
+import { createMoneyRequest, listUserMoneyRequests } from "../../lib/moneyRequests.mjs";
 import {
   getPawapayConfig,
   pawapayInitiateDeposit,
@@ -497,6 +498,30 @@ export async function handler(event) {
   const path = normalizeApiPath(event);
 
   try {
+    if (method === "POST" && path === "/wallet/money-requests") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      const body = parseJsonBody(event);
+      if (body === null) return badRequest("Corps JSON invalide");
+      const res = await createMoneyRequest({
+        userId: auth.userId,
+        requestId: body.requestId,
+        kind: body.kind,
+        amountFcfa: body.amount,
+        phone: body.phone,
+      });
+      if (res.error === "USER_NOT_FOUND") return notFound("Utilisateur introuvable");
+      if (res.error === "FORBIDDEN") return forbidden("Demande introuvable");
+      if (res.error) return badRequest("Demande invalide");
+      return ok(res);
+    }
+
+    if (method === "GET" && path === "/wallet/money-requests") {
+      const auth = await requireUserId(event);
+      if (auth.error) return auth.error;
+      return ok({ items: await listUserMoneyRequests(auth.userId) });
+    }
+
     if (method === "POST" && path === "/wallet/deposit") {
       const auth = await requireUserId(event);
       if (auth.error) return auth.error;

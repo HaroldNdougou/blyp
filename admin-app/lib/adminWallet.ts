@@ -1,5 +1,4 @@
 import { api } from "./api";
-import { getSessionPassword } from "./adminSession";
 
 export type AdminUserSummary = {
   userId: string;
@@ -30,6 +29,13 @@ export function clearElevationCache() {
   elevationCache = null;
 }
 
+export function rememberElevation(token: string, expiresInSec: number) {
+  elevationCache = {
+    token,
+    until: Date.now() + Math.max(30, expiresInSec - 10) * 1000,
+  };
+}
+
 export async function listAdminUsers(query: string) {
   const q = encodeURIComponent(query.trim());
   return api<{ users: AdminUserSummary[]; total: number }>(`/api/users?q=${q}`);
@@ -55,15 +61,9 @@ async function ensureElevation() {
   if (elevationCache && Date.now() < elevationCache.until) {
     return elevationCache.token;
   }
-  const pass = getSessionPassword();
-  if (!pass) {
-    const err = new Error("Reconnecte-toi pour modifier un solde.") as Error & { code?: string };
-    err.code = "ELEVATION_REQUIRED";
-    throw err;
-  }
-  const err = new Error("Session expirée : reconnecte-toi.") as Error & { code?: string };
-  err.code = "ELEVATION_REQUIRED";
-  throw err;
+  const { unlockWithDevice } = await import("./api");
+  const data = await unlockWithDevice();
+  return data.elevation;
 }
 
 export function newIdempotencyKey() {
@@ -95,13 +95,46 @@ export function planBalanceChange(
   return { direction: "debit", amountFcfa: -delta };
 }
 
+export async function confirmMoneyRequest(requestId: string) {
+  const path = `/api/money-requests/${encodeURIComponent(requestId)}/confirm`;
+  let elevation = await ensureElevation();
+  try {
+    return await api<{ ok: boolean; item?: { balanceAfterFcfa?: number } }>(path, {
+      method: "POST",
+      body: {},
+      elevation,
+    });
+  } catch (e: any) {
+    if (e?.code === "ELEVATION_REQUIRED" || e?.status === 403) {
+      elevationCache = null;
+      elevation = await ensureElevation();
+      return api(path, { method: "POST", body: {}, elevation });
+    }
+    throw e;
+  }
+}
+
+export async function rejectMoneyRequest(requestId: string) {
+  const path = `/api/money-requests/${encodeURIComponent(requestId)}/reject`;
+  let elevation = await ensureElevation();
+  try {
+    return await api(path, { method: "POST", body: {}, elevation });
+  } catch (e: any) {
+    if (e?.code === "ELEVATION_REQUIRED" || e?.status === 403) {
+      elevationCache = null;
+      elevation = await ensureElevation();
+      return api(path, { method: "POST", body: {}, elevation });
+    }
+    throw e;
+  }
+}
+
 export async function adjustUserBalance(params: {
   userId: string;
   direction: BalanceDirection;
   amountFcfa: number;
-  reason: string;
-  idempotencyKey: string;
   reason?: string;
+  idempotencyKey: string;
 }) {
   const reason = (params.reason ?? "Recharge").trim();
   let elevation = await ensureElevation();

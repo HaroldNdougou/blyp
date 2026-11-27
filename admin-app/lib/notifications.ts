@@ -24,6 +24,15 @@ export async function ensurePushRegistered(): Promise<{ ok: boolean; reason?: st
       lightColor: "#5dc705",
       sound: "default",
     });
+    await Notifications.setNotificationChannelAsync("blyp_money_alarm", {
+      name: "Demandes d'argent",
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600],
+      enableVibrate: true,
+      sound: "default",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      bypassDnd: true,
+    }).catch(() => {});
   }
 
   const current = await Notifications.getPermissionsAsync();

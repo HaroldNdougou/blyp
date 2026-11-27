@@ -25,6 +25,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
+            android:id="@+id/blyp_deposit_title"
             android:gravity="center"
             android:text="@string/blyp_shell_deposit_title"
             android:textColor="@color/blyp_shell_text"
@@ -56,6 +57,7 @@
             android:paddingBottom="32dp">
 
             <TextView
+                android:id="@+id/blyp_deposit_hint"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/blyp_shell_deposit_hint"
@@ -77,12 +79,24 @@
                     android:layout_height="match_parent"
                     android:layout_weight="1"
                     android:background="@android:color/transparent"
+                    android:digits="0123456789 "
                     android:hint="0"
                     android:inputType="number"
-                    android:maxLength="7"
+                    android:maxLength="9"
                     android:textColor="@color/blyp_shell_text"
                     android:textSize="22sp"
                     android:textStyle="bold" />
+
+                <ImageView
+                    android:id="@+id/blyp_deposit_clear"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="2dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="@string/blyp_shell_deposit_clear"
+                    android:padding="6dp"
+                    android:src="@drawable/blyp_shell_ic_clear"
+                    android:visibility="gone" />
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -112,7 +126,7 @@
                     android:layout_width="0dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:text="1000" />
+                    android:text="1 000" />
 
                 <TextView
                     android:id="@+id/blyp_deposit_q2000"
@@ -120,7 +134,7 @@
                     android:layout_width="0dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:text="2000" />
+                    android:text="2 000" />
 
                 <TextView
                     android:id="@+id/blyp_deposit_q5000"
@@ -128,8 +142,16 @@
                     android:layout_width="0dp"
                     android:layout_marginStart="8dp"
                     android:layout_weight="1"
-                    android:text="5000" />
+                    android:text="5 000" />
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/blyp_deposit_all"
+                style="@style/BlypShellDepositQuick"
+                android:layout_width="match_parent"
+                android:layout_marginTop="8dp"
+                android:text="@string/blyp_shell_withdraw_all"
+                android:visibility="gone" />
 
             <TextView
                 android:id="@+id/blyp_deposit_submit"

@@ -13,9 +13,10 @@ export default function HomeTabScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createAdminScreenStyles(colors), [colors]);
-  const { overview, loading, refreshing, error, refresh } = useAdminDashboard();
+  const { overview, loading, refreshing, error, refresh, depositPending, withdrawalPending } = useAdminDashboard();
   const [todayOpen, setTodayOpen] = useState(false);
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
 
   const t = overview?.today;
 
@@ -45,21 +46,36 @@ export default function HomeTabScreen() {
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
       <View style={styles.actionRow}>
-        <Pressable
-          style={({ pressed }) => [styles.bigBtn, styles.bigBtnPrimary, pressed && { opacity: 0.9 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Recharge"
-          onPress={() => setRechargeOpen(true)}
-        >
-          <Text style={styles.bigBtnTextPrimary}>Recharge</Text>
-        </Pressable>
-        <Pressable
-          style={({ pressed }) => [styles.bigBtn, styles.bigBtnSecondary, pressed && { opacity: 0.9 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Retrait"
-        >
-          <Text style={styles.bigBtnTextSecondary}>Retrait</Text>
-        </Pressable>
+        <View style={{ flex: 1 }}>
+          <Pressable
+            style={({ pressed }) => [styles.bigBtn, styles.bigBtnPrimary, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Recharge"
+            onPress={() => setRechargeOpen(true)}
+          >
+            <Text style={styles.bigBtnTextPrimary}>Recharge</Text>
+          </Pressable>
+          {depositPending > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{depositPending}</Text>
+            </View>
+          ) : null}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Pressable
+            style={({ pressed }) => [styles.bigBtn, styles.bigBtnSecondary, pressed && { opacity: 0.9 }]}
+            accessibilityRole="button"
+            accessibilityLabel="Retrait"
+            onPress={() => setWithdrawOpen(true)}
+          >
+            <Text style={styles.bigBtnTextSecondary}>Retrait</Text>
+          </Pressable>
+          {withdrawalPending > 0 ? (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{withdrawalPending}</Text>
+            </View>
+          ) : null}
+        </View>
       </View>
 
       <Pressable
@@ -88,7 +104,14 @@ export default function HomeTabScreen() {
     </ScrollView>
       <RechargeModal
         visible={rechargeOpen}
+        mode="deposit"
         onClose={() => setRechargeOpen(false)}
+        onBalanceChanged={() => void refresh(true)}
+      />
+      <RechargeModal
+        visible={withdrawOpen}
+        mode="withdrawal"
+        onClose={() => setWithdrawOpen(false)}
         onBalanceChanged={() => void refresh(true)}
       />
     </>

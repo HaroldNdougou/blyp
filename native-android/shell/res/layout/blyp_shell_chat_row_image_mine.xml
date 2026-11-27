@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="end"
+    android:orientation="vertical"
+    android:paddingStart="56dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="3dp"
+    android:paddingBottom="3dp">
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/blyp_chat_image_strip"
+        android:layout_width="240dp"
+        android:layout_height="150dp"
+        android:overScrollMode="never" />
+
+    <TextView
+        android:id="@+id/blyp_chat_caption"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:background="@drawable/blyp_shell_chat_bubble_mine"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:textColor="@color/blyp_shell_bubble_mine_text"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <include layout="@layout/blyp_shell_chat_time_row" />
+</LinearLayout>

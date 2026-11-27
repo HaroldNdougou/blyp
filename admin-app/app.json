@@ -22,13 +22,16 @@
     },
     "android": {
       "package": "com.haroldndougou.blypadmin",
+      "versionCode": 7,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#5dc705"
       },
       "permissions": [
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ]
     },
     "plugins": [
@@ -40,6 +43,7 @@
       ],
       "expo-router",
       "expo-secure-store",
+      "expo-local-authentication",
       [
         "expo-notifications",
         {

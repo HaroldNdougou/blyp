@@ -57,6 +57,71 @@ object BlypMerchantReceiptStore {
     }
   }
 
+  fun addBlypMoney(
+    context: Context,
+    accountId: String,
+    transferId: String,
+    name: String,
+    merchantName: String?,
+    pdfFile: File,
+  ): Boolean {
+    val acct = accountId.trim()
+    val tid = transferId.trim()
+    if (acct.isEmpty() || tid.isEmpty() || !pdfFile.isFile) return false
+    val id = "blyp-mt-$tid"
+    val dir = File(context.filesDir, "blyp-receipts/$acct")
+    if (!dir.exists() && !dir.mkdirs()) return false
+    val dest = File(dir, "$id.pdf")
+    return try {
+      if (dest.absolutePath != pdfFile.absolutePath) {
+        pdfFile.inputStream().use { input ->
+          FileOutputStream(dest).use { out -> input.copyTo(out) }
+        }
+      }
+      val localUri = "file://${dest.absolutePath}"
+      val createdAt = Instant.now().toString()
+      val db = openDb(context, readOnly = false) ?: return false
+      db.use { database ->
+        database.execSQL(
+          """
+          INSERT OR REPLACE INTO merchant_receipts
+            (accountId, id, name, merchantName, category, localUri, contentType, sizeBytes, createdAt)
+          VALUES (?, ?, ?, ?, 'service', ?, 'application/pdf', ?, ?)
+          """.trimIndent(),
+          arrayOf(
+            acct,
+            id,
+            name.trim(),
+            merchantName?.trim()?.ifEmpty { null },
+            localUri,
+            dest.length().toInt().coerceAtLeast(1),
+            createdAt,
+          ),
+        )
+      }
+      true
+    } catch (_: Exception) {
+      false
+    }
+  }
+
+  fun hasBlypMoney(context: Context, accountId: String, transferId: String): Boolean {
+    val id = "blyp-mt-${transferId.trim()}"
+    val acct = accountId.trim()
+    if (acct.isEmpty()) return false
+    val db = openDb(context, readOnly = true) ?: return false
+    return try {
+      db.rawQuery(
+        "SELECT id FROM merchant_receipts WHERE accountId = ? AND id = ? LIMIT 1",
+        arrayOf(acct, id),
+      ).use { it.moveToFirst() }
+    } catch (_: Exception) {
+      false
+    } finally {
+      db.close()
+    }
+  }
+
   fun addManual(
     context: Context,
     accountId: String,

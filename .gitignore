@@ -57,6 +57,7 @@ app-example
 .aws-sam/
 infra/.aws-sam/
 infra/samconfig.toml
+admin-app/.device-key
 aws/node_modules/
 
 # local scratch / secrets dumps

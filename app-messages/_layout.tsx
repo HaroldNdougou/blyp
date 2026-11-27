@@ -58,6 +58,10 @@ function IslandLaunch() {
           });
           return;
         }
+        if (payload.route === "new-chat") {
+          router.replace("/new-chat");
+          return;
+        }
         router.replace("/");
       });
     };

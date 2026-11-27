@@ -16,6 +16,14 @@ Référence : **WhatsApp** (feedback au clic, tout déjà en mémoire, réseau i
 - Ne jamais dire « on verra plus tard » / « assez bien pour l’instant » sur un lag perceptible.
 - Chaque nouveau lag = **bug bloquant**, pas un polish.
 
+## Ouverture (non négociable, à relire à chaque session)
+
+- La vitesse qui compte est celle de la **version légère** sur les **deux téléphones physiques**. La copie de travail, plus lourde, ne sert pas de chiffre.
+- Barre : **moins d’une seconde** à froid, sur les deux téléphones. « Autour d’une seconde » n’est pas le but. Une feature qui atteint ou dépasse 1 s est **refusée** tant que ce n’est pas redescendu en dessous.
+- **Chercher à descendre encore** (ouverture et fluidité) à chaque session, pas seulement rester sous la seconde.
+- Rien de nouveau ne tourne **avant** le premier écran. Le reste attend que Pay soit peint.
+- Après chaque ajout visible : remesurer l’ouverture à froid sur les deux téléphones, et le dire en une phrase simple.
+
 ## Splash = seule frontière
 
 - Splash / `hideAsync` : **uniquement** auth ready (+ shell layout en release).

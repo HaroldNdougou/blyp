@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_marginTop="2dp"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/blyp_chat_clock"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/blyp_shell_chat_pending"
+        android:textColor="@color/blyp_shell_muted"
+        android:textSize="11sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/blyp_chat_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/blyp_shell_muted"
+        android:textSize="11sp" />
+
+    <ImageView
+        android:id="@+id/blyp_chat_meta_delete"
+        android:layout_width="36dp"
+        android:layout_height="32dp"
+        android:layout_marginStart="2dp"
+        android:contentDescription="@string/blyp_shell_chat_meta_delete_a11y"
+        android:padding="6dp"
+        android:scaleType="centerInside"
+        android:src="@drawable/blyp_shell_ic_trash"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/blyp_chat_seen"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/blyp_shell_muted"
+        android:textSize="11sp"
+        android:visibility="gone" />
+</LinearLayout>

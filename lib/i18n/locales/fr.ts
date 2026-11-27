@@ -579,6 +579,8 @@ export default {
     open: "Ouvrir",
     emptyHint: "Créez un commerce pour recevoir en mode pro.",
     switchFailed: "Impossible de changer de contexte.",
+    switchOffline: "Pas de connexion Internet.",
+    switchNetwork: "Problème de réseau. Réessaie.",
     createFailed: "Impossible de créer le commerce.",
     nameTooShort: "Indiquez un nom (2 caractères min.).",
     payAsPersonalTitle: "Mode pro",
@@ -719,7 +721,7 @@ export default {
     reportExportCsvDone: "Terminée",
   },
   ble: {
-    searchingTaxi: "Recherche de taxi…",
+    searchingTaxi: "Détection…",
     searchingHint: "Approchez le téléphone du taxi",
     noneNearby: "Aucun taxi détecté",
     noneNearbyHint: "Approchez le téléphone du taxi",

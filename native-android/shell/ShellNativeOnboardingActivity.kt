@@ -59,7 +59,7 @@ class ShellNativeOnboardingActivity : AppCompatActivity() {
   private var keepDraft = true
   private val draftPrefs by lazy { getSharedPreferences(DRAFT_PREFS, MODE_PRIVATE) }
 
-  /** Sélecteur système (fiable sur Xiaomi / Android 13+). */
+  /** Fichier temporaire pour la prise de photo caméra. */
   private var cameraFile: File? = null
 
   private val pickVisual =
@@ -459,16 +459,6 @@ class ShellNativeOnboardingActivity : AppCompatActivity() {
     if (busy || picking) return
     picking = true
     setPhotoPickBusy(true)
-    val xiaomi = BlypShellPhotoPick.isXiaomiFamily()
-    if (xiaomi) {
-      for (intent in BlypShellPhotoPick.galleryPickIntents()) {
-        try {
-          pickImage.launch(intent)
-          return
-        } catch (_: Exception) {
-        }
-      }
-    }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       try {
         pickVisual.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
@@ -477,20 +467,18 @@ class ShellNativeOnboardingActivity : AppCompatActivity() {
         /* suite */
       }
     }
-    if (!xiaomi) {
-      for (intent in BlypShellPhotoPick.galleryPickIntents()) {
-        try {
-          pickImage.launch(intent)
-          return
-        } catch (_: Exception) {
-        }
-      }
-    }
     try {
       pickContent.launch("image/*")
       return
     } catch (_: Exception) {
       /* suite */
+    }
+    for (intent in BlypShellPhotoPick.galleryPickIntents()) {
+      try {
+        pickImage.launch(intent)
+        return
+      } catch (_: Exception) {
+      }
     }
     endPhotoPick()
     toast(getString(R.string.blyp_shell_profile_photo_failed))

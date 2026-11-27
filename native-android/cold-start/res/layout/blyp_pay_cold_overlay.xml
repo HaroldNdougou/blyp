@@ -234,9 +234,11 @@
                     android:background="?android:attr/selectableItemBackgroundBorderless"
                     android:contentDescription="@string/blyp_shell_pay_receive_a11y"
                     android:scaleType="center"
+                    android:clickable="true"
+                    android:focusable="true"
                     android:src="@drawable/blyp_cold_receive_glyph"
-                    android:tint="@color/blyp_cold_start_text_muted"
-                    android:visibility="gone" />
+                    android:tint="#888888"
+                    android:tintMode="src_in" />
             </FrameLayout>
         </LinearLayout>
 

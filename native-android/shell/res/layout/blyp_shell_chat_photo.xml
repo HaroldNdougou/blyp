@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/blyp_chat_photo_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/blyp_shell_scan_bg">
+
+    <ImageView
+        android:id="@+id/blyp_chat_photo_full"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/blyp_shell_chat_photo_a11y"
+        android:scaleType="fitCenter" />
+
+    <ImageView
+        android:id="@+id/blyp_chat_photo_incoming"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@string/blyp_shell_chat_photo_a11y"
+        android:importantForAccessibility="no"
+        android:scaleType="fitCenter"
+        android:visibility="invisible" />
+
+    <TextView
+        android:id="@+id/blyp_chat_photo_error"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:padding="24dp"
+        android:text="@string/blyp_shell_chat_photo_failed"
+        android:textColor="@color/blyp_shell_scan_text"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <ProgressBar
+        android:id="@+id/blyp_chat_photo_busy"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:layout_gravity="center"
+        android:indeterminate="true"
+        android:indeterminateTint="@color/blyp_shell_accent" />
+</FrameLayout>

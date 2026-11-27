@@ -92,6 +92,14 @@ object BlypShellLaunchBridge {
       putExtra(EXTRA_RETURN_TO_SHELL, true)
     }
 
+  fun buildNewChatIslandIntent(mainActivityClass: Class<*>): Intent =
+    intentFor(mainActivityClass).apply {
+      addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+      putExtra(EXTRA_RN_ROUTE, "new-chat")
+      putExtra(EXTRA_HIDE_TAB_BAR, true)
+      putExtra(EXTRA_RETURN_TO_SHELL, true)
+    }
+
   fun stageChatOpen(conversationId: String, transferId: String?) {
     stagedChatId = conversationId.trim()
     stagedChatTransferId = transferId?.trim()?.ifEmpty { null }
