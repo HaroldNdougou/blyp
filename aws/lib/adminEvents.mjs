@@ -57,8 +57,9 @@ export async function emitAdminEvent(evt) {
     if (!ADMIN_EVENT_TYPES.includes(type)) {
       return { skipped: true, reason: "UNKNOWN_TYPE" };
     }
+    const extId = String(evt?.id ?? "").trim();
     const body = {
-      id: randomUUID(),
+      id: extId.length >= 8 ? extId : randomUUID(),
       type,
       at: evt?.at || new Date().toISOString(),
       userId: evt?.userId ? String(evt.userId) : null,

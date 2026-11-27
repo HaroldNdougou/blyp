@@ -28,8 +28,12 @@ export async function ringMoney(title: string) {
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
+      body: title,
       sound: "default",
+      vibrate: VIBE,
       priority: Notifications.AndroidNotificationPriority.MAX,
+      sticky: true,
+      data: { channelId: "blyp_money_alarm" },
     },
     trigger: null,
   }).catch(() => {});

@@ -1,5 +1,6 @@
 import { DeleteCommand, GetCommand, PutCommand, QueryCommand, UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { emitAdminEvent } from "./adminEvents.mjs";
+import { describeEvent, sendAdminPush } from "./adminNotify.mjs";
 import { adjustBalance } from "./adminActions.mjs";
 import { getDocClient, getTableName } from "./dynamodb.mjs";
 import { getUserBalance, getUserProfile, userPk } from "./user.mjs";
@@ -93,9 +94,12 @@ export async function createMoneyRequest({ userId, requestId, kind, amountFcfa, 
       Item: { ...pendingKey(now, id), ...item },
     }),
   );
+  const at = now;
   await emitAdminEvent({
+    id,
     type: kind,
     userId,
+    at,
     data: {
       requestId: id,
       amountFcfa: amount,
@@ -104,6 +108,29 @@ export async function createMoneyRequest({ userId, requestId, kind, amountFcfa, 
       destination: shownPhone,
     },
   });
+  try {
+    const ev = {
+      id,
+      type: kind,
+      at,
+      userId,
+      name,
+      phone: shownPhone,
+      data: {
+        requestId: id,
+        amountFcfa: amount,
+        phone: shownPhone,
+        destination: shownPhone,
+      },
+    };
+    await sendAdminPush({
+      title: describeEvent(ev).title,
+      eventId: id,
+      eventType: kind,
+    });
+  } catch (err) {
+    console.warn("[moneyRequests] admin push", err?.message ?? err);
+  }
   return { item: publicItem(item), reused: false };
 }
 

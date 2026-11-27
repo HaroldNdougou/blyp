@@ -79,11 +79,18 @@ async function processOne(body, settings) {
   const prefs = settings.notify[item.type];
   if (!prefs?.push && !prefs?.email) return;
 
+  /** Push déjà envoyé en synchrone par `createMoneyRequest` (même id que la demande). */
+  const moneyInstant =
+    (item.type === "deposit" || item.type === "withdrawal") &&
+    String(item.data?.requestId ?? "") === String(item.id ?? "");
+  const notifyPrefs =
+    moneyInstant && prefs?.push ? { ...prefs, push: false } : prefs;
+
   /** Les événements d'argent / actions admin passent TOUJOURS par email (pas de plafond). */
   const critical = describeEvent(item).severity !== "info";
   const emailAllowed =
     !prefs.email || critical ? true : await takeEmailSlot(settings.emailPerMinuteCap);
-  await notifyAdminOfEvent(item, prefs, { emailAllowed });
+  await notifyAdminOfEvent(item, notifyPrefs, { emailAllowed });
 }
 
 /** @param {{ Records?: Array<{ messageId: string, body: string }> }} event */

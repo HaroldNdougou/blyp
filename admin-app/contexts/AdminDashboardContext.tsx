@@ -42,6 +42,12 @@ export function AdminDashboardProvider({ children }: { children: ReactNode }) {
   const [depositPending, setDepositPending] = useState(0);
   const [withdrawalPending, setWithdrawalPending] = useState(0);
   const seenRequests = useRef<Set<string> | null>(null);
+  const seenMoneyEvents = useRef<Set<string> | null>(null);
+
+  const requestIsFresh = (iso: string) => {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && Date.now() - t < 60_000;
+  };
 
   const refresh = useCallback(async (soft = false, userPull = false) => {
     if (userPull) setRefreshing(true);
@@ -55,7 +61,18 @@ export function AdminDashboardProvider({ children }: { children: ReactNode }) {
       ]);
       setAdmin(me.admin);
       setOverview(ov);
-      setEvents(feed.items || []);
+      const rows = feed.items || [];
+      setEvents(rows);
+      const moneyRows = rows.filter((ev) => ev.type === "deposit" || ev.type === "withdrawal");
+      if (seenMoneyEvents.current == null) {
+        seenMoneyEvents.current = new Set(moneyRows.map((ev) => ev.id));
+      } else {
+        for (const ev of moneyRows) {
+          if (seenMoneyEvents.current.has(ev.id)) continue;
+          seenMoneyEvents.current.add(ev.id);
+          void ringMoney(ev.title || ev.summary);
+        }
+      }
     } catch (e: any) {
       if (e?.status === 401) {
         await logout();
@@ -76,6 +93,10 @@ export function AdminDashboardProvider({ children }: { children: ReactNode }) {
       setWithdrawalPending(items.filter((row) => row.kind === "withdrawal").length);
       if (seenRequests.current == null) {
         seenRequests.current = new Set(items.map((row) => row.id));
+        for (const row of items) {
+          if (row.status !== "pending" || !requestIsFresh(row.at)) continue;
+          void ringMoney(moneyLine(row.kind, row.amountFcfa, row.phone));
+        }
         return;
       }
       for (const row of items) {
@@ -126,7 +147,7 @@ export function AdminDashboardProvider({ children }: { children: ReactNode }) {
       }
     });
     const poll = setInterval(() => void refresh(true), 20_000);
-    const requestsPoll = setInterval(() => void pullRequests(), 5_000);
+    const requestsPoll = setInterval(() => void pullRequests(), 2_000);
     return () => {
       sub.remove();
       clearInterval(poll);

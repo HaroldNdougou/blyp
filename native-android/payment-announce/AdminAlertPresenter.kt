@@ -104,7 +104,7 @@ object AdminAlertPresenter {
         .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
         .build()
     val channel =
-      NotificationChannel(ALARM_CHANNEL_ID, "Demandes d'argent", NotificationManager.IMPORTANCE_HIGH)
+      NotificationChannel(ALARM_CHANNEL_ID, "Demandes d'argent", NotificationManager.IMPORTANCE_MAX)
         .apply {
           description = "Recharge et retrait à confirmer"
           enableVibration(true)

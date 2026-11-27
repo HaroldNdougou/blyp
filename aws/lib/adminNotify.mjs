@@ -173,13 +173,24 @@ export async function sendAdminPush({ title, eventId, eventType }) {
       channelId: alarm ? "blyp_money_alarm" : "admin_alerts",
       sound: alarm ? "default" : "",
     };
-    /** Data-only : recharge/retrait sonnent via `AdminAlertPresenter` même téléphone verrouillé. */
-    messages.push({
-      to: token,
-      priority: "high",
-      _contentAvailable: true,
-      data,
-    });
+    if (alarm) {
+      messages.push({
+        to: token,
+        title: line,
+        body: line,
+        sound: "default",
+        priority: "high",
+        channelId: "blyp_money_alarm",
+        data,
+      });
+    } else {
+      messages.push({
+        to: token,
+        priority: "high",
+        _contentAvailable: true,
+        data,
+      });
+    }
   };
   for (const dev of adminDevices) {
     const token = String(dev.token ?? "");
