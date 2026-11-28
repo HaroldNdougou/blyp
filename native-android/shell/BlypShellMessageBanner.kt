@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.Context
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
@@ -34,7 +33,6 @@ object BlypShellMessageBanner {
     main.post {
       if (act.isFinishing) return@post
       chime(act)
-      buzz(act)
       attach(act, conversationId, title, text)
     }
     return true
@@ -139,33 +137,6 @@ object BlypShellMessageBanner {
       )
     }
     main.postDelayed(gone, 3200L)
-  }
-
-  private fun buzz(context: Context) {
-    val pattern = longArrayOf(0, 80)
-    runCatching {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
-        val effect = android.os.VibrationEffect.createWaveform(pattern, -1)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-          vm.defaultVibrator.vibrate(
-            effect,
-            android.os.VibrationAttributes.createForUsage(android.os.VibrationAttributes.USAGE_NOTIFICATION),
-          )
-        } else {
-          vm.defaultVibrator.vibrate(effect)
-        }
-      } else {
-        @Suppress("DEPRECATION")
-        val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-          vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
-        } else {
-          @Suppress("DEPRECATION")
-          vibrator.vibrate(pattern, -1)
-        }
-      }
-    }
   }
 
   private fun statusBar(activity: Activity): Int {

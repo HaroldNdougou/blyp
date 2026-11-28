@@ -23,7 +23,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.haroldndougou.blyp.R
 
 /** Rechargement wallet natif — sans îlot React. */
-class ShellDepositActivity : AppCompatActivity() {
+class ShellDepositActivity : BlypShellActivity() {
   private var busy = false
   private var withdrawMode = false
   private var formattingAmount = false

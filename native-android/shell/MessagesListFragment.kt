@@ -2,6 +2,7 @@ package com.haroldndougou.blyp.shell
 
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
@@ -23,7 +24,11 @@ class MessagesListFragment : Fragment() {
   private var unsubRefresh: (() -> Unit)? = null
   private var unsubListRt: (() -> Unit)? = null
   private var unsubTyping: (() -> Unit)? = null
-  private val adapter = ConversationsAdapter(::openChat)
+  private var loadedOnce = false
+  private var autoNewChatShown = false
+  private var pendingDeleteId: String? = null
+  private var deleteIcon: ImageView? = null
+  private val adapter = ConversationsAdapter(::openChat, ::armDelete)
 
   override fun onCreateView(
     inflater: LayoutInflater,
@@ -45,7 +50,18 @@ class MessagesListFragment : Fragment() {
       ShellNewChatActivity.start(requireContext())
     }
     root.findViewById<android.widget.ImageView>(R.id.blyp_shell_messages_compose)?.setOnClickListener {
+      clearDeleteArm()
       ShellNewChatActivity.start(requireContext())
+    }
+    deleteIcon = root.findViewById(R.id.blyp_shell_messages_delete)
+    deleteIcon?.setOnClickListener { confirmDelete() }
+    root.findViewById<View>(R.id.blyp_shell_messages_header)?.setOnClickListener { clearDeleteArm() }
+    listView?.setOnTouchListener { v, event ->
+      if (event.action == MotionEvent.ACTION_UP && pendingDeleteId != null) {
+        val under = (v as? RecyclerView)?.findChildViewUnder(event.x, event.y)
+        if (under == null) clearDeleteArm()
+      }
+      false
     }
     return root
   }
@@ -116,6 +132,7 @@ class MessagesListFragment : Fragment() {
       cachedRows = next
       adapter.submit(next)
     }
+    loadedOnce = true
     showEmpty(next.isEmpty())
     view?.post {
       if (!isAdded) return@post
@@ -133,18 +150,41 @@ class MessagesListFragment : Fragment() {
           unreadStamp = unreadNow
           cachedRows = refreshed
           adapter.submit(refreshed)
+          loadedOnce = true
           showEmpty(refreshed.isEmpty())
         }
       }
     }
   }
 
+  fun onInboxVisibility(visible: Boolean) {
+    if (!visible) {
+      autoNewChatShown = false
+      return
+    }
+    if (loadedOnce && cachedRows.isEmpty()) maybeAutoNewChat()
+  }
+
   private fun showEmpty(show: Boolean) {
     emptyBlock?.visibility = if (show) View.VISIBLE else View.GONE
     swipeRefresh?.visibility = if (show) View.GONE else View.VISIBLE
+    if (!show) {
+      autoNewChatShown = false
+      return
+    }
+    maybeAutoNewChat()
+  }
+
+  private fun maybeAutoNewChat() {
+    if (autoNewChatShown || !isAdded || !loadedOnce || cachedRows.isNotEmpty()) return
+    val ctx = context ?: return
+    if (BlypShellSession.phone(ctx).isNullOrEmpty()) return
+    autoNewChatShown = true
+    ShellNewChatActivity.start(ctx)
   }
 
   private fun openChat(conversationId: String) {
+    clearDeleteArm()
     val id = conversationId.trim()
     if (id.isEmpty()) return
     BlypShellChatUnread.clear(requireContext(), id)
@@ -161,10 +201,51 @@ class MessagesListFragment : Fragment() {
     requireActivity().overridePendingTransition(R.anim.blyp_chat_enter, R.anim.blyp_chat_exit)
   }
 
+  private fun armDelete(conversationId: String) {
+    val id = conversationId.trim()
+    if (id.isEmpty()) return
+    pendingDeleteId = id
+    deleteIcon?.visibility = View.VISIBLE
+    adapter.setSelected(id)
+    view?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+  }
+
+  private fun clearDeleteArm() {
+    if (pendingDeleteId == null && deleteIcon?.visibility != View.VISIBLE) return
+    pendingDeleteId = null
+    deleteIcon?.visibility = View.GONE
+    adapter.setSelected(null)
+  }
+
+  private fun confirmDelete() {
+    val ctx = context ?: return
+    val id = pendingDeleteId ?: return
+    val name = cachedRows.firstOrNull { it.id == id }?.peerName?.trim().orEmpty().ifEmpty { "…" }
+    BlypShellDialogs.alertBuilder(ctx)
+      .setTitle(R.string.blyp_shell_messages_delete_title)
+      .setMessage(getString(R.string.blyp_shell_messages_delete_msg, name))
+      .setNegativeButton(R.string.blyp_shell_chat_reply_cancel, null)
+      .setPositiveButton(R.string.blyp_shell_messages_delete_confirm) { _, _ ->
+        val phone = BlypShellSession.phone(ctx) ?: return@setPositiveButton
+        BlypShellConversationsStore.hideFromList(ctx, phone, id)
+        BlypShellChatUnread.clear(ctx, id)
+        clearDeleteArm()
+        reload()
+      }
+      .show()
+  }
+
   private class ConversationsAdapter(
     private val onOpen: (String) -> Unit,
+    private val onLong: (String) -> Unit,
   ) : RecyclerView.Adapter<ConversationsAdapter.RowHolder>() {
     private var items: List<ShellConversationRow> = emptyList()
+    private var selectedId: String? = null
+
+    fun setSelected(id: String?) {
+      selectedId = id
+      notifyDataSetChanged()
+    }
 
     fun submit(next: List<ShellConversationRow>) {
       items = next
@@ -176,11 +257,12 @@ class MessagesListFragment : Fragment() {
         LayoutInflater.from(parent.context)
           .inflate(R.layout.blyp_shell_messages_row, parent, false)
       BlypShellClicks.arm(v)
-      return RowHolder(v, onOpen)
+      return RowHolder(v, onOpen, onLong)
     }
 
     override fun onBindViewHolder(holder: RowHolder, position: Int) {
-      holder.bind(items[position])
+      val row = items[position]
+      holder.bind(row, row.id == selectedId)
     }
 
     override fun getItemCount(): Int = items.size
@@ -188,6 +270,7 @@ class MessagesListFragment : Fragment() {
     class RowHolder(
       itemView: View,
       private val onOpen: (String) -> Unit,
+      private val onLong: (String) -> Unit,
     ) : RecyclerView.ViewHolder(itemView) {
       private val initial = itemView.findViewById<TextView>(R.id.blyp_messages_peer_initial)
       private val avatar = itemView.findViewById<ImageView>(R.id.blyp_messages_peer_avatar)
@@ -195,7 +278,14 @@ class MessagesListFragment : Fragment() {
       private val whenView = itemView.findViewById<TextView>(R.id.blyp_messages_when)
       private val preview = itemView.findViewById<TextView>(R.id.blyp_messages_preview)
 
-      fun bind(row: ShellConversationRow) {
+      fun bind(row: ShellConversationRow, selected: Boolean) {
+        itemView.setBackgroundResource(R.drawable.blyp_shell_messages_press)
+        itemView.isSelected = selected
+        itemView.isPressed = false
+        itemView.setOnLongClickListener {
+          onLong(row.id)
+          true
+        }
         name.text = row.peerName
         whenView.text = row.whenLabel
         val typing = BlypShellChatTyping.isOn(row.id)
@@ -216,8 +306,15 @@ class MessagesListFragment : Fragment() {
             ),
           )
           val raw = row.preview.trim()
-          val emojiOnly = raw.isNotEmpty() && raw.none { it.isLetterOrDigit() }
-          preview.textSize = if (emojiOnly) 22f else 15f
+          val reactionPreview = raw.indexOf('\t') >= 0
+          val emojiOnly =
+            !reactionPreview && raw.isNotEmpty() && raw.none { it.isLetterOrDigit() }
+          preview.textSize =
+            when {
+              reactionPreview -> 13f
+              emojiOnly -> 22f
+              else -> 15f
+            }
           preview.setTextColor(
             androidx.core.content.ContextCompat.getColor(
               itemView.context,
@@ -238,15 +335,27 @@ class MessagesListFragment : Fragment() {
               unread.visibility = View.VISIBLE
               unread.text = ""
             }
-            itemView.setOnClickListener { onOpen(row.id) }
+            bindOpen(row.id)
             return
           }
           val ctx = itemView.context
           val d = ctx.resources.displayMetrics.density
           when {
-            raw.equals("VOICE", true) || raw == "🎤" -> {
-              preview.setCompoundDrawablesRelative(null, null, null, null)
-              preview.text = "🎤 " + ctx.getString(R.string.blyp_shell_chat_type_voice)
+            raw.equals("VOICE", true) ||
+              raw == "🎤" ||
+              raw.startsWith("🎤") ||
+              raw.equals(ctx.getString(R.string.blyp_shell_chat_label_voice), true) ||
+              raw.equals(ctx.getString(R.string.blyp_shell_chat_type_voice), true) -> {
+              preview.setCompoundDrawablePadding((5 * d).toInt())
+              val mic =
+                androidx.core.content.ContextCompat
+                  .getDrawable(ctx, R.drawable.blyp_shell_ic_mic_muted)
+                  ?.mutate()
+              val micSize = (22f * d).toInt()
+              mic?.setBounds(0, 0, micSize, micSize)
+              preview.setCompoundDrawablesRelative(mic, null, null, null)
+              preview.text = ctx.getString(R.string.blyp_shell_chat_label_voice)
+              preview.textSize = 15f
             }
             raw.equals("IMAGE", true) ||
               raw == "📷" ||
@@ -268,7 +377,24 @@ class MessagesListFragment : Fragment() {
             }
             else -> {
               preview.setCompoundDrawablesRelative(null, null, null, null)
-              preview.text = raw
+              val placeLabel =
+                BlypShellPlaceCodec.previewFromBody(
+                  raw,
+                  ctx.getString(R.string.blyp_shell_chat_place_preview_live),
+                  ctx.getString(R.string.blyp_shell_chat_place_preview),
+                )
+              val reactLabel = formatReactionPreview(ctx, raw)
+              preview.text = placeLabel ?: reactLabel ?: raw
+              if (reactLabel != null) {
+                preview.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13f)
+                preview.setTypeface(android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL))
+                preview.setTextColor(
+                  androidx.core.content.ContextCompat.getColor(
+                    ctx,
+                    R.color.blyp_shell_text_secondary,
+                  ),
+                )
+              }
               val draftPrefix = ctx.getString(R.string.blyp_shell_messages_draft_prefix)
               if (raw.startsWith(draftPrefix)) {
                 preview.setTextColor(
@@ -295,7 +421,27 @@ class MessagesListFragment : Fragment() {
           unread.visibility = View.VISIBLE
           unread.text = ""
         }
-        itemView.setOnClickListener { onOpen(row.id) }
+        bindOpen(row.id)
+      }
+
+      private fun bindOpen(conversationId: String) {
+        itemView.setOnClickListener { onOpen(conversationId) }
+      }
+
+      private fun formatReactionPreview(ctx: android.content.Context, raw: String): String? {
+        val tab = raw.indexOf('\t')
+        if (tab < 0) {
+          if (BlypShellReactionCodec.isSyncBody(raw)) return null
+          return null
+        }
+        val who = raw.substring(0, tab).trim()
+        val emoji = raw.substring(tab + 1).trim()
+        if (emoji.isEmpty()) return ctx.getString(R.string.blyp_shell_messages_reaction_bare)
+        return if (who == "*") {
+          ctx.getString(R.string.blyp_shell_messages_reaction_you, emoji)
+        } else {
+          ctx.getString(R.string.blyp_shell_messages_reaction, emoji)
+        }
       }
     }
   }

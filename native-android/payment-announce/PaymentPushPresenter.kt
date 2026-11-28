@@ -18,7 +18,8 @@ import java.util.Locale
  * Notif paiement reçu — toujours visible (indépendant d’Expo data-only / MIUI).
  */
 object PaymentPushPresenter {
-  const val CHANNEL_ID = "payments"
+  const val CHANNEL_ID = "payments_v2"
+  private val PAYMENT_VIBE = longArrayOf(0, 160, 90, 220, 90, 300)
 
   fun showPaymentReceived(context: Context, data: Map<String, String>) {
     val amount = data["amountFcfa"]?.toIntOrNull() ?: return
@@ -26,6 +27,7 @@ object PaymentPushPresenter {
 
     val app = context.applicationContext
     ensureChannel(app)
+    buzz(app)
 
     val lang = PaymentAnnouncePrefs.getLang(app)
     val transfer = data["contextType"] != "commerce"
@@ -58,7 +60,7 @@ object PaymentPushPresenter {
         .setContentIntent(openApp)
         .setCategory(NotificationCompat.CATEGORY_EVENT)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setDefaults(NotificationCompat.DEFAULT_VIBRATE)
+        .setVibrate(PAYMENT_VIBE)
         .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
         .build()
 
@@ -85,32 +87,7 @@ object PaymentPushPresenter {
   }
 
   private fun buzz(context: Context) {
-    val pattern = longArrayOf(0, 280, 140, 280)
-    val app = context.applicationContext
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-      val vm =
-        app.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
-      val effect = android.os.VibrationEffect.createWaveform(pattern, -1)
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        vm.defaultVibrator.vibrate(
-          effect,
-          android.os.VibrationAttributes.createForUsage(
-            android.os.VibrationAttributes.USAGE_ALARM,
-          ),
-        )
-      } else {
-        vm.defaultVibrator.vibrate(effect)
-      }
-      return
-    }
-    @Suppress("DEPRECATION")
-    val vibrator = app.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      vibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
-    } else {
-      @Suppress("DEPRECATION")
-      vibrator.vibrate(pattern, -1)
-    }
+    com.haroldndougou.blyp.shell.BlypShellIncomingBuzz.payment(context)
   }
 
   fun rememberBle(amountFcfa: Int) {
@@ -150,6 +127,7 @@ object PaymentPushPresenter {
   private fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    mgr.deleteNotificationChannel("payments")
     if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
     val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
     val channel =
@@ -160,7 +138,7 @@ object PaymentPushPresenter {
       ).apply {
         description = "Paiements reçus"
         enableVibration(true)
-        vibrationPattern = longArrayOf(0, 100, 80, 100)
+        vibrationPattern = PAYMENT_VIBE
         setSound(
           sound,
           AudioAttributes.Builder()

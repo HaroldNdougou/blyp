@@ -119,6 +119,10 @@ export function AdminDashboardProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const ringFromPush = (n: Notifications.Notification) => {
       const data = (n.request.content.data ?? {}) as Record<string, unknown>;
+      // Pas de re-sonnerie sur nos notifs locales (sinon boucle ring → notif → ring).
+      if (data.localRing === "1") return;
+      const trig = n.request.trigger as { type?: string } | null;
+      if (trig == null || trig.type === "channel") return;
       const eventType = String(data.eventType ?? "");
       const money = eventType === "deposit" || eventType === "withdrawal" || data.alarm === "1";
       if (!money) return;

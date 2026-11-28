@@ -2,6 +2,8 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:clipChildren="false"
+    android:clipToPadding="false"
     android:gravity="end"
     android:orientation="vertical"
     android:paddingStart="56dp"
@@ -21,16 +23,17 @@
         android:textSize="12sp"
         android:visibility="gone" />
 
-    <LinearLayout
+    <FrameLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:gravity="bottom"
-        android:orientation="horizontal">
+        android:clipChildren="false"
+        android:clipToPadding="false">
 
         <com.haroldndougou.blyp.shell.BlypShellTightBubble
             android:id="@+id/blyp_chat_body"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="0dp"
             android:background="@drawable/blyp_shell_chat_bubble_mine"
             android:breakStrategy="simple"
             android:hyphenationFrequency="none"
@@ -38,12 +41,28 @@
             android:paddingVertical="8dp"
             android:textColor="@color/blyp_shell_bubble_mine_text"
             android:textSize="17sp" />
-    </LinearLayout>
+
+        <TextView
+            android:id="@+id/blyp_chat_reactions"
+            android:layout_width="wrap_content"
+            android:layout_height="24dp"
+            android:layout_gravity="start|top"
+            android:layout_marginStart="0dp"
+            android:layout_marginTop="0dp"
+            android:background="@drawable/blyp_shell_react_chip"
+            android:elevation="0dp"
+            android:gravity="center"
+            android:includeFontPadding="false"
+            android:minWidth="24dp"
+            android:paddingHorizontal="5dp"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <LinearLayout
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
+        android:layout_marginTop="3dp"
         android:gravity="center_vertical|end"
         android:orientation="horizontal">
 
@@ -65,11 +84,11 @@
 
         <ImageView
             android:id="@+id/blyp_chat_meta_delete"
-            android:layout_width="36dp"
-            android:layout_height="32dp"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
             android:layout_marginStart="2dp"
             android:contentDescription="@string/blyp_shell_chat_meta_delete_a11y"
-            android:padding="6dp"
+            android:padding="5dp"
             android:scaleType="centerInside"
             android:src="@drawable/blyp_shell_ic_trash"
             android:visibility="gone" />
@@ -82,13 +101,4 @@
             android:textSize="11sp"
             android:visibility="gone" />
     </LinearLayout>
-
-    <TextView
-        android:id="@+id/blyp_chat_reactions"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
-        android:textColor="@color/blyp_shell_text_secondary"
-        android:textSize="13sp"
-        android:visibility="gone" />
 </LinearLayout>

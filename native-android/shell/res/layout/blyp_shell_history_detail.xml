@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/blyp_shell_bg">
+    android:background="@color/blyp_shell_bg"
+    android:orientation="vertical">
 
     <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
         android:fillViewport="true"
         android:scrollbars="none">
 
@@ -16,68 +19,79 @@
             android:gravity="center_horizontal"
             android:orientation="vertical"
             android:paddingHorizontal="24dp"
-            android:paddingTop="32dp"
-            android:paddingBottom="100dp">
+            android:paddingTop="20dp"
+            android:paddingBottom="16dp">
 
             <TextView
-                android:layout_width="72dp"
-                android:layout_height="72dp"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
                 android:background="@drawable/blyp_shell_summary_card_active"
                 android:gravity="center"
                 android:text="✓"
                 android:textColor="@color/blyp_shell_accent"
-                android:textSize="36sp"
+                android:textSize="32sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/blyp_detail_title"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="18dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center"
                 android:textColor="@color/blyp_shell_text"
-                android:textSize="26sp"
+                android:textSize="24sp"
                 android:textStyle="bold" />
 
             <TextView
                 android:id="@+id/blyp_detail_subtitle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:lineSpacingExtra="4dp"
+                android:lineSpacingExtra="2dp"
                 android:paddingHorizontal="12dp"
                 android:textColor="@color/blyp_shell_text_secondary"
-                android:textSize="14sp" />
-
-            <TextView
-                android:id="@+id/blyp_detail_amount"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="22dp"
-                android:gravity="center"
-                android:textColor="@color/blyp_shell_accent"
-                android:textSize="36sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:gravity="center"
-                android:text="@string/blyp_shell_history_fcfa"
-                android:textColor="@color/blyp_shell_text_faint"
-                android:textSize="15sp"
-                android:textStyle="bold" />
+                android:textSize="13sp" />
 
             <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="14dp"
+                android:baselineAligned="true"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/blyp_detail_amount"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:textColor="@color/blyp_shell_accent"
+                    android:textSize="36sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginBottom="4dp"
+                    android:includeFontPadding="false"
+                    android:text="@string/blyp_shell_history_fcfa"
+                    android:textColor="@color/blyp_shell_text_faint"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/blyp_detail_info_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="28dp"
+                android:layout_marginTop="16dp"
                 android:background="@drawable/blyp_shell_history_row_bg"
                 android:orientation="vertical"
                 android:paddingHorizontal="16dp"
-                android:paddingVertical="6dp">
+                android:paddingVertical="4dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -171,6 +185,40 @@
                     android:background="@color/blyp_shell_border_light" />
 
                 <LinearLayout
+                    android:id="@+id/blyp_detail_motif_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingVertical="7dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/blyp_shell_detail_motif"
+                        android:textColor="@color/blyp_shell_muted"
+                        android:textSize="12sp" />
+
+                    <TextView
+                        android:id="@+id/blyp_detail_motif"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:textColor="@color/blyp_shell_text"
+                        android:textIsSelectable="true"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <View
+                    android:id="@+id/blyp_detail_motif_divider"
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/blyp_shell_border_light"
+                    android:visibility="gone" />
+
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -251,6 +299,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="4dp"
+                        android:breakStrategy="simple"
+                        android:hyphenationFrequency="none"
                         android:textColor="@color/blyp_shell_text"
                         android:textIsSelectable="true"
                         android:textSize="12sp"
@@ -260,31 +310,35 @@
         </LinearLayout>
     </ScrollView>
 
-    <TextView
-        android:id="@+id/blyp_detail_share"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
-        android:layout_gravity="bottom"
-        android:layout_marginHorizontal="24dp"
-        android:layout_marginBottom="88dp"
-        android:background="@drawable/blyp_shell_menu_row_btn"
-        android:gravity="center"
-        android:text="@string/blyp_shell_detail_share"
-        android:textColor="@color/blyp_shell_text"
-        android:textSize="15sp"
-        android:textStyle="bold" />
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="24dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="24dp">
 
-    <TextView
-        android:id="@+id/blyp_detail_close"
-        android:layout_width="match_parent"
-        android:layout_height="56dp"
-        android:layout_gravity="bottom"
-        android:layout_marginHorizontal="24dp"
-        android:layout_marginBottom="24dp"
-        android:background="@drawable/blyp_shell_filter_chip_selected"
-        android:gravity="center"
-        android:text="@string/blyp_shell_detail_ok"
-        android:textColor="@color/blyp_shell_accent_on"
-        android:textSize="16sp"
-        android:textStyle="bold" />
-</FrameLayout>
+        <TextView
+            android:id="@+id/blyp_detail_share"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/blyp_shell_menu_row_btn"
+            android:gravity="center"
+            android:text="@string/blyp_shell_detail_share"
+            android:textColor="@color/blyp_shell_text"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/blyp_detail_close"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/blyp_shell_filter_chip_selected"
+            android:gravity="center"
+            android:text="@string/blyp_shell_detail_ok"
+            android:textColor="@color/blyp_shell_accent_on"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

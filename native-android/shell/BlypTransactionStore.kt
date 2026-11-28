@@ -20,6 +20,7 @@ data class ShellHistoryRow(
   val reference: String?,
   val counterpartyPhone: String?,
   val kind: String? = null,
+  val note: String? = null,
 ) : java.io.Serializable
 
 sealed class ShellHistoryItem {
@@ -75,6 +76,80 @@ object BlypTransactionStore {
     } finally {
       db.close()
     }
+  }
+
+  /** Livre du commerçant : un commerce ou tous les siens, jamais le compte perso. */
+  fun bookTotals(context: Context, scopes: List<String>): HistoryTotals {
+    if (scopes.isEmpty()) return HistoryTotals(0, 0)
+    val db = openReadOnlyDb(context) ?: return HistoryTotals(0, 0)
+    return try {
+      var sent = 0
+      var received = 0
+      for (scope in scopes) {
+        db.rawQuery(
+            "SELECT type, amountFcfa FROM transactions WHERE phone = ?",
+            arrayOf(scope),
+          )
+          .use { cursor ->
+            while (cursor.moveToNext()) {
+              val type = cursor.getString(0) ?: continue
+              val amount = cursor.getInt(1)
+              if (amount <= 0) continue
+              if (type == "received") received += amount else sent += amount
+            }
+          }
+      }
+      HistoryTotals(sent, received)
+    } catch (_: Exception) {
+      HistoryTotals(0, 0)
+    } finally {
+      db.close()
+    }
+  }
+
+  fun loadBook(
+    context: Context,
+    phoneRaw: String,
+    shops: List<ShellCommerceEntry>,
+    filter: HistoryFilter,
+  ): List<ShellHistoryItem> {
+    val phone = phoneRaw.trim()
+    if (phone.isEmpty() || shops.isEmpty()) return emptyList()
+    val rows = ArrayList<ShellHistoryRow>()
+    for (shop in shops) {
+      val scope = "$phone#${shop.id}"
+      for (row in loadHistory(context, scope, filter, scoped = false)) {
+        rows.add(if (shops.size > 1) row.copy(name = "${shop.name} · ${row.name}") else row)
+      }
+    }
+    val rest = rows.distinctBy { it.id }.sortedByDescending { it.createdAt }
+    if (rest.isEmpty()) return emptyList()
+    val locale = if (Locale.getDefault().language == "fr") Locale.FRENCH else Locale.US
+    val amountFmt = NumberFormat.getIntegerInstance(locale)
+    val fcfa = context.getString(R.string.blyp_shell_history_fcfa)
+    val sums = LinkedHashMap<String, Int>()
+    for (row in rest) {
+      if (row.type != "received") continue
+      val key = formatSectionHeader(context, row.createdAt)
+      sums[key] = (sums[key] ?: 0) + row.amountFcfa
+    }
+    val out = ArrayList<ShellHistoryItem>()
+    var lastSection: String? = null
+    for (row in rest) {
+      val section = formatSectionHeader(context, row.createdAt)
+      if (section != lastSection) {
+        val sum = sums[section]
+        out.add(
+          ShellHistoryItem.Header(
+            section,
+            if (sum != null && sum > 0) "+ ${amountFmt.format(sum)} $fcfa" else null,
+          ),
+        )
+        lastSection = section
+      }
+      out.add(ShellHistoryItem.Row(row))
+    }
+    return out
   }
 
   fun countOperations(context: Context, phoneRaw: String): Int {
@@ -177,7 +252,7 @@ object BlypTransactionStore {
       val amountFmt = NumberFormat.getIntegerInstance(locale)
       db.rawQuery(
           """
-          SELECT id, type, amountFcfa, counterpartyName, createdAt, reference, counterpartyPhone, kind
+          SELECT id, type, amountFcfa, counterpartyName, createdAt, reference, counterpartyPhone, kind, note
           FROM transactions
           WHERE (
             kind IN ('MONEY_SEND','MONEY_CLAIM','MONEY_RECALL','MONEY_EXPIRE_REFUND')
@@ -199,6 +274,12 @@ object BlypTransactionStore {
             val name = it.getString(3)?.trim().orEmpty().ifEmpty { "—" }
             val createdAt = it.getString(4)?.trim().orEmpty()
             if (createdAt.isEmpty()) continue
+            val note =
+              try {
+                it.getString(8)?.trim()?.ifEmpty { null }
+              } catch (_: Exception) {
+                null
+              }
             out.add(
               ShellHistoryRow(
                 id = id,
@@ -211,6 +292,7 @@ object BlypTransactionStore {
                 reference = it.getString(5)?.trim()?.ifEmpty { null },
                 counterpartyPhone = it.getString(6)?.trim()?.ifEmpty { null },
                 kind = it.getString(7)?.trim()?.ifEmpty { null },
+                note = note,
               ),
             )
           }
@@ -229,6 +311,7 @@ object BlypTransactionStore {
     id: String,
     amountFcfa: Int,
     counterpartyName: String,
+    note: String? = null,
   ) {
     val phone = phoneRaw.trim()
     if (phone.isEmpty() || amountFcfa <= 0 || id.isBlank()) return
@@ -237,8 +320,8 @@ object BlypTransactionStore {
       db.execSQL(
         """
         INSERT OR REPLACE INTO transactions
-          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
-        VALUES (?, ?, 'sent', ?, ?, NULL, ?, ?, 'MONEY_SEND')
+          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind, note)
+        VALUES (?, ?, 'sent', ?, ?, NULL, ?, ?, 'MONEY_SEND', ?)
         """.trimIndent(),
         arrayOf(
           phone,
@@ -247,6 +330,7 @@ object BlypTransactionStore {
           counterpartyName.trim().ifEmpty { "Message Money" },
           java.time.Instant.now().toString(),
           id,
+          BlypShellPayMotif.sanitize(note),
         ),
       )
     } catch (_: Exception) {
@@ -279,15 +363,20 @@ object BlypTransactionStore {
     counterpartyPhone: String?,
     createdAt: String,
     reference: String,
+    note: String? = null,
   ) {
     val phone = scopeKey(context, phoneRaw)
     val db = openReadWriteDb(context) ?: return
+    val motif =
+      BlypShellPayMotif.sanitize(note)
+        ?: BlypShellPayFeedback.consumePendingMotifForAmount(amountFcfa)
+        ?: existingNote(db, phone, id)
     try {
       db.execSQL(
         """
         INSERT OR REPLACE INTO transactions
-          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
-        VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, 'PAYMENT')
+          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind, note)
+        VALUES (?, ?, 'sent', ?, ?, ?, ?, ?, 'PAYMENT', ?)
         """.trimIndent(),
         arrayOf(
           phone,
@@ -297,11 +386,85 @@ object BlypTransactionStore {
           counterpartyPhone,
           createdAt,
           reference,
+          motif,
         ),
       )
     } catch (_: Exception) {
     } finally {
       db.close()
+    }
+  }
+
+  /** Motif local après succès Pay (avant / après l’id serveur). */
+  fun updateLatestSentNote(
+    context: Context,
+    phoneRaw: String,
+    amountFcfa: Int,
+    note: String,
+  ) {
+    val phone = scopeKey(context, phoneRaw)
+    val motif = BlypShellPayMotif.sanitize(note) ?: return
+    if (phone.isEmpty() || amountFcfa <= 0) return
+    val db = openReadWriteDb(context) ?: return
+    try {
+      db.execSQL(
+        """
+        UPDATE transactions SET note = ?
+        WHERE rowid = (
+          SELECT rowid FROM transactions
+          WHERE phone = ? AND type = 'sent' AND amountFcfa = ?
+          ORDER BY createdAt DESC LIMIT 1
+        )
+        """.trimIndent(),
+        arrayOf(motif, phone, amountFcfa),
+      )
+    } catch (_: Exception) {
+    } finally {
+      db.close()
+    }
+  }
+
+  fun updateNoteById(
+    context: Context,
+    phoneRaw: String,
+    id: String,
+    note: String,
+  ) {
+    val phone = scopeKey(context, phoneRaw)
+    val txId = id.trim()
+    val motif = BlypShellPayMotif.sanitize(note) ?: return
+    if (phone.isEmpty() || txId.isEmpty()) return
+    val db = openReadWriteDb(context) ?: return
+    try {
+      db.execSQL(
+        "UPDATE transactions SET note = ? WHERE phone = ? AND id = ?",
+        arrayOf(motif, phone, txId),
+      )
+      // Message money est souvent stocké hors scope commerce
+      if (phone != phoneRaw.trim()) {
+        db.execSQL(
+          "UPDATE transactions SET note = ? WHERE phone = ? AND id = ?",
+          arrayOf(motif, phoneRaw.trim(), txId),
+        )
+      }
+    } catch (_: Exception) {
+    } finally {
+      db.close()
+    }
+  }
+
+  private fun existingNote(db: SQLiteDatabase, phone: String, id: String): String? {
+    return try {
+      db.rawQuery(
+          "SELECT note FROM transactions WHERE phone = ? AND id = ? LIMIT 1",
+          arrayOf(phone, id),
+        )
+        .use { c ->
+          if (!c.moveToFirst()) null
+          else c.getString(0)?.trim()?.ifEmpty { null }
+        }
+    } catch (_: Exception) {
+      null
     }
   }
 
@@ -329,11 +492,12 @@ object BlypTransactionStore {
     val phone = scopeKey(context, phoneRaw)
     val db = openReadWriteDb(context) ?: return
     db.use { database ->
+      val motif = existingNote(database, phone, id)
       database.execSQL(
         """
         INSERT OR REPLACE INTO transactions
-          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
-        VALUES (?, ?, 'received', ?, ?, ?, ?, ?, 'PAYMENT')
+          (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind, note)
+        VALUES (?, ?, 'received', ?, ?, ?, ?, ?, 'PAYMENT', ?)
         """.trimIndent(),
         arrayOf(
           phone,
@@ -343,6 +507,7 @@ object BlypTransactionStore {
           counterpartyPhone,
           createdAt,
           reference,
+          motif,
         ),
       )
     }
@@ -368,7 +533,7 @@ object BlypTransactionStore {
       val cursor =
         db.rawQuery(
           """
-          SELECT id, type, amountFcfa, counterpartyName, createdAt, reference, counterpartyPhone, kind
+          SELECT id, type, amountFcfa, counterpartyName, createdAt, reference, counterpartyPhone, kind, note
           FROM transactions
           WHERE phone = ?$typeClause
           ORDER BY createdAt DESC
@@ -389,6 +554,12 @@ object BlypTransactionStore {
           val reference = it.getString(5)?.trim().orEmpty().ifEmpty { null }
           val counterpartyPhone = it.getString(6)?.trim().orEmpty().ifEmpty { null }
           val kind = it.getString(7)?.trim().orEmpty().ifEmpty { null }
+          val note =
+            try {
+              it.getString(8)?.trim()?.ifEmpty { null }
+            } catch (_: Exception) {
+              null
+            }
           out.add(
             ShellHistoryRow(
               id = id,
@@ -401,6 +572,7 @@ object BlypTransactionStore {
               reference = reference,
               counterpartyPhone = counterpartyPhone,
               kind = kind,
+              note = note,
             ),
           )
         }
@@ -466,6 +638,11 @@ object BlypTransactionStore {
     } catch (_: Exception) {
       /* colonne déjà là */
     }
+    try {
+      db.execSQL("ALTER TABLE transactions ADD COLUMN note TEXT")
+    } catch (_: Exception) {
+      /* colonne déjà là */
+    }
     db.execSQL(
       """
       CREATE TABLE IF NOT EXISTS sync_meta (
@@ -511,6 +688,10 @@ object BlypTransactionStore {
     val ref = o.optString("reference", "").trim()
     val kindRaw = o.optString("kind").trim()
     val kind = kindRaw.takeIf { it.isNotEmpty() && !it.equals("null", true) }
+    val noteRaw = o.optString("note").trim()
+    val note =
+      BlypShellPayMotif.sanitize(noteRaw.takeIf { it.isNotEmpty() && !it.equals("null", true) })
+        ?: existingNote(db, phone, id)
     if (type == "received") {
       /** Le serveur confirme un encaissement déjà compté en local (Bluetooth) : on ne double pas. */
       db.execSQL(
@@ -527,10 +708,10 @@ object BlypTransactionStore {
     db.execSQL(
       """
       INSERT OR REPLACE INTO transactions
-        (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (phone, id, type, amountFcfa, counterpartyName, counterpartyPhone, createdAt, reference, kind, note)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       """.trimIndent(),
-      arrayOf(phone, id, type, amount, name, cpPhone, createdAt, ref, kind),
+      arrayOf(phone, id, type, amount, name, cpPhone, createdAt, ref, kind, note),
     )
   }
 

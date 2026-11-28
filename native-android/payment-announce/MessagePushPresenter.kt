@@ -20,7 +20,7 @@ import com.haroldndougou.blyp.shell.BlypShellMessageBanner
  * Notif message reçu — même chemin que le paiement (indépendant d’Expo / MIUI).
  */
 object MessagePushPresenter {
-  const val CHANNEL_ID = "messages"
+  const val CHANNEL_ID = "messages_v2"
 
   fun handle(context: Context, data: Map<String, String>) {
     PaymentAnnounceModule.emitIncomingMessage(data)
@@ -98,6 +98,14 @@ object MessagePushPresenter {
         parseReactionEmoji(rawBody, data),
       ).ifEmpty { fromName }
 
+    val moneyLike =
+      data["messageType"]?.equals("money", ignoreCase = true) == true ||
+        data["type"]?.contains("money", ignoreCase = true) == true
+    if (moneyLike) {
+      com.haroldndougou.blyp.shell.BlypShellIncomingBuzz.money(app)
+    } else {
+      com.haroldndougou.blyp.shell.BlypShellIncomingBuzz.message(app)
+    }
     if (isAppInForeground(app) &&
       BlypShellMessageBanner.show(app, conversationId, fromName, body)
     ) {
@@ -112,6 +120,7 @@ object MessagePushPresenter {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
       )
 
+    val vibe = if (moneyLike) MONEY_VIBE else MESSAGE_VIBE
     val notification =
       NotificationCompat.Builder(app, CHANNEL_ID)
         .setContentTitle(fromName)
@@ -123,7 +132,7 @@ object MessagePushPresenter {
         .setContentIntent(openChat)
         .setCategory(NotificationCompat.CATEGORY_MESSAGE)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setDefaults(NotificationCompat.DEFAULT_VIBRATE)
+        .setVibrate(vibe)
         .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
         .build()
 
@@ -154,6 +163,7 @@ object MessagePushPresenter {
       }.ifEmpty { "Blyp" }
     val body = formatMoneyBody(type, lang)
     val notifId = "$type:$transferId".hashCode()
+    com.haroldndougou.blyp.shell.BlypShellIncomingBuzz.money(app)
 
     val openChat =
       PendingIntent.getActivity(
@@ -174,7 +184,7 @@ object MessagePushPresenter {
         .setContentIntent(openChat)
         .setCategory(NotificationCompat.CATEGORY_MESSAGE)
         .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setDefaults(NotificationCompat.DEFAULT_VIBRATE)
+        .setVibrate(MONEY_VIBE)
         .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
         .build()
 
@@ -193,6 +203,20 @@ object MessagePushPresenter {
   private fun isReactionSync(raw: String): Boolean {
     val t = raw.trim()
     return t.startsWith("\u200B\u200BR") || t.startsWith("BLYP_R")
+  }
+
+  private fun isPlaceSync(raw: String): Boolean {
+    val t = raw.trim()
+    return t.startsWith("BLYP_PU|") || t.startsWith("BLYP_PS|")
+  }
+
+  private fun placePushLabel(raw: String, lang: String): String? {
+    val t = raw.trim()
+    if (!t.startsWith("BLYP_P|")) return null
+    val live = if (lang == "fr") "📍 En direct" else "📍 Live"
+    val fixed = if (lang == "fr") "📍 Je suis là" else "📍 I'm here"
+    return com.haroldndougou.blyp.shell.BlypShellPlaceCodec.previewFromBody(t, live, fixed)
+      ?: fixed
   }
 
   private fun isReactionPayload(data: Map<String, String>, rawBody: String): Boolean {
@@ -224,8 +248,10 @@ object MessagePushPresenter {
     if (isReactionPayload(mapOf("messageType" to messageType), raw) || emoji.isNotEmpty()) {
       val e = emoji.trim()
       if (e.isEmpty()) return ""
-      return if (lang == "fr") "a réagi $e à votre message" else "reacted $e to your message"
+      return if (lang == "fr") "a réagi $e" else "reacted $e"
     }
+    if (isPlaceSync(raw)) return ""
+    placePushLabel(raw, lang)?.let { return it }
     val isVoice =
       messageType.equals("voice", ignoreCase = true) ||
         raw == "VOICE" ||
@@ -246,6 +272,7 @@ object MessagePushPresenter {
   private fun ensureChannel(context: Context) {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val mgr = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+    mgr.deleteNotificationChannel("messages")
     if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
     val sound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
     val channel =
@@ -256,7 +283,7 @@ object MessagePushPresenter {
       ).apply {
         description = "Messages"
         enableVibration(true)
-        vibrationPattern = longArrayOf(0, 80)
+        vibrationPattern = MESSAGE_VIBE
         setSound(
           sound,
           AudioAttributes.Builder()
@@ -269,4 +296,7 @@ object MessagePushPresenter {
       }
     mgr.createNotificationChannel(channel)
   }
+
+  private val MESSAGE_VIBE = longArrayOf(0, 110, 70, 160)
+  private val MONEY_VIBE = longArrayOf(0, 160, 90, 220, 90, 300)
 }

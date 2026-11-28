@@ -15,6 +15,7 @@
     <color name="blyp_shell_tab_bar_border">#EEEEEE</color>
     <color name="blyp_shell_accent">#5DC705</color>
     <color name="blyp_shell_accent_dark">#4BB004</color>
+    <color name="blyp_shell_accent_soft">#1A5DC705</color>
     <color name="blyp_shell_accent_on">#FFFFFF</color>
     <color name="blyp_shell_bubble_mine">@color/blyp_shell_accent</color>
     <color name="blyp_shell_bubble_mine_text">#FFFFFF</color>

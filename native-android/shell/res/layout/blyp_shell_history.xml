@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/blyp_shell_bg">
+    android:background="@color/blyp_shell_bg"
+    tools:ignore="UnusedAttribute">
 
     <LinearLayout
         android:id="@+id/blyp_shell_history_header"
@@ -34,6 +36,66 @@
             android:textStyle="bold" />
 
         <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/blyp_shell_filter_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp">
+
+            <EditText
+                android:id="@+id/blyp_shell_history_search"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="@string/blyp_shell_history_search_hint"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:maxLines="1"
+                android:textColor="@color/blyp_shell_text"
+                android:textColorHint="@color/blyp_shell_hint"
+                android:textSize="14sp" />
+
+            <ImageView
+                android:id="@+id/blyp_shell_history_filter_btn"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:contentDescription="@string/blyp_shell_history_filter_a11y"
+                android:padding="6dp"
+                android:src="@drawable/blyp_shell_ic_filter" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/blyp_shell_history_filter_chip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/blyp_shell_place_chip_on"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:textColor="@color/blyp_shell_accent"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <HorizontalScrollView
+            android:id="@+id/blyp_shell_history_shops_scroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:scrollbars="none"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/blyp_shell_history_shops"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <LinearLayout
             android:id="@+id/blyp_shell_history_summary_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -53,6 +115,7 @@
                 android:paddingVertical="12dp">
 
                 <TextView
+                    android:id="@+id/blyp_shell_summary_sent_label"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/blyp_shell_history_summary_sent"
@@ -92,6 +155,7 @@
                 android:paddingVertical="12dp">
 
                 <TextView
+                    android:id="@+id/blyp_shell_summary_received_label"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/blyp_shell_history_summary_received"

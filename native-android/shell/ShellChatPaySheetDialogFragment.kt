@@ -26,7 +26,7 @@ class ShellChatPaySheetDialogFragment : DialogFragment() {
     val w = dialog?.window ?: return
     w.setLayout(
       WindowManager.LayoutParams.MATCH_PARENT,
-      WindowManager.LayoutParams.WRAP_CONTENT,
+      (resources.displayMetrics.heightPixels * 0.78f).toInt(),
     )
     w.setGravity(Gravity.BOTTOM)
   }

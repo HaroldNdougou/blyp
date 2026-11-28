@@ -5,6 +5,11 @@
             <solid android:color="@color/blyp_shell_press" />
         </shape>
     </item>
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/blyp_shell_surface_muted" />
+        </shape>
+    </item>
     <item>
         <shape android:shape="rectangle">
             <solid android:color="@android:color/transparent" />

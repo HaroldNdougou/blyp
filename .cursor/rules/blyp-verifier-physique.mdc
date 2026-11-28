@@ -1,0 +1,19 @@
+---
+description: Chaque tâche Blyp est exécutée puis vérifiée en entier sur le téléphone, et un défaut trouvé est corrigé tout de suite
+alwaysApply: true
+---
+
+# Blyp — vérifier toute la fonction sur le téléphone
+
+Règle demandée par l’utilisateur. Non négociable.
+
+Après chaque tâche sur Blyp :
+
+1. Faire le travail demandé.
+2. Vérifier **physiquement**, sur le téléphone branché, le **bon fonctionnement de toute la fonctionnalité**, pas seulement le détail demandé.
+3. Si un dysfonctionnement apparaît pendant cette vérification, le **corriger tout de suite**, puis revérifier la fonction entière.
+4. Ne dire que c’est bon qu’après cette vérification réelle. Sans téléphone branché, le dire clairement et ne pas prétendre que c’est testé.
+5. **À chaque tâche confiée**, pendant la vérification, **regarder l’écran**. Si l’interface n’a pas un aspect premium et soigné (alignement, taille, espacement, couleur), **corriger tout de suite**, puis revoir l’écran. Même si la tâche n’est pas visuelle. La barre est celle des apps les plus utilisées : WhatsApp, Telegram, Snapchat, Facebook, Threads, Instagram.
+6. **À chaque tâche**, ne pas se contenter de l’exécuter. Prendre les initiatives utiles, pousser la perfection, faire le tour complet. Si quelque chose est perfectible, dangereux, ou peut gâcher l’usage (sécurité, bugs, vitesse, fluidité, réactivité, ouverture très rapide, écran soigné) ou simplement plus efficace : **le corriger sans casser**, vérifier sur le téléphone et côté serveur si besoin, puis **le dire** à l’utilisateur. **Proposer** aussi, en une ou deux phrases simples, ce qui améliorerait encore le produit et qui attend son accord avant d’être fait.
+
+Exemple : une correction sur le bouton lecture d’un vocal implique d’essayer l’enregistrement, la lecture et l’envoi, pas seulement le bouton qui plantait. Une icône ajoutée doit être alignée et de la même taille que sa voisine.

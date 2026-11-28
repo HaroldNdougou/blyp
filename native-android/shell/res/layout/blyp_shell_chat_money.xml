@@ -101,6 +101,45 @@
         </LinearLayout>
 
         <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/blyp_shell_pay_motif_label"
+            android:textColor="@color/blyp_shell_text_secondary"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/blyp_chat_money_motif"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/blyp_shell_deposit_bg"
+            android:gravity="top|start"
+            android:hint="@string/blyp_shell_pay_motif_hint"
+            android:inputType="textCapSentences|textMultiLine"
+            android:maxLength="150"
+            android:minHeight="72dp"
+            android:minLines="2"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="12dp"
+            android:textColor="@color/blyp_shell_text"
+            android:textColorHint="@color/blyp_shell_muted"
+            android:textSize="15sp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/blyp_chat_money_motif_chips"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+
+        <TextView
             android:id="@+id/blyp_chat_money_send"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

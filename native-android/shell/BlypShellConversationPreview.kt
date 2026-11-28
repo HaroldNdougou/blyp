@@ -92,8 +92,14 @@ object BlypShellConversationPreview {
     }
   }
 
-  fun previewFor(context: Context, row: ShellChatBubble): String =
-    when (row.type) {
+  fun previewFor(context: Context, row: ShellChatBubble): String {
+    placePreview(context, row.body)?.let { return it }
+    reactionPreview(row.body)?.let { return it }
+    if (row.reactions.isNotEmpty()) {
+      val emoji = row.reactions.lastOrNull()?.emoji?.trim().orEmpty()
+      if (emoji.isNotEmpty()) return BlypShellReactionCodec.listPreview(emoji, mine = row.mine)
+    }
+    return when (row.type) {
       "money" ->
         if (row.moneyAmountFcfa > 0) {
           context.getString(R.string.blyp_shell_chat_money_preview, row.moneyAmountFcfa)
@@ -123,6 +129,22 @@ object BlypShellConversationPreview {
           context.getString(R.string.blyp_shell_chat_type_document)
         }
       }
+      "place" -> context.getString(R.string.blyp_shell_chat_place_preview)
       else -> row.body.trim().ifEmpty { context.getString(R.string.blyp_shell_chat_type_other) }
     }
+  }
+
+  private fun placePreview(context: Context, body: String?): String? =
+    BlypShellPlaceCodec.previewFromBody(
+      body,
+      context.getString(R.string.blyp_shell_chat_place_preview_live),
+      context.getString(R.string.blyp_shell_chat_place_preview),
+    )
+
+  private fun reactionPreview(body: String?): String? {
+    val parsed = BlypShellReactionCodec.parse(body) ?: return null
+    val emoji = parsed.second
+    if (emoji.isEmpty()) return ""
+    return BlypShellReactionCodec.listPreview(emoji, mine = false)
+  }
 }

@@ -15,12 +15,13 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.Fragment
 import com.haroldndougou.blyp.R
 import com.haroldndougou.blyp.paymentannounce.AdminAlertPresenter
 
 /** Coque produit native — Pay / Historique / Profil / Messages. */
-class BlypNativeShellActivity : AppCompatActivity() {
+class BlypNativeShellActivity : BlypShellActivity() {
   private var appliedNightMode: Int = Configuration.UI_MODE_NIGHT_UNDEFINED
   private var activeTabId: Int = R.id.blyp_shell_tab_messages
   private val notifPermission =
@@ -63,16 +64,21 @@ class BlypNativeShellActivity : AppCompatActivity() {
     bindTab(R.id.blyp_shell_tab_profile, Tab.PROFILE)
     bindTab(R.id.blyp_shell_tab_messages, Tab.MESSAGES)
 
-    findViewById<View>(R.id.blyp_shell_money_rail)?.setOnClickListener {
-      val stub =
-        View(this).apply {
-          layoutParams = ViewGroup.LayoutParams(1, (24 * resources.displayMetrics.density).toInt())
+    findViewById<View>(R.id.blyp_shell_money_rail)?.setOnClickListener { openMoneyRailPay() }
+    onBackPressedDispatcher.addCallback(
+      this,
+      object : OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+          val host = findViewById<View>(R.id.blyp_shell_pay_host)
+          if (host?.visibility == View.VISIBLE) {
+            hideRailPay()
+          } else {
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+          }
         }
-      BlypShellDialogs.alertBuilder(this)
-        .setView(stub)
-        .setCancelable(true)
-        .show()
-    }
+      },
+    )
 
     if (savedInstanceState == null) {
       selectTab(Tab.MESSAGES)
@@ -94,7 +100,7 @@ class BlypNativeShellActivity : AppCompatActivity() {
           root.post {
             if (isFinishing) return@post
             BlypShellChatHistoryWipe.startOnce(this@BlypNativeShellActivity)
-            BlypShellChatSounds.warm()
+            BlypShellChatSounds.warm(this@BlypNativeShellActivity)
             AdminAlertPresenter.prepare(this@BlypNativeShellActivity)
             BlypShellPush.onShellReady(this@BlypNativeShellActivity, notifPermission)
           }
@@ -152,6 +158,10 @@ class BlypNativeShellActivity : AppCompatActivity() {
   }
 
   override fun onStop() {
+    if (messagesScanOn) {
+      messagesScanOn = false
+      BlypShellNearbyScan.stopForChat()
+    }
     BlypShellProductEngine.onShellStopped(this)
     super.onStop()
   }
@@ -167,6 +177,10 @@ class BlypNativeShellActivity : AppCompatActivity() {
     ensurePayTabMatchesCommerceMode()
     paintPayTabTitle()
     BlypShellClicks.arm(window.decorView)
+    if (activeTabId == R.id.blyp_shell_tab_messages) {
+      messagesScanOn = false
+      syncMessagesNearbyScan(true)
+    }
     BlypShellMoneyRequests.pullAsync(this)
     val prefs = getSharedPreferences("blyp_shell_session", MODE_PRIVATE)
     if (!prefs.getBoolean("tx_keep_claude_v1", false)) {
@@ -240,6 +254,8 @@ class BlypNativeShellActivity : AppCompatActivity() {
       }
     activeTabId = viewId
     highlightTab(viewId)
+    hideRailPay()
+    syncMoneyRail(tab == Tab.MESSAGES)
 
     val fm = supportFragmentManager
     val tx = fm.beginTransaction()
@@ -258,6 +274,92 @@ class BlypNativeShellActivity : AppCompatActivity() {
       }
     }
     tx.commit()
+    syncMessagesNearbyScan(tab == Tab.MESSAGES)
+  }
+
+  /** Le $ n’apparaît que sur la liste des discussions. */
+  private fun syncMoneyRail(onMessages: Boolean) {
+    val rail = findViewById<View>(R.id.blyp_shell_money_rail) ?: return
+    val show = if (onMessages) View.VISIBLE else View.GONE
+    rail.visibility = show
+    val parent = rail.parent as? ViewGroup ?: return
+    val idx = parent.indexOfChild(rail)
+    if (idx > 0) parent.getChildAt(idx - 1)?.visibility = show
+    if (idx >= 0 && idx + 1 < parent.childCount) parent.getChildAt(idx + 1)?.visibility = show
+  }
+
+  private var messagesScanOn = false
+
+  /** Détection du commerce à côté tant que Messages est à l’écran. */
+  private fun syncMessagesNearbyScan(on: Boolean) {
+    if (on == messagesScanOn) return
+    messagesScanOn = on
+    if (on) BlypShellNearbyScan.startForChat(this) else BlypShellNearbyScan.stopForChat()
+  }
+
+  private fun openMoneyRailPay() {
+    val ctx = applicationContext
+    val peer = BlypShellNearbyScan.snapshot()
+    if (peer != null && peer.displayName.isNotBlank() && !isOwnNearby(peer)) {
+      val name = BlypShellPeerNames.cached(ctx, peer.accountId) ?: peer.displayName
+      BlypShellPayRuntime.applyRecipient(
+        ctx,
+        BlypShellPayRuntime.RecipientOption(
+          accountId = peer.accountId,
+          name = name,
+          phoneDigits = peer.phoneDigits,
+          fromBle = true,
+        ),
+      )
+      BlypShellQuickPayPref.mirrorRecipient(ctx, peer.accountId, name, peer.phoneDigits)
+    }
+    if (supportFragmentManager.findFragmentByTag("rail_pay") != null &&
+      findViewById<View>(R.id.blyp_shell_pay_host)?.visibility == View.VISIBLE
+    ) {
+      hideRailPay()
+      return
+    }
+    findViewById<View>(R.id.blyp_shell_pay_host)?.visibility = View.VISIBLE
+    findViewById<View>(R.id.blyp_shell_pay_scrim)?.apply {
+      visibility = View.VISIBLE
+      setOnClickListener { hideRailPay() }
+    }
+    val existing = supportFragmentManager.findFragmentByTag("rail_pay")
+    val tx = supportFragmentManager.beginTransaction()
+    if (existing == null) {
+      tx.add(
+        R.id.blyp_shell_pay_host,
+        PayShellKeypadFragment().apply {
+          arguments = android.os.Bundle().apply { putBoolean(PayShellKeypadFragment.ARG_COMPACT, true) }
+        },
+        "rail_pay",
+      )
+    } else {
+      tx.show(existing)
+    }
+    tx.commit()
+  }
+
+  fun closeRailPay() {
+    hideRailPay()
+  }
+
+  private fun hideRailPay() {
+    val host = findViewById<View>(R.id.blyp_shell_pay_host)
+    val open = host?.visibility == View.VISIBLE
+    host?.visibility = View.GONE
+    findViewById<View>(R.id.blyp_shell_pay_scrim)?.visibility = View.GONE
+    if (open) PayShellState.clearDigits()
+    val existing = supportFragmentManager.findFragmentByTag("rail_pay") ?: return
+    if (existing.isHidden) return
+    supportFragmentManager.beginTransaction().hide(existing).commit()
+  }
+
+  private fun isOwnNearby(peer: BlypShellNearbyScan.Peer): Boolean {
+    val mine = BlypShellSession.accountId(this)?.trim()?.uppercase().orEmpty()
+    if (mine.isNotEmpty() && mine == peer.accountId.uppercase()) return true
+    val phone = BlypShellSession.phone(this)?.replace(Regex("\\D"), "")?.takeLast(9).orEmpty()
+    return phone.length == 9 && phone == peer.phoneDigits
   }
 
   private fun newFragment(tab: Tab): Fragment =
@@ -318,26 +420,39 @@ class BlypNativeShellActivity : AppCompatActivity() {
     tab.setText(
       if (commerce) R.string.blyp_shell_tab_collect else R.string.blyp_shell_tab_pay,
     )
-    val icon =
-      if (commerce) R.drawable.blyp_shell_tab_ic_cash else R.drawable.blyp_shell_tab_ic_pay
-    tab.setCompoundDrawablesWithIntrinsicBounds(0, icon, 0, 0)
-    val selected = activeTabId == R.id.blyp_shell_tab_pay
-    val color =
-      ContextCompat.getColor(
-        this,
-        if (selected) R.color.blyp_shell_accent else R.color.blyp_shell_tab_inactive,
-      )
-    tab.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(color)
+    findViewById<TextView>(R.id.blyp_shell_tab_history)?.setText(
+      if (commerce) R.string.blyp_shell_tab_book else R.string.blyp_shell_tab_history,
+    )
   }
 
   private fun highlightTab(selectedId: Int) {
     paintPayTabTitle()
     val accent = ContextCompat.getColor(this, R.color.blyp_shell_accent)
     val inactive = ContextCompat.getColor(this, R.color.blyp_shell_tab_inactive)
+    val commerce = BlypShellSession.isCommerceMode(this)
     for (id in TAB_IDS) {
       val tab = findViewById<TextView>(id) ?: continue
-      val color = if (id == selectedId) accent else inactive
+      val on = id == selectedId
+      val color = if (on) accent else inactive
       tab.setTextColor(color)
+      val icon =
+        when (id) {
+          R.id.blyp_shell_tab_messages ->
+            if (on) R.drawable.blyp_shell_tab_ic_messages_filled
+            else R.drawable.blyp_shell_tab_ic_messages
+          R.id.blyp_shell_tab_pay ->
+            when {
+              commerce -> R.drawable.blyp_shell_tab_ic_cash
+              on -> R.drawable.blyp_shell_tab_ic_pay
+              else -> R.drawable.blyp_shell_tab_ic_pay_outline
+            }
+          R.id.blyp_shell_tab_history -> R.drawable.blyp_shell_tab_ic_history
+          R.id.blyp_shell_tab_profile ->
+            if (on) R.drawable.blyp_shell_tab_ic_profile
+            else R.drawable.blyp_shell_tab_ic_profile_outline
+          else -> 0
+        }
+      if (icon != 0) tab.setCompoundDrawablesWithIntrinsicBounds(0, icon, 0, 0)
       tab.compoundDrawableTintList = android.content.res.ColorStateList.valueOf(color)
     }
   }

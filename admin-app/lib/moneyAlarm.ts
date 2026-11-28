@@ -1,6 +1,8 @@
 import * as Notifications from "expo-notifications";
 import { Platform, Vibration } from "react-native";
 
+/** Doit matcher AdminNotificationChannels (sonnerie alarme native). */
+const CHANNEL = "blyp_money_alarm_v3";
 const VIBE = [0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600];
 
 export function moneyLine(kind: "deposit" | "withdrawal", amount: number, phone: string) {
@@ -13,10 +15,18 @@ export function moneyLine(kind: "deposit" | "withdrawal", amount: number, phone:
 }
 
 export async function ringMoney(title: string) {
+  try {
+    Vibration.cancel();
+  } catch {
+    /* ignore */
+  }
   Vibration.vibrate(VIBE, false);
+
   if (Platform.OS === "android") {
-    await Notifications.deleteNotificationChannelAsync("blyp_money_alarm").catch(() => {});
-    await Notifications.setNotificationChannelAsync("blyp_money_alarm_v2", {
+    for (const old of ["blyp_money_alarm", "blyp_money_alarm_v2"]) {
+      await Notifications.deleteNotificationChannelAsync(old).catch(() => {});
+    }
+    await Notifications.setNotificationChannelAsync(CHANNEL, {
       name: "Demandes d'argent",
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: VIBE,
@@ -24,18 +34,24 @@ export async function ringMoney(title: string) {
       sound: "default",
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      },
     }).catch(() => {});
   }
+
   await Notifications.scheduleNotificationAsync({
     content: {
       title,
       body: title,
-      sound: "default",
+      sound: true,
       vibrate: VIBE,
       priority: Notifications.AndroidNotificationPriority.MAX,
       sticky: true,
-      data: { channelId: "blyp_money_alarm_v2" },
+      data: { alarm: "1", localRing: "1" },
     },
-    trigger: null,
+    // Immédiat + canal alarme (trigger:null tombe sur le canal silencieux Expo)
+    trigger: Platform.OS === "android" ? { channelId: CHANNEL } : null,
   }).catch(() => {});
 }

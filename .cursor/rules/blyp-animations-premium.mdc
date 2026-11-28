@@ -1,0 +1,26 @@
+---
+description: Animations UI premium obligatoires (motion / bounce / Lottie si besoin)
+alwaysApply: true
+---
+
+# Blyp — animations premium (non négociable)
+
+Chaque tâche UI visible doit viser un rendu **top designer** (iMessage / WhatsApp / TikTok), pas un état « ça marche ».
+
+## Obligatoire
+
+- Feedback **immédiat** au tap (scale / bounce / slide), jamais un changement sec.
+- Entrées / sorties **orchestrées** (stagger, overshoot, spring) quand un panneau, emoji, badge ou menu apparaît.
+- Sons discrets quand ça enrichit le geste (déjà le modèle envoi / réaction).
+- Technologies OK et **souhaitées** si ça sert le rendu : spring Android, `AnimatorSet`, MotionLayout, Lottie, Rive, rotation 3D légère — sans alourdir le cold start Pay.
+
+## Interdit
+
+- Popup / menu « bloc blanc flou » ou texte brut là où des icônes + motion suffisent.
+- Animation « bidon » (simple alpha 0→1) sur un geste signature (réaction, envoi, ouverture).
+- Reporter le polish motion à « plus tard » sur une feature qu’on livre.
+
+## Perf
+
+- Préférer `hardware` layer court, annuler les anims hors écran.
+- Ne jamais bloquer le splash ni le 1er frame Pay pour charger Lottie/Rive — warm après paint.

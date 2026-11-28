@@ -112,29 +112,31 @@ class ShellPayAuthActivity : FragmentActivity() {
       return
     }
     val amount = amountFcfa
-    val input =
-      android.widget.EditText(this).apply {
-        inputType =
-          android.text.InputType.TYPE_CLASS_NUMBER or
-            android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD
-        maxLines = 1
-        filters = arrayOf(android.text.InputFilter.LengthFilter(4))
+    var sent = false
+    lateinit var dialog: android.app.Dialog
+    fun tryPin(pin: String) {
+      if (sent) return
+      if (pin.length != 4 || pin != snap.transactionPin) {
+        sent = true
+        toast(getString(R.string.quick_pay_blyp_pin_wrong))
+        finish()
+        return
       }
-    BlypShellDialogs.alertBuilder(this)
+      sent = true
+      dialog.dismiss()
+      runPay(amount)
+    }
+    val (pinBox, input) = blypMaskedPin(this) { tryPin(it) }
+    dialog = BlypShellDialogs.alertBuilder(this)
       .setTitle(getString(R.string.quick_pay_blyp_pin_title))
-      .setView(input)
+      .setView(pinBox)
       .setCancelable(true)
       .setOnCancelListener { finish() }
       .setPositiveButton(android.R.string.ok) { _, _ ->
-        val pin = input.text.toString().replace(Regex("\\D"), "")
-        if (pin.length != 4 || pin != snap.transactionPin) {
-          toast(getString(R.string.quick_pay_blyp_pin_wrong))
-          finish()
-          return@setPositiveButton
-        }
-        runPay(amount)
+        tryPin(input.text.toString().replace(Regex("\\D"), ""))
       }
-      .show()
+      .create()
+    dialog.show()
   }
 
   private fun runPay(amount: Int) {

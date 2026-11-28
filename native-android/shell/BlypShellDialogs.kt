@@ -217,10 +217,11 @@ object BlypShellDialogs {
     }
 
     private fun button(dialog: Dialog, spec: ButtonSpec, gap: Boolean): TextView {
-      val signOut = spec.text.toString() == context.getString(R.string.blyp_shell_sign_out_confirm)
-      val delete =
-        spec.text.toString() == context.getString(R.string.blyp_shell_status_delete_confirm)
-      val destructive = signOut || delete
+      val label = spec.text.toString()
+      val destructive =
+        label == context.getString(R.string.blyp_shell_sign_out_confirm) ||
+          label == context.getString(R.string.blyp_shell_status_delete_confirm) ||
+          label == context.getString(R.string.blyp_shell_chat_money_reclaim)
       val primary = spec.which == DialogInterface.BUTTON_POSITIVE && !destructive
       return TextView(context).apply {
         text = spec.text
@@ -258,7 +259,16 @@ object BlypShellDialogs {
     }
 
     private fun styleField(view: View) {
-      if (view !is EditText) return
+      if (view is EditText) {
+        styleEdit(view)
+        return
+      }
+      if (view is ViewGroup) {
+        for (i in 0 until view.childCount) styleField(view.getChildAt(i))
+      }
+    }
+
+    private fun styleEdit(view: EditText) {
       view.setTextColor(ContextCompat.getColor(context, R.color.blyp_shell_text))
       view.setHintTextColor(ContextCompat.getColor(context, R.color.blyp_shell_text_faint))
       view.background = GradientDrawable().apply {
@@ -268,8 +278,17 @@ object BlypShellDialogs {
       }
       val pad = context.dp(12)
       view.setPadding(pad, pad, pad, pad)
-      view.gravity = Gravity.CENTER
-      view.textSize = 20f
+      val multi =
+        view.minLines > 1 ||
+          (view.inputType and android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0
+      if (multi) {
+        view.gravity = Gravity.START or Gravity.TOP
+        view.textSize = 16f
+        if (view.minHeight < context.dp(52)) view.minHeight = context.dp(56)
+      } else {
+        view.gravity = Gravity.CENTER
+        view.textSize = 20f
+      }
     }
   }
 

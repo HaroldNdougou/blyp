@@ -1,13 +1,19 @@
 package com.haroldndougou.blyp.shell
 
+import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.text.Editable
+import android.text.InputFilter
+import android.text.InputType
 import android.text.TextWatcher
+import android.text.method.PasswordTransformationMethod
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
@@ -113,4 +119,68 @@ class BlypDigitLines(
       }
     }
   }
+}
+
+/** Champ code : traits et points seulement, jamais les chiffres. [onComplete] part dès le dernier chiffre. */
+fun blypMaskedPin(
+  context: Context,
+  length: Int = 4,
+  onComplete: (String) -> Unit = {},
+): Pair<View, EditText> {
+  val dp = context.resources.displayMetrics.density
+  val frame =
+    FrameLayout(context).apply {
+      layoutParams =
+        LinearLayout.LayoutParams(
+          LinearLayout.LayoutParams.MATCH_PARENT,
+          (64 * dp).toInt(),
+        )
+    }
+  val row =
+    LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER
+      layoutParams =
+        FrameLayout.LayoutParams(
+          FrameLayout.LayoutParams.MATCH_PARENT,
+          FrameLayout.LayoutParams.MATCH_PARENT,
+        )
+    }
+  val input =
+    EditText(context).apply {
+      layoutParams =
+        FrameLayout.LayoutParams(
+          FrameLayout.LayoutParams.MATCH_PARENT,
+          FrameLayout.LayoutParams.MATCH_PARENT,
+        )
+      alpha = 0f
+      setTextColor(Color.TRANSPARENT)
+      setBackgroundColor(Color.TRANSPARENT)
+      isCursorVisible = false
+      isLongClickable = false
+      setTextIsSelectable(false)
+      importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
+      inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+      transformationMethod = PasswordTransformationMethod.getInstance()
+      filters =
+        arrayOf(
+          InputFilter.LengthFilter(length),
+          InputFilter { source, start, end, _, _, _ ->
+            for (i in start until end) {
+              if (!source[i].isDigit()) return@InputFilter ""
+            }
+            null
+          },
+        )
+    }
+  frame.addView(row)
+  frame.addView(input)
+  BlypDigitLines(row, input, length, masked = true) { digits ->
+    if (digits.length != length) return@BlypDigitLines
+    input.post {
+      val now = input.text?.toString()?.filter { it.isDigit() }?.take(length).orEmpty()
+      if (now.length == length) onComplete(now)
+    }
+  }
+  return frame to input
 }

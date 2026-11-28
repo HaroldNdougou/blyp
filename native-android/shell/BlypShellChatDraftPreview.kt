@@ -15,9 +15,7 @@ object BlypShellChatDraftPreview {
           org.json.JSONObject().put("id", id)
         }
     if (line.isNullOrEmpty()) {
-      if (!meta.optBoolean("shellKeepInList")) {
-        meta.remove("draftPreview")
-      }
+      meta.remove("draftPreview")
     } else {
       meta.put("draftPreview", line)
       meta.put("shellKeepInList", true)

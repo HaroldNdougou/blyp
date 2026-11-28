@@ -4,7 +4,6 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.PlaybackParams
-import android.media.audiofx.LoudnessEnhancer
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -23,7 +22,6 @@ object BlypShellChatVoicePlayer {
 
   private val main = Handler(Looper.getMainLooper())
   private var player: MediaPlayer? = null
-  private var loud: LoudnessEnhancer? = null
   @Volatile private var playingMessageId: String? = null
   private var globalRate = 1f
   private val listeners = LinkedHashSet<(String?, Boolean) -> Unit>()
@@ -105,6 +103,12 @@ object BlypShellChatVoicePlayer {
     progress?.invoke(id, pos, dur, false, rateFor(id))
     composerProgress?.invoke(id, pos, dur, false, rateFor(id))
   }
+
+  private fun audioAttrs(): AudioAttributes =
+    AudioAttributes.Builder()
+      .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+      .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+      .build()
 
   fun canResume(messageId: String): Boolean =
     playingMessageId == messageId && player != null && player?.isPlaying != true
@@ -234,27 +238,22 @@ object BlypShellChatVoicePlayer {
   }
 
   private fun playFile(file: File, messageId: String, onError: () -> Unit) {
-    val duck =
-      duckContext ?: chainContext
-    duck?.let { BlypShellChatVoiceDuck.enter(it) }
+    val duck = duckContext ?: chainContext
     try {
+      duck?.let { BlypShellChatVoiceDuck.enter(it) }
       val mp = MediaPlayer()
-      mp.setAudioAttributes(
-        AudioAttributes.Builder()
-          .setUsage(AudioAttributes.USAGE_MEDIA)
-          .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-          .build(),
-      )
+      mp.setAudioAttributes(audioAttrs())
       mp.setDataSource(file.absolutePath)
       mp.setOnCompletionListener {
         val id = playingMessageId
-        releasePlaybackOnly()
+        val more = chain.isNotEmpty() && chainContext != null
+        releasePlaybackOnly(restoreAudio = !more)
         notifyListeners()
         if (id != null) {
           progress?.invoke(id, 0, 0, false, rateFor(id))
           composerProgress?.invoke(id, 0, 0, false, rateFor(id))
         }
-        if (chain.isNotEmpty() && chainContext != null) {
+        if (more) {
           playNextInChain()
         } else {
           clearChain()
@@ -262,14 +261,6 @@ object BlypShellChatVoicePlayer {
       }
       mp.prepare()
       mp.setVolume(1f, 1f)
-      runCatching {
-        loud?.release()
-        loud =
-          LoudnessEnhancer(mp.audioSessionId).apply {
-            setTargetGain(800)
-            enabled = true
-          }
-      }
       val speed = rateFor(messageId)
       mp.start()
       if (speed != 1f) applyRate(mp, speed)
@@ -315,14 +306,11 @@ object BlypShellChatVoicePlayer {
     }
   }
 
-  private fun releasePlaybackOnly() {
-    (duckContext ?: chainContext)?.let { BlypShellChatVoiceDuck.leave(it) }
-    main.removeCallbacks(ticker)
-    try {
-      loud?.release()
-    } catch (_: Exception) {
+  private fun releasePlaybackOnly(restoreAudio: Boolean = true) {
+    if (restoreAudio) {
+      (duckContext ?: chainContext)?.let { BlypShellChatVoiceDuck.leave(it) }
     }
-    loud = null
+    main.removeCallbacks(ticker)
     try {
       player?.stop()
     } catch (_: Exception) {

@@ -3,6 +3,7 @@ package com.haroldndougou.blyp.shell
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import com.haroldndougou.blyp.R
 import com.haroldndougou.blyp.paymentannounce.PaymentAnnouncePrefs
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArraySet
@@ -65,11 +66,28 @@ object BlypShellChatRealtime {
       val at = msg.optString("createdAt").trim().ifEmpty { java.time.Instant.now().toString() }
       val typeName = msg.optString("type").trim().ifEmpty { data.optString("messageType").trim() }
       val body = msg.optString("body").trim().ifEmpty { data.optString("body").trim() }
+      val reaction = BlypShellReactionCodec.parse(body)
       val preview =
-        when (typeName) {
-          "image" -> if (body.isEmpty() || body == "IMAGE") "📷" else body
-          "voice" -> if (body.isEmpty() || body == "VOICE") "🎤" else body
-          else -> body
+        when {
+          reaction != null -> {
+            val emoji = reaction.second
+            if (emoji.isEmpty()) ""
+            else {
+              val name = data.optString("fromName").trim().substringBefore(' ')
+              BlypShellReactionCodec.listPreview(emoji, mine = false, reactorFirstName = name)
+            }
+          }
+          else ->
+            BlypShellPlaceCodec.previewFromBody(
+              body,
+              context.getString(R.string.blyp_shell_chat_place_preview_live),
+              context.getString(R.string.blyp_shell_chat_place_preview),
+            )
+              ?: when (typeName) {
+                "image" -> if (body.isEmpty() || body == "IMAGE") "📷" else body
+                "voice" -> if (body.isEmpty() || body == "VOICE") "🎤" else body
+                else -> body
+              }
         }
       BlypShellConversationsStore.touchIncoming(
         context,
@@ -100,7 +118,8 @@ object BlypShellChatRealtime {
         runCatching { fn() }
       }
     }
-    return first && !viewing && !own
+    val reactionSync = msg?.optString("body")?.let { BlypShellReactionCodec.isSyncBody(it) } == true
+    return first && !viewing && !own && !reactionSync
   }
 
   private fun markOnce(messageId: String): Boolean {

@@ -40,7 +40,10 @@ object BlypShellPeerNames {
     val id = accountId.trim().uppercase()
     if (!id.startsWith("BLYP-")) return
     val app = context.applicationContext
-    cached(app, id)?.let { return }
+    cached(app, id)?.let {
+      main.post { onName(it) }
+      return
+    }
     val shouldFetch =
       synchronized(gate) {
         waiters.getOrPut(id) { mutableListOf() }.add(onName)

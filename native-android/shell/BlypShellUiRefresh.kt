@@ -40,4 +40,21 @@ object BlypShellUiRefresh {
   }
 
   fun notifyMessagesBadgeChanged() = notifyShellBadgesChanged()
+
+  private val chatListeners = CopyOnWriteArraySet<(String) -> Unit>()
+
+  fun subscribeChat(listener: (conversationId: String) -> Unit): () -> Unit {
+    chatListeners.add(listener)
+    return { chatListeners.remove(listener) }
+  }
+
+  fun notifyChatChanged(conversationId: String) {
+    val id = conversationId.trim()
+    if (id.isEmpty()) return
+    main.post {
+      for (fn in chatListeners) {
+        runCatching { fn(id) }
+      }
+    }
+  }
 }

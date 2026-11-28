@@ -24,19 +24,23 @@ object BlypShellChatSounds {
   private var pendingReceive = false
   private var sendApp: Context? = null
 
-  fun warm() {
+  fun warm(context: Context? = null) {
+    if (context != null) sendApp = context.applicationContext
     if (started) return
+    val app = sendApp
     synchronized(gate) {
       if (started) return
       started = true
     }
     Thread {
-      val clip = pad(whoosh())
+      val clip = pad(app?.let { loadWhoosh(it) } ?: whoosh())
       val claimClip = pad(cheer())
       val receivePcm = pad(notes())
+      val reactClip = reactBlip()
       main.post {
         sendPcm = clip
         claimPcm = claimClip
+        reactPcm = reactClip
         receiveTrack = track(receivePcm)
         if (pendingSend) {
           pendingSend = false
@@ -50,13 +54,17 @@ object BlypShellChatSounds {
           pendingReceive = false
           replay(receiveTrack)
         }
+        if (pendingReact) {
+          pendingReact = false
+          sendApp?.let { playReactNow(it) }
+        }
       }
     }.start()
   }
 
   fun playSend(context: Context) {
     sendApp = context.applicationContext
-    warm()
+    warm(context)
     val run = Runnable { playSendNow(sendApp ?: return@Runnable) }
     if (Looper.myLooper() == Looper.getMainLooper()) run.run() else main.post(run)
   }
@@ -72,6 +80,7 @@ object BlypShellChatSounds {
     val played =
       runCatching {
         if (audio.playState == AudioTrack.PLAYSTATE_PLAYING) audio.pause()
+        audio.setVolume(1f)
         audio.setPlaybackHeadPosition(0)
         audio.play()
       }.isSuccess
@@ -80,6 +89,7 @@ object BlypShellChatSounds {
     sendTrack = null
     val fresh = sendClip(pcm, sendUsage(context)) ?: return
     sendTrack = fresh
+    fresh.setVolume(1f)
     runCatching { fresh.play() }
   }
 
@@ -160,6 +170,61 @@ object BlypShellChatSounds {
     }
   }
 
+  @Volatile private var reactPcm: ShortArray? = null
+  @Volatile private var reactTrack: AudioTrack? = null
+  private var pendingReact = false
+
+  fun playReact(context: Context) {
+    sendApp = context.applicationContext
+    warm(context)
+    val run = Runnable { playReactNow(sendApp ?: return@Runnable) }
+    if (Looper.myLooper() == Looper.getMainLooper()) run.run() else main.post(run)
+  }
+
+  private fun playReactNow(context: Context) {
+    if (ringerSilent(context)) return
+    val pcm = reactPcm
+    if (pcm == null) {
+      pendingReact = true
+      return
+    }
+    val audio = reactTrack ?: sendClip(pcm, sendUsage(context))?.also { reactTrack = it } ?: return
+    val played =
+      runCatching {
+        if (audio.playState == AudioTrack.PLAYSTATE_PLAYING) audio.pause()
+        audio.setVolume(0.55f)
+        audio.setPlaybackHeadPosition(0)
+        audio.play()
+      }.isSuccess
+    if (played) return
+    runCatching { audio.release() }
+    reactTrack = null
+    val fresh = sendClip(pcm, sendUsage(context)) ?: return
+    reactTrack = fresh
+    fresh.setVolume(0.55f)
+    runCatching { fresh.play() }
+  }
+
+  /** Soft water-drop plink. */
+  private fun reactBlip(): ShortArray {
+    val n = (RATE * 0.16f).toInt()
+    val out = ShortArray(n)
+    val attack = 28
+    for (i in 0 until n) {
+      val t = i / RATE.toDouble()
+      val env =
+        if (i < attack) i / attack.toDouble()
+        else Math.exp(-(i - attack) / (n * 0.18))
+      val drip = Math.exp(-t * 38.0)
+      val wave =
+        0.62 * Math.sin(2.0 * Math.PI * (920.0 - 260.0 * t) * t) * drip +
+          0.28 * Math.sin(2.0 * Math.PI * 1480.0 * t) * Math.exp(-t * 55.0) +
+          0.12 * Math.sin(2.0 * Math.PI * 2100.0 * t) * Math.exp(-t * 70.0)
+      out[i] = (wave * env * 0.28 * 32767.0).toInt().coerceIn(-32767, 32767).toShort()
+    }
+    return pad(out)
+  }
+
   private fun replay(track: AudioTrack?) {
     val ready = track ?: return
     runCatching {
@@ -215,21 +280,52 @@ object BlypShellChatSounds {
       audio
     }.getOrNull()
 
+  private fun loadWhoosh(context: Context): ShortArray? =
+    runCatching {
+      context.resources.openRawResource(com.haroldndougou.blyp.R.raw.blyp_shell_send_whoosh).use { input ->
+        val bytes = input.readBytes()
+        var i = 12
+        var dataAt = -1
+        var dataLen = 0
+        while (i + 8 <= bytes.size) {
+          val id = String(bytes, i, 4, Charsets.US_ASCII)
+          val len =
+            java.nio.ByteBuffer.wrap(bytes, i + 4, 4)
+              .order(java.nio.ByteOrder.LITTLE_ENDIAN)
+              .int
+          if (id == "data") {
+            dataAt = i + 8
+            dataLen = len
+            break
+          }
+          i += 8 + len + (len and 1)
+        }
+        if (dataAt < 0 || dataLen < 2) return@use null
+        val n = dataLen / 2
+        val out = ShortArray(n)
+        val buf =
+          java.nio.ByteBuffer.wrap(bytes, dataAt, n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        for (k in 0 until n) out[k] = buf.short
+        out
+      }
+    }.getOrNull()
+
   private fun whoosh(): ShortArray {
-    val n = (RATE * 0.18f).toInt()
+    val n = (RATE * 0.34f).toInt()
     val out = ShortArray(n)
     var noise = 0x2741C3
     var low = 0.0
+    var band = 0.0
     for (i in 0 until n) {
-      val t = i / n.toFloat()
-      val env = Math.sin(Math.PI * t)
-      val cutoff = 0.12 + t * 0.7
+      val t = i / n.toDouble()
+      val env = Math.sin(Math.PI * Math.pow(t, 0.9)) * Math.pow(1.0 - t, 0.45)
+      val cutoff = 0.22 + 0.5 * t
       noise = noise * 1103515245 + 12345
       val white = ((noise ushr 16) and 0xFFFF) / 32768.0 - 1.0
-      low += cutoff * (white - low)
-      val sweep = Math.sin(2.0 * Math.PI * (480.0 + 2200.0 * t) * i / RATE)
-      out[i] =
-        ((low * 1.15 + sweep * 0.95) * env * 32767.0).toInt().coerceIn(-32767, 32767).toShort()
+      low += 0.06 * (white - low)
+      val air = white - low
+      band += cutoff * (air - band)
+      out[i] = (band * env * 11000.0).toInt().coerceIn(-32767, 32767).toShort()
     }
     return out
   }

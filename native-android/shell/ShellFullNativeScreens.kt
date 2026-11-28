@@ -28,7 +28,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.haroldndougou.blyp.R
 import java.io.File
 
-class ShellProfileSettingsActivity : AppCompatActivity() {
+class ShellProfileSettingsActivity : BlypShellActivity() {
   private var picking = false
   private var photoBusy = false
   private var photoDirty = false
@@ -59,6 +59,7 @@ class ShellProfileSettingsActivity : AppCompatActivity() {
     applyBars()
     clipCircle(findViewById(R.id.blyp_settings_avatar_frame))
     bindProfile()
+    bindThemes()
     findViewById<View>(R.id.blyp_settings_back).setOnClickListener { leave() }
     findViewById<TextView>(R.id.blyp_settings_change_photo).setOnClickListener { startPhotoPick() }
     findViewById<TextView>(R.id.blyp_settings_save).setOnClickListener { saveName() }
@@ -83,6 +84,59 @@ class ShellProfileSettingsActivity : AppCompatActivity() {
     val url = p.avatarUrl
     if (!url.isNullOrBlank()) {
       BlypShellAvatarLoader.loadInto(url, img, initial, initial.text.toString())
+    }
+  }
+
+  private fun bindThemes() {
+    val row = findViewById<android.widget.LinearLayout>(R.id.blyp_settings_theme_row) ?: return
+    row.removeAllViews()
+    val d = resources.displayMetrics.density
+    val selected = BlypShellAccent.current(this)
+    val en = resources.configuration.locales[0].language != "fr"
+    for (skin in BlypShellAccent.all()) {
+      val wrap =
+        android.widget.FrameLayout(this).apply {
+          layoutParams =
+            android.widget.LinearLayout.LayoutParams(
+              (48 * d).toInt(),
+              (48 * d).toInt(),
+            ).also { it.marginEnd = (10 * d).toInt() }
+          isClickable = true
+          isFocusable = true
+          contentDescription = if (en) skin.labelEn else skin.labelFr
+        }
+      if (skin == selected) {
+        val ring =
+          View(this).apply {
+            layoutParams =
+              android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+              )
+            setBackgroundResource(R.drawable.blyp_shell_theme_swatch_ring)
+          }
+        wrap.addView(ring)
+      }
+      val dot =
+        View(this).apply {
+          val size = (36 * d).toInt()
+          layoutParams =
+            android.widget.FrameLayout.LayoutParams(size, size).apply {
+              gravity = android.view.Gravity.CENTER
+            }
+          val bg =
+            ContextCompat.getDrawable(this@ShellProfileSettingsActivity, R.drawable.blyp_shell_theme_swatch)
+              ?.mutate()
+          bg?.setTint(skin.accent)
+          background = bg
+        }
+      wrap.addView(dot)
+      wrap.setOnClickListener {
+        if (skin == BlypShellAccent.current(this)) return@setOnClickListener
+        it.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+        BlypShellAccent.set(this, skin)
+      }
+      row.addView(wrap)
     }
   }
 

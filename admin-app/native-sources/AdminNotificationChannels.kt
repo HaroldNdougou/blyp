@@ -10,7 +10,7 @@ import android.os.Build
 
 /** Copier dans android/.../blypadmin après prebuild. */
 object AdminNotificationChannels {
-  private const val MONEY_ID = "blyp_money_alarm_v2"
+  private const val MONEY_ID = "blyp_money_alarm_v3"
   private const val ADMIN_ID = "admin_alerts"
   private val MONEY_VIBE =
     longArrayOf(0, 900, 200, 900, 200, 900, 200, 900, 200, 1200, 300, 1200, 300, 1600)

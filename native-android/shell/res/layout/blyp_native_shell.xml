@@ -7,10 +7,28 @@
     android:background="@color/blyp_shell_bg">
 
     <FrameLayout
-        android:id="@+id/blyp_shell_content"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_weight="1" />
+        android:layout_weight="1">
+
+        <FrameLayout
+            android:id="@+id/blyp_shell_content"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <View
+            android:id="@+id/blyp_shell_pay_scrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:id="@+id/blyp_shell_pay_host"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:visibility="gone" />
+    </FrameLayout>
 
     <View
         android:layout_width="match_parent"

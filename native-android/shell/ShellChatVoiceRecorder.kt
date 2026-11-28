@@ -91,54 +91,32 @@ object ShellChatVoiceRecorder {
 
   private fun beginPiece(context: Context): Boolean {
     val file = File(context.cacheDir, "chat-voice-${System.currentTimeMillis()}.m4a")
+    val r =
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        MediaRecorder(context)
+      } else {
+        @Suppress("DEPRECATION")
+        MediaRecorder()
+      }
     return try {
-      val r =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-          MediaRecorder(context)
-        } else {
-          @Suppress("DEPRECATION")
-          MediaRecorder()
-        }
-      val sources =
-        intArrayOf(
-          MediaRecorder.AudioSource.VOICE_COMMUNICATION,
-          MediaRecorder.AudioSource.VOICE_RECOGNITION,
-          MediaRecorder.AudioSource.MIC,
-        )
-      var started = false
-      for (source in sources) {
-        try {
-          r.setAudioSource(source)
-          r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-          r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-          r.setAudioChannels(1)
-          r.setAudioEncodingBitRate(48_000)
-          r.setAudioSamplingRate(16_000)
-          r.setOutputFile(file.absolutePath)
-          r.prepare()
-          r.start()
-          started = true
-          break
-        } catch (_: Exception) {
-          try {
-            r.reset()
-          } catch (_: Exception) {
-          }
-        }
-      }
-      if (!started) {
-        try {
-          r.release()
-        } catch (_: Exception) {
-        }
-        file.delete()
-        return false
-      }
+      r.setAudioSource(MediaRecorder.AudioSource.MIC)
+      r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+      r.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+      r.setAudioChannels(1)
+      r.setAudioEncodingBitRate(32_000)
+      r.setAudioSamplingRate(22_050)
+      r.setOutputFile(file.absolutePath)
+      r.prepare()
+      r.start()
       recorder = r
       piece = file
       pieceStartedAt = System.currentTimeMillis()
       true
     } catch (_: Exception) {
+      try {
+        r.release()
+      } catch (_: Exception) {
+      }
       file.delete()
       false
     }

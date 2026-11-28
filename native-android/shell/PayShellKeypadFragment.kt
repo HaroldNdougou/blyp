@@ -110,6 +110,7 @@ class PayShellKeypadFragment : Fragment() {
       BlypShellPayRuntime.clearExpiredQrRecipient(c)
     }
     root.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.blyp_shell_bg))
+    if (arguments?.getBoolean(ARG_COMPACT) == true) applyCompact(root)
     amountView = root.findViewById(R.id.blyp_cold_amount)
     balanceView = root.findViewById(R.id.blyp_cold_balance)
     recipientNameView = root.findViewById(R.id.blyp_cold_recipient_name)
@@ -165,6 +166,80 @@ class PayShellKeypadFragment : Fragment() {
     return root
   }
 
+  /** Clavier court au-dessus du $ : mêmes touches, beaucoup moins haut. */
+  private fun applyCompact(root: View) {
+    root.layoutParams =
+      android.widget.FrameLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        ViewGroup.LayoutParams.WRAP_CONTENT,
+      )
+    val density = resources.displayMetrics.density
+    val key = (44 * density).toInt()
+    ((root as? ViewGroup)?.getChildAt(0) as? android.widget.LinearLayout)?.let { column ->
+      val pad = (2 * density).toInt()
+      column.setPadding(pad, pad, pad, pad)
+      for (i in 0 until column.childCount) {
+        val child = column.getChildAt(i)
+        val lp = child.layoutParams
+        if (lp is android.widget.LinearLayout.LayoutParams && lp.weight > 0f) {
+          child.visibility = View.GONE
+        }
+      }
+    }
+    root.findViewById<View>(R.id.blyp_pay_qr)?.visibility = View.GONE
+    root.findViewById<View>(R.id.blyp_pay_receive)?.visibility = View.GONE
+    root.findViewById<View>(R.id.blyp_pay_quick_row)?.visibility = View.GONE
+    root.findViewById<View>(R.id.blyp_cold_recipient_thumb)?.let { thumb ->
+      val s = (32 * density).toInt()
+      thumb.layoutParams.width = s
+      thumb.layoutParams.height = s
+    }
+    root.findViewById<TextView>(R.id.blyp_cold_amount)?.let { amount ->
+      amount.textSize = 30f
+      amount.setTypeface(android.graphics.Typeface.DEFAULT_BOLD)
+      (amount.parent as? View)?.setPadding(0, 0, 0, 0)
+    }
+    (root.findViewById<View>(R.id.blyp_cold_recipient_row)?.parent as? View)?.let { row ->
+      (row.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.bottomMargin = 0
+    }
+    val keyIds =
+      intArrayOf(
+        R.id.blyp_key_0,
+        R.id.blyp_key_1,
+        R.id.blyp_key_2,
+        R.id.blyp_key_3,
+        R.id.blyp_key_4,
+        R.id.blyp_key_5,
+        R.id.blyp_key_6,
+        R.id.blyp_key_7,
+        R.id.blyp_key_8,
+        R.id.blyp_key_9,
+        R.id.blyp_key_back,
+        R.id.blyp_key_pay,
+      )
+    root.findViewById<View>(R.id.blyp_cold_keypad)?.let { pad ->
+      if (pad is android.view.ViewGroup) {
+        val gap = (2 * density).toInt()
+        for (i in 0 until pad.childCount) {
+          (pad.getChildAt(i).layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.bottomMargin = gap
+        }
+      }
+    }
+    for (id in keyIds) {
+      root.findViewById<TextView>(id)?.let { keyView ->
+        keyView.layoutParams.width = key
+        keyView.layoutParams.height = key
+        keyView.textSize = 20f
+        (keyView.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { lp ->
+          val m = (4 * density).toInt()
+          lp.marginStart = m
+          lp.marginEnd = m
+          lp.bottomMargin = (1 * density).toInt()
+        }
+      }
+    }
+  }
+
   override fun onStart() {
     super.onStart()
     unsubRefresh =
@@ -211,6 +286,7 @@ class PayShellKeypadFragment : Fragment() {
       stopBackspaceRepeat()
     } else if (isResumed || isVisible) {
       startNearbyScan()
+      refreshAmount()
     }
   }
 
@@ -637,6 +713,7 @@ class PayShellKeypadFragment : Fragment() {
   private fun maybeShowPaySuccessBanner() {
     val amount = BlypShellPayFeedback.consumeSuccessAmountFcfa()
     if (amount <= 0) return
+    val askMotif = BlypShellPayFeedback.consumeAskMotif()
     /** Vidé seulement une fois l’empreinte / le code validés ; annulation = montant conservé. */
     PayShellState.clearDigits()
     view?.let { PayOverlayUi.clearQuickSelection(it) }
@@ -650,6 +727,15 @@ class PayShellKeypadFragment : Fragment() {
     val chatSheet = parentFragment as? ShellChatPaySheetDialogFragment
     if (chatSheet != null) {
       chatSheet.collapseAfterPaySuccess()
+      if (askMotif) promptPayMotif(amount)
+      return
+    }
+    if (arguments?.getBoolean(ARG_COMPACT) == true) {
+      mainHandler.postDelayed(
+        { (activity as? BlypNativeShellActivity)?.closeRailPay() },
+        450L,
+      )
+      if (askMotif) promptPayMotif(amount)
       return
     }
     val hide =
@@ -658,6 +744,58 @@ class PayShellKeypadFragment : Fragment() {
       }
     successHideRunnable = hide
     mainHandler.postDelayed(hide, 3_500L)
+    if (askMotif) promptPayMotif(amount)
+  }
+
+  private fun promptPayMotif(amountFcfa: Int) {
+    val act = activity ?: return
+    if (!isAdded || act.isFinishing) return
+    val density = resources.displayMetrics.density
+    val field =
+      android.widget.EditText(act).apply {
+        hint = getString(R.string.blyp_shell_pay_motif_hint)
+        setHintTextColor(ContextCompat.getColor(act, R.color.blyp_shell_muted))
+        setTextColor(ContextCompat.getColor(act, R.color.blyp_shell_text))
+        setBackgroundResource(R.drawable.blyp_shell_deposit_bg)
+        setPadding(
+          (16 * density).toInt(),
+          (12 * density).toInt(),
+          (16 * density).toInt(),
+          (12 * density).toInt(),
+        )
+        inputType =
+          android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        minLines = 2
+        BlypShellPayMotif.bind(this)
+      }
+    val pad = (4 * density).toInt()
+    val box =
+      android.widget.FrameLayout(act).apply {
+        setPadding(pad * 5, pad, pad * 5, 0)
+        addView(
+          field,
+          android.widget.FrameLayout.LayoutParams(
+            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+          ),
+        )
+      }
+    BlypShellDialogs.alertBuilder(act)
+      .setTitle(R.string.blyp_shell_pay_motif_title)
+      .setView(box)
+      .setPositiveButton(R.string.blyp_shell_pay_motif_save) { _, _ ->
+        val motif = BlypShellPayMotif.sanitize(field.text) ?: return@setPositiveButton
+        BlypShellPayFeedback.setPendingMotif(motif)
+        val phone = BlypShellSession.phone(act)?.trim().orEmpty()
+        if (phone.isNotEmpty()) {
+          BlypTransactionStore.updateLatestSentNote(act, phone, amountFcfa, motif)
+          BlypShellUiRefresh.notifyWalletChanged()
+        }
+      }
+      .setNegativeButton(R.string.blyp_shell_pay_motif_skip, null)
+      .show()
   }
 
   private fun onReceiveNearbyTap() {
@@ -1064,7 +1202,8 @@ class PayShellKeypadFragment : Fragment() {
     BlypShellPayDossierRam.scheduleWarm(ctx, amount)
   }
 
-  private companion object {
+  companion object {
+    const val ARG_COMPACT = "compact"
     const val SEARCH_PULSE_MS = 1_400L
     /** Signal BLE « collé » au téléphone : seul cas où il remplace un QR scanné. */
     const val QR_OVERRIDE_RSSI = -60

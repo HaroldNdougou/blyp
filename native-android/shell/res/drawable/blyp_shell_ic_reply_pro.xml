@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp"
+    android:height="22dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Réponse style WhatsApp : flèche courbe pleine, nette -->
+    <path
+        android:fillColor="#FF4A4A4A"
+        android:pathData="M10,8.5V5.2c0,-0.55 -0.6,-0.88 -1.05,-0.55L2.7,10.3c-0.35,0.26 -0.35,0.8 0,1.06l6.25,5.65c0.45,0.33 1.05,0 1.05,-0.55v-3.05c3.85,0.15 6.55,1.35 8.15,3.7 0.2,0.3 0.65,0.12 0.58,-0.22C17.85,12.4 14.7,8.7 10,8.5z" />
+</vector>

@@ -108,6 +108,17 @@ class ShellHistoryDetailDialog : DialogFragment() {
     }
     root.findViewById<TextView>(R.id.blyp_detail_date).text =
       formatDetailDateTime(row.createdAt, locale)
+    val motifRow = root.findViewById<View>(R.id.blyp_detail_motif_row)
+    val motifDivider = root.findViewById<View>(R.id.blyp_detail_motif_divider)
+    val motifText = row.note?.trim().orEmpty()
+    if (motifText.isEmpty()) {
+      motifRow.visibility = View.GONE
+      motifDivider.visibility = View.GONE
+    } else {
+      motifRow.visibility = View.VISIBLE
+      motifDivider.visibility = View.VISIBLE
+      root.findViewById<TextView>(R.id.blyp_detail_motif).text = motifText
+    }
     val profile = BlypShellSession.profile(requireContext())
     val balanceView = root.findViewById<TextView>(R.id.blyp_detail_balance)
     if (profile != null && profile.balanceFcfa >= 0) {

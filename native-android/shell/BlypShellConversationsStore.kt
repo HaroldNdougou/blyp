@@ -19,6 +19,7 @@ data class ShellConversationRow(
 
 object BlypShellConversationsStore {
   private const val DEMO_PREFIX = "demo-conv-"
+  private const val HIDE_PREFS = "blyp_shell_hidden_chats"
 
   fun isDemoId(id: String): Boolean = id.startsWith(DEMO_PREFIX)
 
@@ -55,7 +56,7 @@ object BlypShellConversationsStore {
         while (it.moveToNext()) {
           val json = it.getString(0)?.trim().orEmpty()
           if (json.isEmpty()) continue
-          rowFromJson(context, json)?.let { parsed.add(it) }
+          rowFromJson(context, phone, json)?.let { parsed.add(it) }
         }
       }
       sortLikeRn(parsed)
@@ -94,6 +95,7 @@ object BlypShellConversationsStore {
   ) {
     val id = conversationId.trim()
     if (id.isEmpty()) return
+    clearHidden(context, id)
     val meta =
       BlypShellChatMessagesStore.conversationMeta(context, ownerPhone, id)
         ?: JSONObject().put("id", id)
@@ -148,6 +150,7 @@ object BlypShellConversationsStore {
     val owner = ownerPhone.trim()
     val id = conversationId.trim()
     if (owner.isEmpty() || id.isEmpty()) return
+    clearHidden(context, id)
     val now = java.time.Instant.now().toString()
     val meta =
       BlypShellChatMessagesStore.conversationMeta(context, owner, id)
@@ -160,6 +163,54 @@ object BlypShellConversationsStore {
     if (meta.optString("lastMessageAt").trim().isEmpty()) meta.put("lastMessageAt", now)
     upsertOne(context, owner, meta)
   }
+
+  fun hideFromList(context: Context, phoneRaw: String, conversationId: String) {
+    val phone = phoneRaw.trim()
+    val id = conversationId.trim()
+    if (phone.isEmpty() || id.isEmpty()) return
+    val prefs = context.applicationContext.getSharedPreferences(HIDE_PREFS, Context.MODE_PRIVATE)
+    prefs.edit().putString(hideKey(phone, id), java.time.Instant.now().toString()).apply()
+    val db = BlypShellKvCache.openDb(context, writable = true) ?: return
+    try {
+      db.execSQL(
+        "DELETE FROM conversations WHERE phone = ? AND id = ?",
+        arrayOf(phone, id),
+      )
+      db.execSQL(
+        "DELETE FROM chat_messages WHERE phone = ? AND conversationId = ?",
+        arrayOf(phone, id),
+      )
+    } catch (_: Exception) {
+    } finally {
+      db.close()
+    }
+  }
+
+  private fun clearHidden(context: Context, conversationId: String) {
+    val id = conversationId.trim()
+    if (id.isEmpty()) return
+    val prefs = context.applicationContext.getSharedPreferences(HIDE_PREFS, Context.MODE_PRIVATE)
+    val edit = prefs.edit()
+    for (key in prefs.all.keys) {
+      if (key.endsWith("#$id")) edit.remove(key)
+    }
+    edit.apply()
+  }
+
+  private fun isHidden(context: Context, phone: String, id: String, lastAt: String): Boolean {
+    if (id.isEmpty()) return false
+    val stamp =
+      context.applicationContext
+        .getSharedPreferences(HIDE_PREFS, Context.MODE_PRIVATE)
+        .getString(hideKey(phone, id), null)
+        ?.trim()
+        .orEmpty()
+    if (stamp.isEmpty()) return false
+    if (lastAt.isEmpty()) return true
+    return lastAt <= stamp
+  }
+
+  private fun hideKey(phone: String, id: String): String = "$phone#$id"
 
   fun upsertOne(context: Context, ownerPhone: String, conv: JSONObject): Boolean {
     val phone = ownerPhone.trim()
@@ -198,7 +249,7 @@ object BlypShellConversationsStore {
       val id = o.optString("id").trim()
       if (id.isEmpty()) continue
       BlypShellConversationPreview.applyLocalThreadPreview(context, phone, o, myId)
-      if (!keepConversation(context, o)) continue
+      if (!keepConversation(context, phone, o)) continue
       val updatedAt =
         o.optString("updatedAt").trim().ifEmpty {
           o.optString("lastMessageAt").trim()
@@ -276,14 +327,15 @@ object BlypShellConversationsStore {
     }
   }
 
-  private fun keepConversation(context: Context, o: JSONObject): Boolean {
-    if (unnamedPeer(o.optString("peerName"))) return false
+  private fun keepConversation(context: Context, phone: String, o: JSONObject): Boolean {
     val id = o.optString("id").trim()
+    val lastAt = o.optString("lastMessageAt").trim()
+    if (isHidden(context, phone, id, lastAt)) return false
+    if (unnamedPeer(o.optString("peerName"))) return false
     if (o.optBoolean("shellKeepInList")) return true
     if (id.isNotEmpty() && BlypShellChatDraft.hasAny(context, id)) return true
     val draftPreview = o.optString("draftPreview").trim()
     if (draftPreview.isNotEmpty()) return true
-    val lastAt = o.optString("lastMessageAt").trim()
     val cut = BlypShellChatHistoryWipe.cutoff(context)
     val preview =
       if (cut != null && (lastAt.isEmpty() || lastAt <= cut)) {
@@ -308,13 +360,13 @@ object BlypShellConversationsStore {
     return real.sortedWith(byActivity) + demo.sortedWith(byActivity)
   }
 
-  private fun rowFromJson(context: Context, json: String): ShellConversationRow? {
+  private fun rowFromJson(context: Context, phone: String, json: String): ShellConversationRow? {
     return try {
       val o = JSONObject(json)
       val id = o.optString("id").trim()
       if (id.isEmpty()) return null
       val storedName = o.optString("peerName").trim().ifEmpty { "?" }
-      if (!keepConversation(context, o)) return null
+      if (!keepConversation(context, phone, o)) return null
       val peerPhone = o.optString("peerPhone").trim().ifEmpty { null }
       val peerName = BlypShellPhoneContacts.labelFor(context, peerPhone, storedName)
       val avatarStored = o.optString("peerAvatarUrl").trim().ifEmpty { null }
@@ -322,7 +374,13 @@ object BlypShellConversationsStore {
         avatarStored ?: BlypShellPeerAvatar.urlForPhone(context, peerPhone)
       val lastAt = o.optString("lastMessageAt").trim()
       val cut = BlypShellChatHistoryWipe.cutoff(context)
-      val draftLine = o.optString("draftPreview").trim()
+      val draftLine =
+        if (BlypShellChatDraft.hasAny(context, id)) {
+          BlypShellChatDraft.listPreviewLine(context, id).orEmpty()
+            .ifEmpty { o.optString("draftPreview").trim() }
+        } else {
+          ""
+        }
       val preview =
         draftLine.ifEmpty {
           if (cut != null && (lastAt.isEmpty() || lastAt <= cut)) {
@@ -330,8 +388,6 @@ object BlypShellConversationsStore {
           } else {
             o.optString("lastMessagePreview", "").trim()
           }
-        }.ifEmpty {
-          BlypShellChatDraft.listPreviewLine(context, id).orEmpty()
         }.ifEmpty {
           if (o.optBoolean("shellKeepInList")) {
             context.getString(R.string.blyp_shell_messages_preview_empty)

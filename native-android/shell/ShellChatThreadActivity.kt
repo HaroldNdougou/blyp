@@ -49,7 +49,7 @@ import com.haroldndougou.blyp.paymentannounce.PaymentAnnouncePrefs
 import java.io.File
 import java.util.UUID
 
-class ShellChatThreadActivity : AppCompatActivity() {
+class ShellChatThreadActivity : BlypShellActivity() {
   private lateinit var conversationId: String
   private var peerName: String = "…"
   private var peerPhone: String = ""
@@ -89,8 +89,10 @@ class ShellChatThreadActivity : AppCompatActivity() {
   fun isMetaShown(id: String): Boolean = id in shownMeta
 
   fun collapseMeta() {
-    if (shownMeta.isEmpty()) return
-    val ids = shownMeta.toList()
+    val chrome = reactChromeId
+    reactChromeId = null
+    if (shownMeta.isEmpty() && chrome == null) return
+    val ids = (shownMeta.toList() + listOfNotNull(chrome)).distinct()
     shownMeta.clear()
     if (::adapter.isInitialized) {
       for (id in ids) adapter.refresh(id)
@@ -163,8 +165,9 @@ class ShellChatThreadActivity : AppCompatActivity() {
   private val vanishSweep = Runnable { sweepVanish() }
   private val requestLocation =
     registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-      if (granted) askPlace() else toast(getString(R.string.blyp_shell_chat_place_denied))
+      if (granted) pickPlaceMode() else toast(getString(R.string.blyp_shell_chat_place_denied))
     }
+  private var unsubChat: (() -> Unit)? = null
   private val presencePulse =
     object : Runnable {
       override fun run() {
@@ -179,6 +182,130 @@ class ShellChatThreadActivity : AppCompatActivity() {
   private var toolLit = 0
   private var morePopup: android.widget.PopupWindow? = null
   private var reactPopup: android.widget.PopupWindow? = null
+  private var reactFanOverlay: ViewGroup? = null
+  private var reactFanBubble: View? = null
+  private var reactChromeId: String? = null
+  private var reactBounceId: String? = null
+  private var reactRemoveId: String? = null
+  private var reactPushedViews: List<View> = emptyList()
+  private var reactPressedRow: View? = null
+  private var reactGapAnim: android.animation.ValueAnimator? = null
+  private var reactGapSavedTop = 0
+  private var reactChromeKeep = false
+
+  private fun dismissReactFan() {
+    val overlay = reactFanOverlay
+    reactFanOverlay = null
+    val b = reactFanBubble
+    reactFanBubble = null
+    if (overlay != null) (overlay.parent as? ViewGroup)?.removeView(overlay)
+    b?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(100)?.start()
+    releaseReactPush(animate = true)
+    if (!reactChromeKeep) clearReactChrome()
+    reactChromeKeep = false
+    reactPopup?.dismiss()
+    reactPopup = null
+  }
+
+  fun isReactChrome(id: String): Boolean = reactChromeId == id
+
+  fun takeReactBounce(id: String): Boolean {
+    if (reactBounceId != id) return false
+    reactBounceId = null
+    return true
+  }
+
+  fun takeReactRemove(id: String): Boolean {
+    if (reactRemoveId != id) return false
+    reactRemoveId = null
+    return true
+  }
+
+  private fun armReactChrome(id: String) {
+    val prev = reactChromeId
+    reactChromeId = id
+    shownMeta.add(id)
+    if (::adapter.isInitialized) {
+      if (prev != null && prev != id) adapter.refresh(prev)
+      adapter.refresh(id)
+    }
+  }
+
+  private fun clearReactChrome() {
+    val id = reactChromeId ?: return
+    reactChromeId = null
+    shownMeta.remove(id)
+    if (::adapter.isInitialized) adapter.refresh(id)
+  }
+
+  private fun rowForBubble(bubble: View): View? {
+    var v: View? = bubble
+    while (v != null) {
+      val p = v.parent
+      if (p === listView) return v
+      v = p as? View
+    }
+    return null
+  }
+
+  private fun pushNeighborsAbove(bubble: View, amountPx: Float) {
+    releaseReactPush(animate = false)
+    if (!::listView.isInitialized || amountPx <= 0f) return
+    val row = rowForBubble(bubble) ?: return
+    reactPressedRow = row
+    val bLoc = IntArray(2)
+    bubble.getLocationOnScreen(bLoc)
+    val bubbleTop = bLoc[1]
+    val nudged = ArrayList<View>()
+    for (i in 0 until listView.childCount) {
+      val child = listView.getChildAt(i) ?: continue
+      if (child === row) continue
+      val cLoc = IntArray(2)
+      child.getLocationOnScreen(cLoc)
+      if (cLoc[1] + child.height <= bubbleTop + 12) {
+        nudged.add(child)
+        child.animate().cancel()
+        child.translationY = 0f
+        child
+          .animate()
+          .translationY(-amountPx)
+          .setDuration(180)
+          .setInterpolator(android.view.animation.DecelerateInterpolator())
+          .start()
+      }
+    }
+    row.animate().cancel()
+    row.translationY = 0f
+    row
+      .animate()
+      .translationY(amountPx * 0.25f)
+      .setDuration(180)
+      .setInterpolator(android.view.animation.DecelerateInterpolator())
+      .start()
+    reactPushedViews = nudged
+  }
+
+  private fun releaseReactPush(animate: Boolean = true) {
+    reactGapAnim?.cancel()
+    reactGapAnim = null
+    val row = reactPressedRow
+    reactPressedRow = null
+    val all = reactPushedViews + listOfNotNull(row)
+    for (v in all) {
+      if (animate) {
+        v
+          .animate()
+          .translationY(0f)
+          .setDuration(160)
+          .setInterpolator(android.view.animation.DecelerateInterpolator())
+          .start()
+      } else {
+        v.animate().cancel()
+        v.translationY = 0f
+      }
+    }
+    reactPushedViews = emptyList()
+  }
   private var typingUnsub: (() -> Unit)? = null
   private var nearbyUnsub: (() -> Unit)? = null
   private var typingSentOn = false
@@ -276,6 +403,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
       peerPhone.ifEmpty { null },
     )
     listView = findViewById(R.id.blyp_chat_list)
+    listView.clipChildren = false
+    listView.clipToPadding = false
     input = findViewById(R.id.blyp_chat_input)
     input.addTextChangedListener(
       object : TextWatcher {
@@ -412,6 +541,11 @@ class ShellChatThreadActivity : AppCompatActivity() {
         if (convId != conversationId || isFinishing) return@subscribeThread
         bindFromCache(scrollEnd = true)
       }
+    unsubChat =
+      BlypShellUiRefresh.subscribeChat { convId ->
+        if (convId != conversationId || isFinishing) return@subscribeChat
+        bindFromCache(scrollEnd = false)
+      }
     unsubReceipts =
       BlypShellChatReceipts.subscribe { convId ->
         if (convId != conversationId || isFinishing) return@subscribe
@@ -448,6 +582,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
     unsubRealtime = null
     unsubReceipts?.invoke()
     unsubReceipts = null
+    unsubChat?.invoke()
+    unsubChat = null
     typingUnsub?.invoke()
     typingUnsub = null
     nearbyUnsub?.invoke()
@@ -633,115 +769,311 @@ class ShellChatThreadActivity : AppCompatActivity() {
   private fun onMessageLongPress(row: ShellChatBubble, anchor: View) {
     if (row.deletedForAll) return
     hapticReply()
-    reactPopup?.dismiss()
+    dismissReactFan()
+    clearReactChrome()
     val bubble =
       anchor.findViewById<View?>(R.id.blyp_chat_body)
         ?: anchor.findViewById(R.id.blyp_chat_image_strip)
         ?: anchor.findViewById(R.id.blyp_chat_voice_bubble)
         ?: anchor.findViewById(R.id.blyp_chat_doc_bubble)
         ?: anchor.findViewById(R.id.blyp_chat_money_bubble)
+        ?: anchor.findViewById(R.id.blyp_chat_place_bubble)
         ?: anchor
     val d = resources.displayMetrics.density
-    val wrap = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      clipChildren = false
-    }
-    val menu = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      val pad = (4 * d).toInt()
-      setPadding(0, pad, 0, pad)
-      background =
-        android.graphics.drawable.GradientDrawable().apply {
-          cornerRadius = 16 * d
-          setColor(ContextCompat.getColor(this@ShellChatThreadActivity, R.color.blyp_shell_modal))
-        }
-      elevation = 8 * d
-    }
-    val actions = ArrayList<Pair<String, () -> Unit>>()
-    actions.add(getString(R.string.blyp_shell_chat_menu_reply) to { armReply(row) })
-    if (canForward(row)) actions.add(getString(R.string.blyp_shell_chat_menu_forward) to { openForward(row) })
-    actions.add(getString(R.string.blyp_shell_chat_menu_delete_me) to { deleteMessage(row, "me") })
-    if (canDeleteForEveryone(row)) {
-      actions.add(getString(R.string.blyp_shell_chat_menu_delete_all) to { confirmDeleteForEveryone(row) })
-    }
-    for ((label, run) in actions) {
-      val item = TextView(this).apply {
-        text = label
-        textSize = 16f
-        setTextColor(ContextCompat.getColor(this@ShellChatThreadActivity, R.color.blyp_shell_text))
-        val h = (14 * d).toInt()
-        setPadding((18 * d).toInt(), h, (18 * d).toInt(), h)
-        setOnClickListener {
-          reactPopup?.dismiss()
-          run()
-        }
-      }
-      menu.addView(item)
-    }
-    val gap = (8 * d).toInt()
-    wrap.addView(menu, LinearLayout.LayoutParams(
-      LinearLayout.LayoutParams.WRAP_CONTENT,
-      LinearLayout.LayoutParams.WRAP_CONTENT,
-    ).apply { topMargin = gap })
-    wrap.measure(
-      View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-      View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
-    )
-    val popup = android.widget.PopupWindow(
-      wrap,
-      wrap.measuredWidth,
-      wrap.measuredHeight,
-      true,
-    )
-    popup.isOutsideTouchable = true
-    popup.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
-    popup.elevation = 12 * d
-    val loc = IntArray(2)
-    bubble.getLocationOnScreen(loc)
+    val myId = myUserId()?.trim().orEmpty()
+    val mineEmoji = row.reactions.firstOrNull { it.userId == myId }?.emoji.orEmpty()
     val screenW = resources.displayMetrics.widthPixels
-    var x = if (row.mine) loc[0] + bubble.width - wrap.measuredWidth else loc[0]
-    x = x.coerceIn((8 * d).toInt(), (screenW - wrap.measuredWidth - (8 * d).toInt()).coerceAtLeast(0))
-    var y = loc[1] - wrap.measuredHeight - gap
-    if (y < (24 * d).toInt()) y = loc[1] + bubble.height + gap
-    bubble.animate().scaleX(1.03f).scaleY(1.03f).setDuration(180).start()
-    popup.setOnDismissListener {
-      bubble.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
-      if (reactPopup === popup) reactPopup = null
+    val edge = (10 * d).toInt()
+    val emojis = BlypShellReactionCodec.QUICK
+    val cell = (28 * d).toInt()
+    val fanGap = (8 * d).toInt()
+    val fanPad = (4 * d).toInt()
+    val fanW = emojis.size * cell + (emojis.size - 1) * fanGap + fanPad * 2
+    val fanH = cell + fanPad * 2
+    val push = (cell + 18 * d).toInt()
+
+    val surface = ContextCompat.getColor(this, R.color.blyp_shell_surface)
+    val accentSoft = ContextCompat.getColor(this, R.color.blyp_shell_accent_soft)
+    val host =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(fanPad, fanPad, fanPad, fanPad)
+        clipChildren = false
+        clipToPadding = false
+        elevation = 0f
+        background =
+          android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+            cornerRadius = 22f * d
+            setColor(surface)
+          }
+      }
+
+    val emojiViews = ArrayList<TextView>(emojis.size)
+    for ((index, emoji) in emojis.withIndex()) {
+      val on = mineEmoji == emoji
+      val btn =
+        TextView(this).apply {
+          text = emoji
+          textSize = 17f
+          gravity = Gravity.CENTER
+          includeFontPadding = false
+          elevation = 0f
+          setLayerType(View.LAYER_TYPE_NONE, null)
+          background =
+            android.graphics.drawable.GradientDrawable().apply {
+              shape = android.graphics.drawable.GradientDrawable.OVAL
+              setColor(if (on) accentSoft else surface)
+            }
+          contentDescription = getString(R.string.blyp_shell_chat_react_pick_a11y, emoji)
+          alpha = 0f
+          scaleX = 0.35f
+          scaleY = 0.35f
+          isClickable = true
+          setOnClickListener { picked ->
+            for (v in emojiViews) v.isEnabled = false
+            flyEmojiOntoBubble(picked as TextView, bubble, row, emoji)
+          }
+        }
+      val lp =
+        LinearLayout.LayoutParams(cell, cell).apply {
+          if (index > 0) marginStart = fanGap
+        }
+      host.addView(btn, lp)
+      emojiViews.add(btn)
     }
-    reactPopup = popup
-    popup.showAtLocation(bubble, Gravity.TOP or Gravity.START, x, y)
+
+    armReactChrome(row.id)
+    fun placeFanAndShow() {
+      val bubbleLoc = IntArray(2)
+      bubble.getLocationOnScreen(bubbleLoc)
+      var fanLeft = (bubbleLoc[0] + bubble.width / 2f - fanW / 2f).toInt()
+      fanLeft = fanLeft.coerceIn(edge, (screenW - fanW - edge).coerceAtLeast(edge))
+      var fanTop = bubbleLoc[1] - fanH - (8 * d).toInt()
+      if (fanTop < edge) fanTop = bubbleLoc[1] + bubble.height + (10 * d).toInt()
+      // Overlay taille du éventail seulement (pas plein écran) → répondre/supprimer restent cliquables
+      val content = findViewById<ViewGroup>(android.R.id.content)
+      val contentLoc = IntArray(2)
+      content.getLocationOnScreen(contentLoc)
+      val lp =
+        FrameLayout.LayoutParams(fanW, fanH).apply {
+          leftMargin = fanLeft - contentLoc[0]
+          topMargin = fanTop - contentLoc[1]
+        }
+      content.addView(host, lp)
+      reactFanOverlay = host
+      reactFanBubble = bubble
+      val bounce = android.view.animation.OvershootInterpolator(1.8f)
+      for ((i, btn) in emojiViews.withIndex()) {
+        btn
+          .animate()
+          .alpha(1f)
+          .scaleX(1f)
+          .scaleY(1f)
+          .setStartDelay(18L * i)
+          .setDuration(220)
+          .setInterpolator(bounce)
+          .start()
+      }
+    }
+    pushNeighborsAbove(bubble, push.toFloat())
+    if (::listView.isInitialized) {
+      listView.postDelayed({ placeFanAndShow() }, 100)
+    } else {
+      placeFanAndShow()
+    }
+    bubble.animate().scaleX(1.02f).scaleY(1.02f).setDuration(120)
+      .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
   }
 
-  private fun reactTo(row: ShellChatBubble, emoji: String) {
+  private fun flyEmojiOntoBubble(from: View, bubble: View, row: ShellChatBubble, emoji: String) {
+    val root = window.decorView as? ViewGroup ?: return
+    val d = resources.displayMetrics.density
+    val start = IntArray(2)
+    val end = IntArray(2)
+    from.getLocationOnScreen(start)
+    bubble.getLocationOnScreen(end)
+    val size = (28 * d).toInt()
+    val flyer =
+      TextView(this).apply {
+        text = emoji
+        textSize = 18f
+        gravity = Gravity.CENTER
+        includeFontPadding = false
+        background = ContextCompat.getDrawable(this@ShellChatThreadActivity, R.drawable.blyp_shell_react_chip)
+      }
+    root.addView(flyer, FrameLayout.LayoutParams(size, size))
+    flyer.x = start[0].toFloat()
+    flyer.y = start[1].toFloat()
+    // Coin haut-gauche style iMessage
+    val landX = end[0] - size * 0.28f
+    val landY = end[1] - size * 0.28f
+    val midX = (flyer.x + landX) / 2f
+    val midY = minOf(flyer.y, landY) - 36 * d
+    val path =
+      android.graphics.Path().apply {
+        moveTo(flyer.x, flyer.y)
+        quadTo(midX, midY, landX, landY)
+      }
+    val bounce = android.view.animation.OvershootInterpolator(2.6f)
+    android.animation.ObjectAnimator.ofFloat(flyer, View.X, View.Y, path).apply {
+      duration = 360
+      interpolator = android.view.animation.AccelerateDecelerateInterpolator()
+      start()
+    }
+    flyer
+      .animate()
+      .scaleX(1.28f)
+      .scaleY(1.28f)
+      .setDuration(160)
+      .withEndAction {
+        flyer
+          .animate()
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(200)
+          .setInterpolator(bounce)
+          .withEndAction {
+            (flyer.parent as? ViewGroup)?.removeView(flyer)
+          }
+          .start()
+      }
+      .start()
+    dismissReactFan()
+    reactBounceId = row.id
+    window.decorView.postDelayed({ reactTo(row, emoji, burstFrom = null) }, 90)
+  }
+
+  private fun reactTo(row: ShellChatBubble, emoji: String, burstFrom: View? = null) {
     val phone = phone()
     val myId = myUserId()?.trim().orEmpty()
-    if (phone.isEmpty() || myId.isEmpty() || row.outboundPending) return
+    if (phone.isEmpty() || myId.isEmpty() || row.deletedForAll) return
+    val picked = emoji.trim()
+    if (picked.isEmpty() || picked !in BlypShellReactionCodec.QUICK) return
     val previous = row.reactions
+    val removing = previous.any { it.userId == myId && it.emoji == picked }
     val next =
-      if (previous.any { it.userId == myId && it.emoji == emoji }) {
+      if (removing) {
         previous.filter { it.userId != myId }
       } else {
-        previous.filter { it.userId != myId } + ShellChatReaction(emoji, myId)
+        previous.filter { it.userId != myId } + ShellChatReaction(picked, myId)
       }
+    hapticReply()
+    if (removing) {
+      reactRemoveId = row.id
+    } else {
+      BlypShellChatSounds.playReact(this)
+      if (burstFrom != null) {
+        reactBounceId = row.id
+        playReactBurst(burstFrom, picked)
+      }
+    }
     BlypShellChatMessagesStore.patchReactions(this, phone, conversationId, row.id, next)
-    bindFromCache(scrollEnd = false)
-    BlypShellChatThreadActions.reactAsync(this, conversationId, row.id, emoji) {
+    if (::adapter.isInitialized) adapter.patchReactions(row.id, next) else bindFromCache(scrollEnd = false)
+    val syncEmoji = next.firstOrNull { it.userId == myId }?.emoji.orEmpty()
+    val preview = BlypShellReactionCodec.listPreview(syncEmoji, mine = true)
+    if (preview.isNotEmpty()) {
+      BlypShellConversationsStore.touchIncoming(
+        this,
+        phone,
+        conversationId,
+        preview,
+        java.time.Instant.now().toString(),
+        "",
+      )
+    }
+    val localOnly = row.outboundPending || row.id.startsWith("c-")
+    if (localOnly) return
+    BlypShellChatThreadActions.reactAsync(this, conversationId, row.id, picked) {
         reactions,
         ok,
       ->
       if (!ok) {
         BlypShellChatMessagesStore.patchReactions(this, phone, conversationId, row.id, previous)
+        if (::adapter.isInitialized) adapter.patchReactions(row.id, previous)
         toast(getString(R.string.blyp_shell_chat_react_failed))
       } else {
-        BlypShellChatMessagesStore.patchReactions(
-          this,
-          phone,
-          conversationId,
-          row.id,
-          reactions ?: next,
-        )
+        val final = reactions ?: next
+        BlypShellChatMessagesStore.patchReactions(this, phone, conversationId, row.id, final)
+        if (::adapter.isInitialized) adapter.patchReactions(row.id, final)
       }
-      bindFromCache(scrollEnd = false)
+    }
+    // Sync léger pour l’autre téléphone (plié, jamais une bulle « Message »)
+    val clientId = UUID.randomUUID().toString()
+    BlypShellChatOutbox.send(
+      this,
+      phone,
+      conversationId,
+      BlypShellReactionCodec.encode(row.id, syncEmoji),
+      clientId,
+      null,
+    ) { _ -> }
+  }
+
+  private fun playReactBurst(anchor: View?, emoji: String) {
+    val root = window.decorView as? ViewGroup ?: return
+    val from = anchor ?: return
+    val d = resources.displayMetrics.density
+    val loc = IntArray(2)
+    from.getLocationOnScreen(loc)
+    val burst =
+      TextView(this).apply {
+        text = emoji
+        textSize = 26f
+        includeFontPadding = false
+        gravity = Gravity.CENTER
+        scaleX = 0.4f
+        scaleY = 0.4f
+        alpha = 0.9f
+        setLayerType(View.LAYER_TYPE_HARDWARE, null)
+      }
+    val size = (40 * d).toInt()
+    root.addView(burst, FrameLayout.LayoutParams(size, size))
+    burst.x = loc[0] + from.width / 2f - size / 2f
+    burst.y = loc[1] + from.height / 2f - size / 2f
+    val bounce = android.view.animation.OvershootInterpolator(3f)
+    burst
+      .animate()
+      .scaleX(1.4f)
+      .scaleY(1.4f)
+      .setDuration(160)
+      .setInterpolator(bounce)
+      .withEndAction {
+        burst
+          .animate()
+          .scaleX(1f)
+          .scaleY(1f)
+          .alpha(0f)
+          .setDuration(160)
+          .withEndAction { (burst.parent as? ViewGroup)?.removeView(burst) }
+          .start()
+      }
+      .start()
+  }
+
+  private fun armDoubleTapHeart(view: View, row: ShellChatBubble) {
+    val detector =
+      android.view.GestureDetector(
+        this,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+          override fun onDown(e: MotionEvent): Boolean = true
+
+          override fun onDoubleTap(e: MotionEvent): Boolean {
+            if (!row.deletedForAll) reactTo(row, "❤️", burstFrom = view)
+            return true
+          }
+
+          override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            toggleMeta(row.id)
+            return true
+          }
+        },
+      )
+    view.setOnClickListener(null)
+    view.setOnTouchListener { _, ev ->
+      detector.onTouchEvent(ev)
+      false
     }
   }
 
@@ -886,8 +1218,6 @@ class ShellChatThreadActivity : AppCompatActivity() {
     val transferId = row.moneyTransferId?.trim().orEmpty()
     if (transferId.isEmpty() || !row.canMoneyAction()) return
     if (!row.mine && row.moneyReceiptRequired) {
-      val transferId = row.moneyTransferId?.trim().orEmpty()
-      if (transferId.isEmpty()) return
       receiptClaimResult.launch(
         ShellChatMoneyReceiptActivity.buildIntent(
           this,
@@ -899,7 +1229,288 @@ class ShellChatThreadActivity : AppCompatActivity() {
       )
       return
     }
-    val action = if (row.mine) "recall" else "claim"
+    if (row.mine) {
+      showMoneyEditDialog(row)
+      return
+    }
+    runMoneyAction(row, "claim")
+  }
+
+  private fun showMoneyEditDialog(row: ShellChatBubble) {
+    if (!row.canMoneyAction() || isFinishing) return
+    val density = resources.displayMetrics.density
+    val amountField =
+      EditText(this).apply {
+        setText(row.moneyAmountFcfa.takeIf { it > 0 }?.toString().orEmpty())
+        inputType = android.text.InputType.TYPE_CLASS_NUMBER
+        hint = getString(R.string.blyp_shell_chat_money_edit_amount)
+        gravity = android.view.Gravity.CENTER
+      }
+    val motifField =
+      EditText(this).apply {
+        val note =
+          row.body.trim().takeIf {
+            it.isNotEmpty() && it.filter { ch -> ch.isDigit() } != row.moneyAmountFcfa.toString()
+          }
+        if (note != null) setText(note)
+        hint = getString(R.string.blyp_shell_pay_motif_hint)
+        inputType =
+          android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        minLines = 2
+        BlypShellPayMotif.bind(this)
+      }
+    fun label(textRes: Int) =
+      TextView(this).apply {
+        text = getString(textRes)
+        setTextColor(ContextCompat.getColor(this@ShellChatThreadActivity, R.color.blyp_shell_text_secondary))
+        textSize = 13f
+        setPadding(0, (10 * density).toInt(), 0, (6 * density).toInt())
+      }
+    val box =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(label(R.string.blyp_shell_chat_money_edit_amount))
+        addView(
+          amountField,
+          LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ),
+        )
+        addView(label(R.string.blyp_shell_pay_motif_label))
+        addView(
+          motifField,
+          LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+          ),
+        )
+      }
+    BlypShellDialogs.alertBuilder(this)
+      .setTitle(R.string.blyp_shell_chat_money_edit_title)
+      .setView(box)
+      .setPositiveButton(R.string.blyp_shell_chat_money_edit_save) { _, _ ->
+        val amount =
+          amountField.text?.toString()?.replace(Regex("\\D"), "")?.toIntOrNull() ?: 0
+        if (amount <= 0) {
+          toast(getString(R.string.blyp_shell_chat_money_invalid))
+          return@setPositiveButton
+        }
+        val motif = BlypShellPayMotif.sanitize(motifField.text)
+        val oldNote =
+          row.body.trim().takeIf {
+            it.isNotEmpty() && it.filter { ch -> ch.isDigit() } != row.moneyAmountFcfa.toString()
+          }
+        if (amount == row.moneyAmountFcfa && motif == oldNote) return@setPositiveButton
+        confirmMoneyEdit(row, amount, motif)
+      }
+      .setNeutralButton(R.string.blyp_shell_chat_money_reclaim) { _, _ ->
+        confirmMoneyRecall(row)
+      }
+      .setNegativeButton(R.string.blyp_shell_chat_reply_cancel, null)
+      .show()
+  }
+
+  private fun confirmMoneyRecall(row: ShellChatBubble) {
+    BlypShellDialogs.alertBuilder(this)
+      .setTitle(R.string.blyp_shell_chat_money_reclaim_confirm_title)
+      .setMessage(R.string.blyp_shell_chat_money_reclaim_confirm_msg)
+      .setPositiveButton(R.string.blyp_shell_chat_money_reclaim) { _, _ ->
+        runMoneyAction(row, "recall")
+      }
+      .setNegativeButton(R.string.blyp_shell_chat_reply_cancel, null)
+      .show()
+  }
+
+  private fun confirmMoneyEdit(row: ShellChatBubble, amount: Int, motif: String?) {
+    if (!BlypShellNetwork.isOnline(this)) {
+      toast(getString(R.string.blyp_shell_chat_money_edit_failed))
+      return
+    }
+    val pinStored =
+      BlypShellPayRuntime.readPinOnly(this)?.filter { it.isDigit() }.orEmpty()
+    if (pinStored.length != 4) {
+      toast(getString(R.string.blyp_shell_chat_money_edit_failed))
+      return
+    }
+    val fingerOk =
+      try {
+        androidx.biometric.BiometricManager.from(this)
+          .canAuthenticate(
+            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+              androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK,
+          ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+      } catch (_: Exception) {
+        false
+      }
+    if (fingerOk) {
+      askMoneyEditFinger(row, amount, motif, pinStored)
+      return
+    }
+    showMoneyEditPin(row, amount, motif)
+  }
+
+  private fun askMoneyEditFinger(
+    row: ShellChatBubble,
+    amount: Int,
+    motif: String?,
+    pin: String,
+  ) {
+    val prompt =
+      androidx.biometric.BiometricPrompt(
+        this,
+        ContextCompat.getMainExecutor(this),
+        object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
+          override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+            if (
+              errorCode == androidx.biometric.BiometricPrompt.ERROR_USER_CANCELED ||
+                errorCode == androidx.biometric.BiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                errorCode == androidx.biometric.BiometricPrompt.ERROR_CANCELED
+            ) {
+              return
+            }
+            showMoneyEditPin(row, amount, motif)
+          }
+
+          override fun onAuthenticationSucceeded(
+            result: androidx.biometric.BiometricPrompt.AuthenticationResult,
+          ) {
+            applyMoneyEdit(row, amount, motif, pin)
+          }
+        },
+      )
+    val info =
+      androidx.biometric.BiometricPrompt.PromptInfo.Builder()
+        .setTitle(getString(R.string.blyp_shell_chat_money_edit_pin_title))
+        .setSubtitle(getString(R.string.blyp_shell_chat_money_bio_subtitle, amount))
+        .setAllowedAuthenticators(
+          androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK,
+        )
+        .setNegativeButtonText(getString(android.R.string.cancel))
+        .build()
+    try {
+      prompt.authenticate(info)
+    } catch (_: Exception) {
+      showMoneyEditPin(row, amount, motif)
+    }
+  }
+
+  private fun showMoneyEditPin(row: ShellChatBubble, amount: Int, motif: String?) {
+    var sent = false
+    lateinit var dialog: android.app.Dialog
+    lateinit var pinView: EditText
+    val pinBox =
+      blypMaskedPin(this) { pin ->
+          if (sent) return@blypMaskedPin
+          sent = true
+          dialog.dismiss()
+          applyMoneyEdit(row, amount, motif, pin)
+        }
+        .also { pinView = it.second }
+        .first
+    dialog =
+      BlypShellDialogs.alertBuilder(this)
+        .setTitle(R.string.blyp_shell_chat_money_edit_pin_title)
+        .setView(pinBox)
+        .setNegativeButton(android.R.string.cancel, null)
+        .create()
+    dialog.setOnShowListener {
+      pinView.requestFocus()
+      pinView.post {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+        imm.showSoftInput(pinView, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+      }
+    }
+    dialog.show()
+  }
+
+  private fun applyMoneyEdit(
+    row: ShellChatBubble,
+    amount: Int,
+    motif: String?,
+    pin: String,
+  ) {
+    val transferId = row.moneyTransferId?.trim().orEmpty()
+    if (transferId.isEmpty() || claimingTransferId != null) return
+    if (!row.canMoneyAction()) {
+      toast(getString(R.string.blyp_shell_chat_money_edit_failed))
+      return
+    }
+    claimingTransferId = transferId
+    adapter.notifyMoneyRows()
+    BlypShellChatMoneyClaim.claimAsync(this, transferId, "recall") { ok, _, balance ->
+      if (!ok) {
+        claimingTransferId = null
+        adapter.notifyMoneyRows()
+        toast(getString(R.string.blyp_shell_chat_money_edit_failed))
+        return@claimAsync
+      }
+      balance?.let { BlypShellSession.updateBalance(this, it) }
+      BlypShellChatMessagesStore.patchMoneyTransferById(
+        this,
+        phone(),
+        conversationId,
+        transferId,
+        org.json.JSONObject()
+          .put("transferId", transferId)
+          .put("status", "claimed")
+          .put("claimedByUserId", row.moneyFromUserId.orEmpty()),
+      )
+      bindFromCache(scrollEnd = false)
+      val clientId = java.util.UUID.randomUUID().toString()
+      val idem = java.util.UUID.randomUUID().toString()
+      BlypShellChatMediaSend.sendMoneyAsync(
+        this,
+        conversationId,
+        amount,
+        clientId,
+        idem,
+        pin,
+        motif,
+        null,
+      ) { sendOk, msg, newBal, pinWrong, _ ->
+        claimingTransferId = null
+        adapter.notifyMoneyRows()
+        if (!sendOk || msg == null) {
+          toast(
+            getString(
+              if (pinWrong) R.string.blyp_shell_chat_money_pin_wrong
+              else R.string.blyp_shell_chat_money_edit_failed,
+            ),
+          )
+          bindFromCache(scrollEnd = false)
+          return@sendMoneyAsync
+        }
+        newBal?.let { BlypShellSession.updateBalance(this, it) }
+        val local = BlypShellChatMessagesStore.loadRawObjects(this, phone(), conversationId)
+        val merged = BlypShellChatMessagesStore.mergeNetworkItems(local, listOf(msg))
+        BlypShellChatMessagesStore.saveMerged(this, phone(), conversationId, merged)
+        val newTid =
+          msg.optJSONObject("moneyTransfer")?.optString("transferId").orEmpty()
+            .ifEmpty { msg.optString("id") }
+        BlypTransactionStore.insertMessageMoney(
+          this,
+          phone(),
+          newTid.ifEmpty { clientId },
+          amount,
+          peerName.ifEmpty { "Message Money" },
+          motif,
+        )
+        if (!motif.isNullOrBlank()) {
+          BlypShellMotifSuggestions.noteUsed(this, conversationId, motif)
+        }
+        BlypShellUiRefresh.notifyWalletChanged()
+        bindFromCache(scrollEnd = true)
+      }
+    }
+  }
+
+  private fun runMoneyAction(row: ShellChatBubble, action: String) {
+    val transferId = row.moneyTransferId?.trim().orEmpty()
+    if (transferId.isEmpty()) return
     claimingTransferId = transferId
     adapter.notifyMoneyRows()
     BlypShellChatMoneyClaim.claimAsync(this, transferId, action) { ok, transfer, balance ->
@@ -922,10 +1533,15 @@ class ShellChatThreadActivity : AppCompatActivity() {
     }
   }
 
+  private fun playSentSound() {
+    BlypShellChatSounds.playSend(this)
+  }
+
   private fun sendPickedDocument(picked: BlypShellDocumentPick.Picked) {
     val phone = phone()
     val myId = myUserId()?.trim().orEmpty()
     if (phone.isEmpty() || myId.isEmpty()) return
+    playSentSound()
     val clientId = UUID.randomUUID().toString()
     val reply = replyToId
     clearReply()
@@ -1165,10 +1781,156 @@ class ShellChatThreadActivity : AppCompatActivity() {
       requestLocation.launch(Manifest.permission.ACCESS_FINE_LOCATION)
       return
     }
-    askPlace()
+    pickPlaceMode()
   }
 
-  private fun askPlace() {
+  private fun pickPlaceMode() {
+    if (sending) return
+    BlypShellDialogs.alertBuilder(this)
+      .setTitle(R.string.blyp_shell_chat_place_pick_title)
+      .setItems(
+        arrayOf(
+          getString(R.string.blyp_shell_chat_place_pick_fixed),
+          getString(R.string.blyp_shell_chat_place_pick_live),
+        ),
+      ) { _, which ->
+        askPlaceNote(live = which == 1)
+      }
+      .setNegativeButton(android.R.string.cancel, null)
+      .show()
+  }
+
+  private fun askPlaceNote(live: Boolean) {
+    if (sending) return
+    val density = resources.displayMetrics.density
+    val field =
+      EditText(this).apply {
+        hint = getString(R.string.blyp_shell_chat_place_hint)
+        inputType =
+          android.text.InputType.TYPE_CLASS_TEXT or
+            android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
+            android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        minLines = 1
+        maxLines = 3
+        filters = arrayOf(android.text.InputFilter.LengthFilter(120))
+        setSingleLine(false)
+        layoutParams =
+          LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+          )
+      }
+    val chipRow =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+      }
+    val suggestions = resources.getStringArray(R.array.blyp_shell_chat_place_note_suggestions)
+    var selectedChip: TextView? = null
+    fun paintChip(chip: TextView, on: Boolean) {
+      chip.setBackgroundResource(
+        if (on) R.drawable.blyp_shell_place_chip_on else R.drawable.blyp_shell_place_chip,
+      )
+      chip.setTextColor(
+        ContextCompat.getColor(
+          this,
+          if (on) R.color.blyp_shell_accent_dark else R.color.blyp_shell_text,
+        ),
+      )
+    }
+    suggestions.forEachIndexed { index, label ->
+      val chip =
+        TextView(this).apply {
+          text = label
+          tag = label
+          textSize = 13f
+          setTypeface(typeface, android.graphics.Typeface.BOLD)
+          setPadding(
+            (14 * density).toInt(),
+            (8 * density).toInt(),
+            (14 * density).toInt(),
+            (8 * density).toInt(),
+          )
+          layoutParams =
+            LinearLayout.LayoutParams(
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+              ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { if (index > 0) marginStart = (8 * density).toInt() }
+        }
+      paintChip(chip, false)
+      chip.setOnClickListener {
+        val same = selectedChip === chip
+        selectedChip?.let { paintChip(it, false) }
+        if (same) {
+          selectedChip = null
+          field.setText("")
+        } else {
+          selectedChip = chip
+          paintChip(chip, true)
+          field.setText(label)
+          field.setSelection(label.length)
+        }
+      }
+      chipRow.addView(chip)
+    }
+    field.addTextChangedListener(
+      object : TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        override fun afterTextChanged(s: Editable?) {
+          val now = s?.toString().orEmpty().trim()
+          val match = chipRow.findViewWithTag<TextView>(now)
+          if (selectedChip != null && selectedChip !== match) {
+            selectedChip?.let { paintChip(it, false) }
+            selectedChip = null
+          }
+          if (match != null && selectedChip !== match) {
+            selectedChip = match
+            paintChip(match, true)
+          }
+        }
+      },
+    )
+    val scroller =
+      android.widget.HorizontalScrollView(this).apply {
+        isHorizontalScrollBarEnabled = false
+        overScrollMode = View.OVER_SCROLL_NEVER
+        layoutParams =
+          LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+          ).apply { topMargin = (12 * density).toInt() }
+        addView(chipRow)
+      }
+    val box =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams =
+          ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+          )
+        addView(field)
+        addView(scroller)
+      }
+    BlypShellDialogs.alertBuilder(this)
+      .setTitle(R.string.blyp_shell_chat_place_note_title)
+      .setMessage(R.string.blyp_shell_chat_place_note_sub)
+      .setView(box)
+      .setPositiveButton(R.string.blyp_shell_chat_send) { _, _ ->
+        sendPlaceHere(live = live, note = field.text?.toString().orEmpty())
+      }
+      .setNegativeButton(android.R.string.cancel, null)
+      .show()
+    field.requestFocus()
+  }
+
+  private fun sendPlaceHere(live: Boolean, note: String = "") {
+    if (sending) return
+    if (live && BlypShellLivePlace.activeSessionId() != null) {
+      toast(getString(R.string.blyp_shell_chat_place_busy))
+      return
+    }
     val loc =
       try {
         val lm = getSystemService(LocationManager::class.java)
@@ -1181,21 +1943,127 @@ class ShellChatThreadActivity : AppCompatActivity() {
       toast(getString(R.string.blyp_shell_chat_place_missing))
       return
     }
-    val input = android.widget.EditText(this)
-    input.hint = getString(R.string.blyp_shell_chat_place_hint)
-    AlertDialog.Builder(this)
-      .setTitle(R.string.blyp_shell_chat_more_place)
-      .setView(input)
-      .setPositiveButton(R.string.blyp_shell_chat_send) { _, _ ->
-        val doing = input.text.toString().trim()
-        val link = "https://maps.google.com/?q=${loc.latitude},${loc.longitude}"
-        val line = if (doing.isEmpty()) "📍 $link" else "📍 $link\n$doing"
-        input.setText(line)
-        this.input.setText(line)
-        sendText()
+    val phone = phone()
+    val myId = myUserId()?.trim().orEmpty()
+    if (phone.isEmpty() || myId.isEmpty()) {
+      toast(getString(R.string.blyp_shell_chat_send_failed))
+      return
+    }
+    val placeNote = note.trim().take(120)
+    val sessionId = UUID.randomUUID().toString()
+    val expiresAt = if (live) System.currentTimeMillis() + BlypShellPlaceCodec.LIVE_MS else 0L
+    val clientId = UUID.randomUUID().toString()
+    playSentSound()
+    sending = true
+    showSendSpin(clientId)
+    hideKeyboard()
+    val skeleton =
+      BlypShellPlaceCodec.encodeStart(
+        sessionId,
+        loc.latitude,
+        loc.longitude,
+        expiresAt,
+        stopped = !live,
+        name = "",
+        note = placeNote,
+      )
+    val optimistic =
+      BlypShellChatMessagesStore.optimisticText(conversationId, myId, skeleton, clientId)
+    val livePreview = getString(R.string.blyp_shell_chat_place_preview_live)
+    val fixedPreview = getString(R.string.blyp_shell_chat_place_preview)
+    Thread {
+      BlypShellChatMessagesStore.upsertMessages(this, phone, conversationId, listOf(optimistic))
+      BlypShellConversationsStore.touchIncoming(
+        this,
+        phone,
+        conversationId,
+        BlypShellPlaceCodec.previewLabel(
+          BlypShellPlaceCodec.Place(
+            sessionId,
+            loc.latitude,
+            loc.longitude,
+            expiresAt,
+            stopped = !live,
+            note = placeNote,
+          ),
+          livePreview,
+          fixedPreview,
+        ),
+        java.time.Instant.now().toString(),
+        "",
+      )
+      runOnUiThread { if (!isFinishing) bindFromCache(scrollEnd = true) }
+      val placeName =
+        BlypShellPlaceName.sanitize(
+          BlypShellPlaceName.resolve(this, loc.latitude, loc.longitude),
+        )
+      val body =
+        BlypShellPlaceCodec.encodeStart(
+          sessionId,
+          loc.latitude,
+          loc.longitude,
+          expiresAt,
+          stopped = !live,
+          name = placeName,
+          note = placeNote,
+        )
+      if (placeName.isNotEmpty() || placeNote.isNotEmpty()) {
+        optimistic.put("body", body)
+        BlypShellChatMessagesStore.upsertMessages(this, phone, conversationId, listOf(optimistic))
+        BlypShellConversationsStore.touchIncoming(
+          this,
+          phone,
+          conversationId,
+          BlypShellPlaceCodec.previewLabel(
+            BlypShellPlaceCodec.Place(
+              sessionId,
+              loc.latitude,
+              loc.longitude,
+              expiresAt,
+              stopped = !live,
+              name = placeName,
+              note = placeNote,
+            ),
+            livePreview,
+            fixedPreview,
+          ),
+          java.time.Instant.now().toString(),
+          "",
+        )
+        runOnUiThread { if (!isFinishing) bindFromCache(scrollEnd = false) }
       }
-      .setNegativeButton(android.R.string.cancel, null)
-      .show()
+      BlypShellChatOutbox.send(this, phone, conversationId, body, clientId, null) { ok ->
+        sending = false
+        if (isFinishing) return@send
+        if (ok && live) {
+          BlypShellLivePlace.start(this, conversationId, sessionId, expiresAt)
+          BlypShellChatThreadPullGate.markPulled(conversationId)
+        }
+        bindFromCache(scrollEnd = true)
+      }
+    }.start()
+  }
+
+  private fun stopPlaceShare(sessionId: String) {
+    BlypShellLivePlace.stop(this, sessionId, conversationId, notifyPeer = true)
+    bindFromCache(scrollEnd = false)
+  }
+
+  private fun openPlaceMaps(lat: Double, lng: Double, name: String = "") {
+    val label = name.trim().ifEmpty { "$lat,$lng" }
+    try {
+      val q = android.net.Uri.encode(label)
+      val uri = android.net.Uri.parse("geo:$lat,$lng?q=$lat,$lng($q)")
+      startActivity(Intent(Intent.ACTION_VIEW, uri))
+    } catch (_: Exception) {
+      try {
+        startActivity(
+          Intent(Intent.ACTION_VIEW, android.net.Uri.parse(BlypShellPlaceCodec.mapsUrl(lat, lng))),
+        )
+      } catch (_: Exception) {
+        toast(getString(R.string.blyp_shell_chat_place_missing))
+      }
+    }
   }
 
   private fun paintOnline() {
@@ -1297,7 +2165,12 @@ class ShellChatThreadActivity : AppCompatActivity() {
     seenPrimed = true
     if (!firstPaint && !swap && brandNew.isNotEmpty() && brandNew.size <= 3) {
       adapter.markArrivals(brandNew.map { it.id })
-      if (chatVisible && brandNew.any { !it.mine }) BlypShellMessageBanner.chime(this)
+      if (chatVisible && brandNew.any { !it.mine }) {
+        BlypShellMessageBanner.chime(this)
+        val moneyHit = brandNew.any { !it.mine && it.type == "money" }
+        if (moneyHit) BlypShellIncomingBuzz.money(this)
+        else BlypShellIncomingBuzz.message(this)
+      }
     }
     BlypShellChatTranslate.ensure(this, conversationId, next) {
       if (!isFinishing && ::adapter.isInitialized) adapter.notifyTranslations()
@@ -1590,6 +2463,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
   private fun sendPendingPhotos() {
     val files = pendingPhotos.toList()
     if (files.isEmpty()) return
+    playSentSound()
     pendingPhotos.clear()
     paintPendingPhotos()
     paintSend()
@@ -1600,6 +2474,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
         useCaption = index == 0,
         timeSkewMs = index.toLong(),
         albumId = albumId,
+        notify = index == files.lastIndex,
       )
     }
   }
@@ -1609,6 +2484,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
     useCaption: Boolean = true,
     timeSkewMs: Long = 0L,
     albumId: String? = null,
+    notify: Boolean = true,
   ) {
     val phone = phone()
     val myId = myUserId()?.trim().orEmpty()
@@ -1650,13 +2526,15 @@ class ShellChatThreadActivity : AppCompatActivity() {
       BlypShellChatImageLoader.remember(file.absolutePath, bmp)
     }
     BlypShellChatOutbox.install(this)
-    bindFromCache(scrollEnd = true)
-    BlypShellConversationPreview.syncFromThread(
-      this,
-      phone,
-      conversationId,
-      myId,
-    )
+    if (notify) {
+      bindFromCache(scrollEnd = true)
+      BlypShellConversationPreview.syncFromThread(
+        this,
+        phone,
+        conversationId,
+        myId,
+      )
+    }
     if (useCaption) input.setText("")
     clearReply()
     if (!BlypShellNetwork.isOnline(this)) {
@@ -1800,10 +2678,10 @@ class ShellChatThreadActivity : AppCompatActivity() {
       return
     }
     voiceMode = 1
-    BlypShellChatVoiceDuck.enter(this)
+    runCatching { BlypShellChatVoiceDuck.enter(this) }
     voiceStartedAt = System.currentTimeMillis()
-    findViewById<BlypShellVoiceWaveView>(R.id.blyp_chat_voice_wave)?.resetLive()
-    showVoiceBar(recording = true, locked = false)
+    runCatching { findViewById<BlypShellVoiceWaveView>(R.id.blyp_chat_voice_wave)?.resetLive() }
+    runCatching { showVoiceBar(recording = true, locked = false) }
     window.decorView.post(voiceTicker)
   }
 
@@ -2068,7 +2946,17 @@ class ShellChatThreadActivity : AppCompatActivity() {
     name.visibility = View.VISIBLE
     phone.visibility = View.VISIBLE
     val nine = peer.phoneDigits.filter { it.isDigit() }
-    name.text = peer.displayName.trim()
+    val shown =
+      BlypShellPeerNames.cached(this, peer.accountId)?.trim().orEmpty().ifEmpty {
+        peer.displayName.trim()
+      }
+    name.text = shown
+    name.tag = peer.accountId
+    BlypShellPeerNames.resolveAsync(this, peer.accountId) { resolved ->
+      if (isFinishing) return@resolveAsync
+      if (name.tag != peer.accountId) return@resolveAsync
+      name.text = resolved
+    }
     phone.text =
       if (nine.length >= 9) {
         "+237 ${nine.take(3)} ${nine.drop(3).take(3)} ${nine.drop(6)}"
@@ -2076,8 +2964,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
         nine
       }
     val letter =
-      peer.displayName.trim().firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
-    initial.text = letter
+      shown.firstOrNull { it.isLetter() }?.uppercaseChar()?.toString() ?: "?"
     circle.clipToOutline = true
     circle.outlineProvider =
       object : ViewOutlineProvider() {
@@ -2087,14 +2974,16 @@ class ShellChatThreadActivity : AppCompatActivity() {
       }
     avatar.clipToOutline = true
     initial.clipToOutline = true
-    BlypShellAvatarLoader.loadInto(
-      BlypShellPeerAvatar.urlForPhone(this, nine.ifEmpty { null }),
-      avatar,
-      initial,
-      letter,
-    )
-    avatar.visibility = View.VISIBLE
-    initial.visibility = View.VISIBLE
+    val avatarUrl = BlypShellPeerAvatar.urlForPhone(this, nine.ifEmpty { null })
+    if (avatar.visibility == View.VISIBLE && !avatarUrl.isNullOrBlank()) {
+      initial.visibility = View.GONE
+      initial.text = ""
+    } else {
+      initial.text = letter
+      initial.visibility = View.VISIBLE
+      if (avatarUrl.isNullOrBlank()) avatar.visibility = View.GONE
+    }
+    BlypShellAvatarLoader.loadInto(avatarUrl, avatar, initial, letter)
   }
 
   private fun paintVoiceWave(recording: Boolean) {
@@ -2108,17 +2997,25 @@ class ShellChatThreadActivity : AppCompatActivity() {
   }
 
   private fun showVoiceBar(recording: Boolean, locked: Boolean = false) {
-    findViewById<View>(R.id.blyp_chat_voice_wrap).visibility = View.VISIBLE
-    findViewById<View>(R.id.blyp_chat_input_box).visibility = View.GONE
-    findViewById<View>(R.id.blyp_chat_send_hit).visibility = View.GONE
-    findViewById<View>(R.id.blyp_chat_voice_delete).visibility = View.VISIBLE
-    findViewById<View>(R.id.blyp_chat_voice_send).visibility = View.VISIBLE
-    findViewById<View>(R.id.blyp_chat_voice_hint).visibility = View.VISIBLE
+    val field = findViewById<EditText>(R.id.blyp_chat_input)
+    val wrap = findViewById<View>(R.id.blyp_chat_voice_wrap)
+    wrap?.isFocusable = true
+    wrap?.isFocusableInTouchMode = true
+    wrap?.visibility = View.VISIBLE
+    wrap?.requestFocus()
+    field?.clearFocus()
+    val imm = getSystemService(INPUT_METHOD_SERVICE) as? InputMethodManager
+    imm?.hideSoftInputFromWindow(window.decorView.windowToken, 0)
+    runCatching { findViewById<View>(R.id.blyp_chat_input_box)?.visibility = View.GONE }
+    runCatching { findViewById<View>(R.id.blyp_chat_send_hit)?.visibility = View.GONE }
+    findViewById<View>(R.id.blyp_chat_voice_delete)?.visibility = View.VISIBLE
+    findViewById<View>(R.id.blyp_chat_voice_send)?.visibility = View.VISIBLE
+    findViewById<View>(R.id.blyp_chat_voice_hint)?.visibility = View.VISIBLE
     ensureVoiceEffects()
-    findViewById<View>(R.id.blyp_chat_voice_lock).visibility = View.GONE
-    findViewById<View>(R.id.blyp_chat_voice_dot).visibility =
+    findViewById<View>(R.id.blyp_chat_voice_lock)?.visibility = View.GONE
+    findViewById<View>(R.id.blyp_chat_voice_dot)?.visibility =
       if (recording) View.VISIBLE else View.GONE
-    findViewById<View>(R.id.blyp_chat_voice_resume).visibility =
+    findViewById<View>(R.id.blyp_chat_voice_resume)?.visibility =
       if (recording) View.GONE else View.VISIBLE
     paintVoiceTransport()
     paintVoiceWave(recording)
@@ -2254,6 +3151,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
       hideSendSpinNow()
       return
     }
+    playSentSound()
     val optimistic =
       BlypShellChatMessagesStore.optimisticVoice(
         conversationId,
@@ -2313,6 +3211,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
       toast(getString(R.string.blyp_shell_chat_send_failed))
       return
     }
+    playSentSound()
     val clientId = UUID.randomUUID().toString()
     val reply = replyToId
     input.setText("")
@@ -2419,11 +3318,11 @@ class ShellChatThreadActivity : AppCompatActivity() {
   }
 
   private fun paintSend() {
-    val send = findViewById<ImageView>(R.id.blyp_chat_send)
+    val send = findViewById<ImageView>(R.id.blyp_chat_send) ?: return
     val ready =
       voiceMode == 2 ||
         pendingPhotos.isNotEmpty() ||
-        input.text?.toString()?.trim()?.isNotEmpty() == true
+        (::input.isInitialized && input.text?.toString()?.trim()?.isNotEmpty() == true)
     send.isEnabled = ready
     findViewById<View>(R.id.blyp_chat_send_hit)?.isEnabled = ready
     send.clearColorFilter()
@@ -2433,6 +3332,12 @@ class ShellChatThreadActivity : AppCompatActivity() {
         if (ready) R.color.blyp_shell_accent else R.color.blyp_shell_muted,
       ),
     )
+  }
+
+  private fun hideKeyboard() {
+    val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+    imm.hideSoftInputFromWindow(input.windowToken, 0)
+    input.clearFocus()
   }
 
   private fun showKeyboard() {
@@ -2488,6 +3393,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
   ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
     private var items: List<ShellChatBubble> = emptyList()
     private val albums = HashMap<String, List<ShellChatBubble>>()
+    private val albumCount = HashMap<String, Int>()
     var peerReadAt: String? = null
     var localReadAt: String? = null
     private val arrivals = HashSet<String>()
@@ -2497,11 +3403,26 @@ class ShellChatThreadActivity : AppCompatActivity() {
       if (index >= 0) notifyItemChanged(index)
     }
 
+    fun patchReactions(id: String, reactions: List<ShellChatReaction>) {
+      val index = items.indexOfFirst { it.id == id }
+      if (index < 0) return
+      val cur = items[index]
+      if (cur.reactions == reactions) {
+        notifyItemChanged(index)
+        return
+      }
+      val next = items.toMutableList()
+      next[index] = cur.copy(reactions = reactions)
+      items = next
+      notifyItemChanged(index)
+    }
+
     fun markArrivals(ids: Collection<String>) {
       arrivals.addAll(ids)
     }
 
     fun submit(next: List<ShellChatBubble>): String {
+      val oldCounts = HashMap(albumCount)
       albums.clear()
       val collapsed = ArrayList<ShellChatBubble>()
       var i = 0
@@ -2526,6 +3447,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
         collapsed.add(row)
         i = j
       }
+      albumCount.clear()
+      for ((id, group) in albums) albumCount[id] = group.size
       val prev = items
       val appended =
         prev.isNotEmpty() &&
@@ -2550,7 +3473,12 @@ class ShellChatThreadActivity : AppCompatActivity() {
           "append"
         }
         sameIds -> {
-          notifyItemRangeChanged(0, collapsed.size)
+          for (i in collapsed.indices) {
+            val id = collapsed[i].id
+            if ((albumCount[id] ?: 0) != (oldCounts[id] ?: 0) || collapsed[i] != prev[i]) {
+              notifyItemChanged(i)
+            }
+          }
           "same"
         }
         else -> {
@@ -2606,6 +3534,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
       val voice = row.type == "voice" && !row.deletedForAll
       val doc = row.type == "document" && !row.deletedForAll
       val money = row.type == "money" && !row.deletedForAll
+      val place = row.type == "place" && !row.deletedForAll
       return when {
         image && row.mine -> VIEW_IMG_MINE
         image && !row.mine -> VIEW_IMG_PEER
@@ -2615,6 +3544,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
         doc && !row.mine -> VIEW_DOC_PEER
         money && row.mine -> VIEW_MONEY_MINE
         money && !row.mine -> VIEW_MONEY_PEER
+        place && row.mine -> VIEW_PLACE_MINE
+        place && !row.mine -> VIEW_PLACE_PEER
         row.mine -> VIEW_TEXT_MINE
         else -> VIEW_TEXT_PEER
       }
@@ -2632,6 +3563,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
           VIEW_DOC_PEER -> R.layout.blyp_shell_chat_row_doc_peer
           VIEW_MONEY_MINE -> R.layout.blyp_shell_chat_row_money_mine
           VIEW_MONEY_PEER -> R.layout.blyp_shell_chat_row_money_peer
+          VIEW_PLACE_MINE -> R.layout.blyp_shell_chat_row_place_mine
+          VIEW_PLACE_PEER -> R.layout.blyp_shell_chat_row_place_peer
           VIEW_TEXT_MINE -> R.layout.blyp_shell_chat_row_mine
           else -> R.layout.blyp_shell_chat_row_peer
         }
@@ -2641,6 +3574,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
         VIEW_VOICE_MINE, VIEW_VOICE_PEER -> VoiceHolder(v)
         VIEW_DOC_MINE, VIEW_DOC_PEER -> DocumentHolder(v)
         VIEW_MONEY_MINE, VIEW_MONEY_PEER -> MoneyHolder(v)
+        VIEW_PLACE_MINE, VIEW_PLACE_PEER -> PlaceHolder(v)
         else -> TextHolder(v)
       }
     }
@@ -2674,6 +3608,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
             onMoneyAction,
             onReceiptToggle,
           )
+        is PlaceHolder -> holder.bind(row)
       }
       holder.itemView.setOnLongClickListener {
         onLongPress(row, holder.itemView)
@@ -2737,13 +3672,11 @@ class ShellChatThreadActivity : AppCompatActivity() {
           val v = (8 * d).toInt()
           body.setPadding(h, v, h, v)
         }
-        body.setOnClickListener {
-          (ctx as? ShellChatThreadActivity)?.toggleMeta(row.id)
-        }
         body.setOnLongClickListener {
           (ctx as? ShellChatThreadActivity)?.onMessageLongPress(row, body)
           true
         }
+        (ctx as? ShellChatThreadActivity)?.armDoubleTapHeart(body, row)
         if (arrived && solo) {
           body.translationY = 18f * d
           body.alpha = 0f
@@ -2843,20 +3776,25 @@ class ShellChatThreadActivity : AppCompatActivity() {
         }
         val note = row.body.trim()
         val noteOk = note.isNotEmpty() && note.filter { it.isDigit() } != row.moneyAmountFcfa.toString()
+        val rawStatus = row.moneyStatus?.trim().orEmpty()
+        val recalled =
+          rawStatus == "claimed" &&
+            !row.moneyClaimedByUserId.isNullOrEmpty() &&
+            row.moneyClaimedByUserId == row.moneyFromUserId
+        val hideMotif = rawStatus == "cancelled" || recalled
         val translatedNote =
-          if (!row.mine && noteOk) BlypShellChatTranslate.peek(row.id + "::caption") else null
-        if (noteOk && caption != null) {
+          if (!row.mine && noteOk && !hideMotif) {
+            BlypShellChatTranslate.peek(row.id + "::caption")
+          } else {
+            null
+          }
+        if (noteOk && caption != null && !hideMotif) {
           caption.visibility = View.VISIBLE
           caption.text = if (translatedNote != null) translatedNote + "\n" + note else note
         } else {
           caption?.visibility = View.GONE
         }
         status.text = moneyStatusLabel(ctx, row)
-        val rawStatus = row.moneyStatus?.trim().orEmpty()
-        val recalled =
-          rawStatus == "claimed" &&
-            !row.moneyClaimedByUserId.isNullOrEmpty() &&
-            row.moneyClaimedByUserId == row.moneyFromUserId
         status.setTextColor(
           ContextCompat.getColor(
             ctx,
@@ -2880,7 +3818,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
           action.text =
             ctx.getString(
               if (row.mine) {
-                R.string.blyp_shell_chat_money_reclaim
+                R.string.blyp_shell_chat_money_edit
               } else {
                 R.string.blyp_shell_chat_money_claim
               },
@@ -3033,6 +3971,83 @@ class ShellChatThreadActivity : AppCompatActivity() {
           )
         }
         return if (extra.isEmpty()) main else main + "\n" + extra.joinToString("\n")
+      }
+    }
+
+    class PlaceHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+      private val map = itemView.findViewById<ImageView>(R.id.blyp_chat_place_map)
+      private val title = itemView.findViewById<TextView>(R.id.blyp_chat_place_title)
+      private val note = itemView.findViewById<TextView>(R.id.blyp_chat_place_note)
+      private val status = itemView.findViewById<TextView>(R.id.blyp_chat_place_status)
+      private val action = itemView.findViewById<TextView>(R.id.blyp_chat_place_action)
+      private val bubble = itemView.findViewById<View>(R.id.blyp_chat_place_bubble)
+
+      fun bind(row: ShellChatBubble) {
+        val ctx = itemView.context
+        val place = BlypShellPlaceCodec.parsePlaceBody(row.body) ?: return
+        BlypShellPlaceMapLoader.bind(map, place.lat, place.lng)
+        val placeName = BlypShellPlaceName.sanitize(place.name)
+        val placeNote = place.note.trim()
+        title.text =
+          placeName.ifEmpty { ctx.getString(R.string.blyp_shell_chat_place_here) }
+        if (placeNote.isNotEmpty()) {
+          note.visibility = View.VISIBLE
+          note.text = placeNote
+        } else {
+          note.visibility = View.GONE
+          note.text = ""
+        }
+        val leftMs = (place.expiresAtMs - System.currentTimeMillis()).coerceAtLeast(0L)
+        val leftMin = ((leftMs + 59_999L) / 60_000L).toInt()
+        status.text =
+          when {
+            place.fixed ->
+              if (placeName.isNotEmpty()) ctx.getString(R.string.blyp_shell_chat_place_here)
+              else ctx.getString(R.string.blyp_shell_chat_place_fixed_status)
+            place.stopped || leftMs <= 0L -> ctx.getString(R.string.blyp_shell_chat_place_ended)
+            leftMin <= 1 -> ctx.getString(R.string.blyp_shell_chat_place_live_soon)
+            else -> ctx.getString(R.string.blyp_shell_chat_place_live, leftMin)
+          }
+        status.visibility = View.VISIBLE
+        val density = ctx.resources.displayMetrics.density
+        val statusLp = status.layoutParams as? ViewGroup.MarginLayoutParams
+        val bottomPad =
+          if (row.mine && place.live) (4 * density).toInt() else (12 * density).toInt()
+        status.setPadding(
+          status.paddingLeft,
+          status.paddingTop,
+          status.paddingRight,
+          bottomPad,
+        )
+        statusLp?.let { status.layoutParams = it }
+        val canStop = row.mine && place.live
+        if (canStop) {
+          action.visibility = View.VISIBLE
+          action.text = ctx.getString(R.string.blyp_shell_chat_place_stop)
+          action.setOnClickListener {
+            (ctx as? ShellChatThreadActivity)?.stopPlaceShare(place.sessionId)
+          }
+        } else {
+          action.visibility = View.GONE
+          action.setOnClickListener(null)
+        }
+        val open = View.OnClickListener {
+          (ctx as? ShellChatThreadActivity)?.openPlaceMaps(place.lat, place.lng, placeName)
+        }
+        bubble.setOnClickListener(open)
+        map.setOnClickListener(open)
+        title.setOnClickListener(open)
+        note.setOnClickListener(open)
+        status.setOnClickListener(open)
+        val longPress =
+          View.OnLongClickListener {
+            (ctx as? ShellChatThreadActivity)?.onMessageLongPress(row, bubble)
+            true
+          }
+        bubble.setOnLongClickListener(longPress)
+        map.setOnLongClickListener(longPress)
+        bindSendMeta(itemView, row, null)
+        bindReactions(itemView, row)
       }
     }
 
@@ -3356,7 +4371,7 @@ class ShellChatThreadActivity : AppCompatActivity() {
         val screen = itemView.resources.displayMetrics.widthPixels
         val grid = group.size > 1
         val w = (screen - (72 * d)).toInt().coerceAtMost((300 * d).toInt())
-        val gap = (2 * d).toInt()
+        val gap = (3 * d).toInt()
         val h =
           if (!grid) {
             val photo = group.first()
@@ -3371,15 +4386,18 @@ class ShellChatThreadActivity : AppCompatActivity() {
             collageHeight(group.size, w, gap)
           }
         val lp = strip.layoutParams
-        lp.width = w
-        lp.height = h
-        strip.layoutParams = lp
-        strip.layoutManager =
-          if (grid) {
-            CollageLayout(gap)
-          } else {
+        if (lp.width != w || lp.height != h) {
+          lp.width = w
+          lp.height = h
+          strip.layoutParams = lp
+        }
+        val wantCollage = grid
+        if (wantCollage && strip.layoutManager !is CollageLayout) {
+          strip.layoutManager = CollageLayout(gap)
+        } else if (!wantCollage && strip.layoutManager !is LinearLayoutManager) {
+          strip.layoutManager =
             LinearLayoutManager(itemView.context, LinearLayoutManager.VERTICAL, false)
-          }
+        }
         if (grid) {
           strip.outlineProvider =
             object : ViewOutlineProvider() {
@@ -3551,20 +4569,18 @@ class ShellChatThreadActivity : AppCompatActivity() {
         )
         val badge = TextView(parent.context)
         badge.setTextColor(0xFFFFFFFF.toInt())
-        badge.textSize = 12f
-        badge.setPadding((8 * density).toInt(), (2 * density).toInt(), (8 * density).toInt(), (2 * density).toInt())
-        badge.background = android.graphics.drawable.GradientDrawable().apply {
-          cornerRadius = 40f
-          setColor(0xCC000000.toInt())
-        }
+        badge.textSize = 28f
+        badge.gravity = Gravity.CENTER
+        badge.setTypeface(badge.typeface, android.graphics.Typeface.BOLD)
+        badge.setShadowLayer(8f, 0f, 1f, 0xCC000000.toInt())
         badge.visibility = View.GONE
-        val badgeLp = FrameLayout.LayoutParams(
-          FrameLayout.LayoutParams.WRAP_CONTENT,
-          FrameLayout.LayoutParams.WRAP_CONTENT,
-          Gravity.BOTTOM or Gravity.END,
+        frame.addView(
+          badge,
+          FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+          ),
         )
-        badgeLp.setMargins(0, 0, (8 * density).toInt(), (8 * density).toInt())
-        frame.addView(badge, badgeLp)
         val spin = android.widget.ProgressBar(parent.context)
         spin.isIndeterminate = true
         spin.indeterminateTintList =
@@ -3624,35 +4640,11 @@ class ShellChatThreadActivity : AppCompatActivity() {
         }
         if (more) {
           badge.visibility = View.VISIBLE
-          badge.text = "+${group.size - 5}"
-          badge.gravity = Gravity.CENTER
-          badge.textSize = 26f
-          badge.layoutParams =
-            FrameLayout.LayoutParams(
-              FrameLayout.LayoutParams.MATCH_PARENT,
-              FrameLayout.LayoutParams.MATCH_PARENT,
-            )
-          badge.setBackgroundColor(0x99000000.toInt())
-          badge.elevation = 12f * density
-          badge.bringToFront()
-          image.alpha = 0.72f
+          badge.text = "+${group.size - itemCount}"
+          image.alpha = 0.55f
         } else {
           image.alpha = 1f
-          badge.gravity = Gravity.NO_GRAVITY
-          badge.textSize = 12f
-          val badgeLp =
-            FrameLayout.LayoutParams(
-              FrameLayout.LayoutParams.WRAP_CONTENT,
-              FrameLayout.LayoutParams.WRAP_CONTENT,
-              Gravity.BOTTOM or Gravity.END,
-            )
-          badgeLp.setMargins(0, 0, (8 * density).toInt(), (8 * density).toInt())
-          badge.layoutParams = badgeLp
-          badge.background =
-            android.graphics.drawable.GradientDrawable().apply {
-              cornerRadius = 40f
-              setColor(0xCC000000.toInt())
-            }
+          badge.visibility = View.GONE
         }
         val slide = arrived
         frame.post { arrived = false }
@@ -3704,6 +4696,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
       private const val VIEW_DOC_PEER = 7
       private const val VIEW_MONEY_MINE = 8
       private const val VIEW_MONEY_PEER = 9
+      private const val VIEW_PLACE_MINE = 10
+      private const val VIEW_PLACE_PEER = 11
 
       fun bindStamp(root: View, text: String?) {
         val parent = root as? ViewGroup ?: return
@@ -3808,10 +4802,30 @@ class ShellChatThreadActivity : AppCompatActivity() {
 
       fun bindSendMeta(root: View, row: ShellChatBubble, seenIso: String?) {
         val ctx = root.context
+        val act = ctx as? ShellChatThreadActivity
         val time = root.findViewById<TextView?>(R.id.blyp_chat_time)
         val clock = root.findViewById<TextView?>(R.id.blyp_chat_clock)
         val seenView = root.findViewById<TextView?>(R.id.blyp_chat_seen)
         if (time == null && clock == null) return
+        if (act?.isReactChrome(row.id) == true) {
+          clock?.visibility = View.GONE
+          seenView?.visibility = View.GONE
+          time?.text = ""
+          if (time != null) {
+            val shown = time.tag == "in"
+            if (!shown) {
+              time.tag = "in"
+              slideTime(time, true)
+            } else {
+              time.visibility = View.VISIBLE
+              time.alpha = 1f
+              time.translationY = 0f
+            }
+          }
+          bindReactChromeActions(root, row)
+          return
+        }
+        hideReactChromeActions(root)
         if (row.outboundPending && time != null) {
           clock?.visibility = View.GONE
           seenView?.visibility = View.GONE
@@ -3822,8 +4836,8 @@ class ShellChatThreadActivity : AppCompatActivity() {
         }
         clock?.visibility = View.GONE
         seenView?.visibility = View.GONE
-        val flash = row.mine && (ctx as? ShellChatThreadActivity)?.sentFlashOn(row.id) == true
-        val show = flash || (ctx as? ShellChatThreadActivity)?.isMetaShown(row.id) == true
+        val flash = row.mine && act?.sentFlashOn(row.id) == true
+        val show = flash || act?.isMetaShown(row.id) == true
         val hm = formatMessageTime(row.createdAt)
         val seenHm = seenIso?.let { formatMessageTime(it) }.orEmpty()
         val line =
@@ -3860,22 +4874,99 @@ class ShellChatThreadActivity : AppCompatActivity() {
         bindMetaDelete(root, row, show, line)
       }
 
+      private fun bindReactChromeActions(root: View, row: ShellChatBubble) {
+        val act = root.context as? ShellChatThreadActivity ?: return
+        val metaRow = root.findViewById<TextView?>(R.id.blyp_chat_time)?.parent as? ViewGroup ?: return
+        val d = root.resources.displayMetrics.density
+        val del = root.findViewById<ImageView?>(R.id.blyp_chat_meta_delete)
+        var reply = metaRow.findViewWithTag<ImageView>("blyp_react_reply")
+        if (reply == null) {
+          reply =
+            ImageView(root.context).apply {
+              tag = "blyp_react_reply"
+              setImageResource(R.drawable.blyp_shell_ic_reply_pro)
+              scaleType = ImageView.ScaleType.CENTER_INSIDE
+              contentDescription = root.context.getString(R.string.blyp_shell_chat_menu_reply)
+              background = ContextCompat.getDrawable(context, R.drawable.blyp_shell_react_action_bg)
+              val pad = (5 * d).toInt()
+              setPadding(pad, pad, pad, pad)
+              layoutParams =
+                android.widget.LinearLayout.LayoutParams((28 * d).toInt(), (28 * d).toInt()).apply {
+                  marginEnd = (4 * d).toInt()
+                }
+            }
+          val insertAt = metaRow.indexOfChild(del).let { if (it >= 0) it else metaRow.childCount }
+          metaRow.addView(reply, insertAt)
+        }
+        reply.visibility = View.VISIBLE
+        reply.alpha = 0f
+        reply.scaleX = 0.7f
+        reply.scaleY = 0.7f
+        reply.translationY = -8 * d
+        reply
+          .animate()
+          .alpha(1f)
+          .scaleX(1f)
+          .scaleY(1f)
+          .translationY(0f)
+          .setDuration(300)
+          .setInterpolator(android.view.animation.OvershootInterpolator(1.6f))
+          .start()
+        reply.setOnClickListener {
+          act.reactChromeKeep = true
+          act.dismissReactFan()
+          act.clearReactChrome()
+          act.armReply(row)
+        }
+        if (del != null) {
+          del.setImageResource(R.drawable.blyp_shell_ic_trash_muted)
+          del.background = ContextCompat.getDrawable(root.context, R.drawable.blyp_shell_react_action_bg)
+          del.visibility = View.VISIBLE
+          del.alpha = 0f
+          del.scaleX = 0.7f
+          del.scaleY = 0.7f
+          del.translationY = -8 * d
+          del
+            .animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .translationY(0f)
+            .setDuration(300)
+            .setStartDelay(35)
+            .setInterpolator(android.view.animation.OvershootInterpolator(1.6f))
+            .start()
+          del.setOnClickListener {
+            act.reactChromeKeep = true
+            act.dismissReactFan()
+            act.clearReactChrome()
+            if (act.canDeleteForEveryone(row)) act.confirmDeleteForEveryone(row)
+            else act.deleteMessage(row, "me")
+          }
+          del.isClickable = true
+          del.isFocusable = true
+        }
+      }
+
+      private fun hideReactChromeActions(root: View) {
+        val metaRow = root.findViewById<TextView?>(R.id.blyp_chat_time)?.parent as? ViewGroup
+        metaRow?.findViewWithTag<ImageView>("blyp_react_reply")?.visibility = View.GONE
+        val del = root.findViewById<ImageView?>(R.id.blyp_chat_meta_delete)
+        if (del != null) {
+          del.background = null
+          del.scaleX = 1f
+          del.scaleY = 1f
+          del.translationY = 0f
+        }
+      }
+
       private fun bindMetaDelete(root: View, row: ShellChatBubble, metaOpen: Boolean, line: String) {
         val del = root.findViewById<ImageView?>(R.id.blyp_chat_meta_delete) ?: return
-        val act = root.context as? ShellChatThreadActivity
-        val showDel =
-          metaOpen && line.isNotEmpty() && (act?.canDeleteForEveryone(row) == true)
-        del.visibility = if (showDel) View.VISIBLE else View.GONE
-        if (!showDel) {
-          del.setOnClickListener(null)
-          return
-        }
-        del.setOnClickListener { v ->
-          v.performHapticFeedback(android.view.HapticFeedbackConstants.CONTEXT_CLICK)
-          act?.confirmDeleteForEveryone(row)
-        }
-        del.isClickable = true
-        del.isFocusable = true
+        // Poubelle rouge à côté de la date : retirée. Suppression = maintien → icône grise.
+        if ((root.context as? ShellChatThreadActivity)?.isReactChrome(row.id) == true) return
+        del.background = null
+        del.visibility = View.GONE
+        del.setOnClickListener(null)
       }
 
       private fun showTimeSteady(time: TextView) {
@@ -3975,83 +5066,134 @@ class ShellChatThreadActivity : AppCompatActivity() {
       }
 
       fun bindReactions(root: View, row: ShellChatBubble) {
-        root.findViewById<TextView?>(R.id.blyp_chat_reactions)?.visibility = View.GONE
-        val host = root as? ViewGroup ?: return
-        host.clipChildren = false
-        host.clipToPadding = false
-        var badge = host.findViewWithTag<TextView>("blyp_imsg_react")
+        val chip = root.findViewById<TextView?>(R.id.blyp_chat_reactions) ?: return
+        root.findViewWithTag<View>("blyp_react_corner")?.let {
+          (it.parent as? ViewGroup)?.removeView(it)
+        }
+        val act = root.context as? ShellChatThreadActivity
+        val density = root.resources.displayMetrics.density
+        val removing = act?.takeReactRemove(row.id) == true
         if (row.reactions.isEmpty() || row.deletedForAll) {
-          badge?.visibility = View.GONE
+          if (chip.visibility == View.VISIBLE) {
+            if (removing) {
+              val body = root.findViewById<View?>(R.id.blyp_chat_body)
+              chip
+                .animate()
+                .scaleX(0.05f)
+                .scaleY(0.05f)
+                .alpha(0f)
+                .translationY((-6f) * density)
+                .setDuration(240)
+                .setInterpolator(android.view.animation.AccelerateInterpolator(1.2f))
+                .withEndAction {
+                  chip.visibility = View.GONE
+                  chip.scaleX = 1f
+                  chip.scaleY = 1f
+                  chip.alpha = 1f
+                  chip.translationY = 0f
+                  val bodyLp = body?.layoutParams as? ViewGroup.MarginLayoutParams
+                  if (bodyLp != null && bodyLp.topMargin > 0) {
+                    val start = bodyLp.topMargin
+                    android.animation.ValueAnimator.ofInt(start, 0).apply {
+                      duration = 260
+                      interpolator = android.view.animation.DecelerateInterpolator()
+                      addUpdateListener { va ->
+                        val p = body.layoutParams as? ViewGroup.MarginLayoutParams ?: return@addUpdateListener
+                        p.topMargin = va.animatedValue as Int
+                        body.layoutParams = p
+                      }
+                      start()
+                    }
+                  }
+                }
+                .start()
+            } else {
+              chip.visibility = View.GONE
+              val body = root.findViewById<View?>(R.id.blyp_chat_body)
+              val lp = body?.layoutParams as? ViewGroup.MarginLayoutParams
+              if (lp != null && lp.topMargin != 0) {
+                lp.topMargin = 0
+                body.layoutParams = lp
+              }
+            }
+          } else {
+            val body = root.findViewById<View?>(R.id.blyp_chat_body)
+            val lp = body?.layoutParams as? ViewGroup.MarginLayoutParams
+            if (lp != null && lp.topMargin != 0) {
+              lp.topMargin = 0
+              body.layoutParams = lp
+            }
+          }
           return
         }
-        if (badge == null) {
-          val ctx = host.context
-          val density = ctx.resources.displayMetrics.density
-          badge =
-            TextView(ctx).apply {
-              tag = "blyp_imsg_react"
-              textSize = 15f
-              gravity = Gravity.CENTER
-              val pad = (6 * density).toInt()
-              setPadding(pad, (2 * density).toInt(), pad, (2 * density).toInt())
-              background =
-                android.graphics.drawable.GradientDrawable().apply {
-                  cornerRadius = 18 * density
-                  setColor(ContextCompat.getColor(ctx, R.color.blyp_shell_surface))
-                  setStroke(
-                    (1 * density).toInt().coerceAtLeast(1),
-                    ContextCompat.getColor(ctx, R.color.blyp_shell_border),
-                  )
-                }
-              elevation = 6 * density
-            }
-          host.addView(
-            badge,
-            ViewGroup.LayoutParams(
-              ViewGroup.LayoutParams.WRAP_CONTENT,
-              ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-          )
-        }
-        val chip = badge ?: return
-        val counts = LinkedHashMap<String, Int>()
+        val ctx = root.context
+        val myId = act?.myUserId()?.trim().orEmpty()
+        data class Group(val emoji: String, var count: Int, var mine: Boolean)
+        val groups = LinkedHashMap<String, Group>()
         for (reaction in row.reactions) {
           val emoji = reaction.emoji.trim()
           if (emoji.isEmpty()) continue
-          counts[emoji] = (counts[emoji] ?: 0) + 1
+          val g = groups.getOrPut(emoji) { Group(emoji, 0, false) }
+          g.count += 1
+          if (myId.isNotEmpty() && reaction.userId == myId) g.mine = true
         }
-        chip.text =
-          buildString {
-            for ((emoji, n) in counts) {
-              append(emoji)
-              if (n > 1) append(n)
-            }
+        val ordered = groups.values.toList()
+        val primary = ordered.firstOrNull() ?: return
+        val label =
+          ordered.take(3).joinToString("") { g ->
+            if (g.count > 1) "${g.emoji}${g.count}" else g.emoji
           }
-        chip.visibility = View.INVISIBLE
-        chip.post {
-          val anchor = reactionAnchor(host) ?: return@post
-          val rootLoc = IntArray(2)
-          val anchorLoc = IntArray(2)
-          host.getLocationOnScreen(rootLoc)
-          anchor.getLocationOnScreen(anchorLoc)
-          val ax = (anchorLoc[0] - rootLoc[0]).toFloat()
-          val ay = (anchorLoc[1] - rootLoc[1]).toFloat()
-          val x =
-            if (row.mine) ax - chip.width * 0.2f
-            else ax + anchor.width - chip.width * 0.8f
-          val y = ay + anchor.height - chip.height * 0.7f
-          chip.translationX = x - chip.left
-          chip.translationY = y - chip.top
-          chip.visibility = View.VISIBLE
+        chip.text = label
+        chip.background = ContextCompat.getDrawable(ctx, R.drawable.blyp_shell_react_chip)
+        chip.setTextColor(ContextCompat.getColor(ctx, R.color.blyp_shell_text))
+        chip.minWidth = (26 * density).toInt()
+        chip.contentDescription =
+          if (primary.mine) ctx.getString(R.string.blyp_shell_chat_react_remove_a11y)
+          else ctx.getString(R.string.blyp_shell_chat_react_pick_a11y, primary.emoji)
+        chip.setOnClickListener {
+          val mine = ordered.firstOrNull { it.mine } ?: primary
+          act?.reactTo(row, mine.emoji, burstFrom = chip)
+        }
+        chip.visibility = View.VISIBLE
+        val frame = chip.parent as? ViewGroup
+        frame?.clipChildren = false
+        frame?.clipToPadding = false
+        (root as? ViewGroup)?.clipChildren = false
+        (root as? ViewGroup)?.clipToPadding = false
+        val body = root.findViewById<View?>(R.id.blyp_chat_body)
+        if (body != null) {
+          val need = (14 * density).toInt()
+          val lp = body.layoutParams as? ViewGroup.MarginLayoutParams
+          if (lp != null && lp.topMargin != need) {
+            lp.topMargin = need
+            body.layoutParams = lp
+          }
+        }
+        val padTop = (2 * density).toInt()
+        if (root.paddingTop < padTop) {
+          root.setPadding(root.paddingLeft, padTop, root.paddingRight, root.paddingBottom)
+        }
+        val bounceIn = act?.takeReactBounce(row.id) == true
+        if (bounceIn) {
+          chip.scaleX = 0.2f
+          chip.scaleY = 0.2f
+          chip.alpha = 0.5f
+          chip
+            .animate()
+            .scaleX(1f)
+            .scaleY(1f)
+            .alpha(1f)
+            .setDuration(380)
+            .setInterpolator(android.view.animation.OvershootInterpolator(3f))
+            .start()
+        } else {
+          chip.animate().cancel()
+          chip.scaleX = 1f
+          chip.scaleY = 1f
+          chip.alpha = 1f
         }
       }
 
-      private fun reactionAnchor(root: View): View? =
-        root.findViewById(R.id.blyp_chat_image_strip)
-          ?: root.findViewById(R.id.blyp_chat_body)
-          ?: root.findViewById(R.id.blyp_chat_voice_bubble)
-          ?: root.findViewById(R.id.blyp_chat_doc_bubble)
-          ?: root.findViewById(R.id.blyp_chat_money_bubble)
     }
   }
 

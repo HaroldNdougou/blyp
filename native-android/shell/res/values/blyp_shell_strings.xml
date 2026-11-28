@@ -3,6 +3,7 @@
     <string name="blyp_shell_tab_pay">Payer</string>
     <string name="blyp_shell_tab_collect">Encaisser</string>
     <string name="blyp_shell_tab_history">Historique</string>
+    <string name="blyp_shell_tab_book">Compta</string>
     <string name="blyp_shell_tab_profile">Profil</string>
     <string name="blyp_shell_tab_messages">Messages</string>
     <string name="blyp_shell_messages_title">Messages</string>
@@ -21,8 +22,15 @@
     <string name="blyp_shell_status_delete_msg">Supprimer tous tes statuts actifs ?</string>
     <string name="blyp_shell_status_delete_confirm">Supprimer</string>
     <string name="blyp_shell_messages_new_chat">Nouveau message</string>
+    <string name="blyp_shell_messages_delete">Supprimer</string>
+    <string name="blyp_shell_messages_delete_title">Supprimer la discussion</string>
+    <string name="blyp_shell_messages_delete_msg">Supprimer la discussion avec %1$s ?</string>
+    <string name="blyp_shell_messages_delete_confirm">Supprimer</string>
     <string name="blyp_shell_messages_empty">Aucune conversation</string>
     <string name="blyp_shell_messages_preview_empty">Aucun message</string>
+    <string name="blyp_shell_messages_reaction">Réagi %1$s</string>
+    <string name="blyp_shell_messages_reaction_you">Réagi %1$s</string>
+    <string name="blyp_shell_messages_reaction_bare">Réagi</string>
     <string name="blyp_shell_messages_sync_failed">Impossible de mettre à jour. Réessayez.</string>
     <string name="blyp_shell_chat_input_hint">Message</string>
     <string name="blyp_shell_chat_online">En ligne</string>
@@ -36,12 +44,37 @@
     <string name="blyp_shell_chat_seen_at">vu à %1$s</string>
     <string name="blyp_shell_chat_last_seen">en ligne à %1$s</string>
     <string name="blyp_shell_chat_more_film">Film</string>
-    <string name="blyp_shell_chat_more_place">Ma position</string>
+    <string name="blyp_shell_chat_more_place">Je suis là</string>
     <string name="blyp_shell_chat_more_vanish">Disparaît dans 5 min</string>
     <string name="blyp_shell_chat_more_incognito">Chat privé</string>
     <string name="blyp_shell_chat_place_hint">Tu fais quoi ?</string>
+    <string name="blyp_shell_chat_place_note_title">Un petit mot</string>
+    <string name="blyp_shell_chat_place_note_sub">Optionnel · visible sur la carte</string>
+    <string-array name="blyp_shell_chat_place_note_suggestions">
+        <item>À la maison</item>
+        <item>Au travail</item>
+        <item>En route</item>
+        <item>En balade</item>
+        <item>Au sport</item>
+        <item>Au resto</item>
+        <item>Je t’attends</item>
+        <item>Viens</item>
+    </string-array>
     <string name="blyp_shell_chat_place_denied">Autorise la position pour la partager</string>
     <string name="blyp_shell_chat_place_missing">Position pas encore connue</string>
+    <string name="blyp_shell_chat_place_here">Je suis là</string>
+    <string name="blyp_shell_chat_place_live">En direct · %1$d min</string>
+    <string name="blyp_shell_chat_place_live_soon">En direct · bientôt fini</string>
+    <string name="blyp_shell_chat_place_ended">Partage terminé</string>
+    <string name="blyp_shell_chat_place_stop">Arrêter le partage</string>
+    <string name="blyp_shell_chat_place_open">Voir sur la carte</string>
+    <string name="blyp_shell_chat_place_preview_live">📍 En direct</string>
+    <string name="blyp_shell_chat_place_preview">📍 Je suis là</string>
+    <string name="blyp_shell_chat_place_busy">Partage déjà en cours</string>
+    <string name="blyp_shell_chat_place_pick_title">Partager ma position</string>
+    <string name="blyp_shell_chat_place_pick_fixed">Juste ici</string>
+    <string name="blyp_shell_chat_place_pick_live">En direct · 15 min</string>
+    <string name="blyp_shell_chat_place_fixed_status">Position actuelle</string>
     <string name="blyp_shell_chat_vanish_on">Les messages partent au bout de 5 minutes</string>
     <string name="blyp_shell_chat_vanish_off">Les messages restent</string>
     <string name="blyp_shell_chat_incognito_on">Ce chat ne se garde pas</string>
@@ -146,7 +179,25 @@
     <string name="blyp_shell_chat_money_thanks_me">Vous avez dit merci</string>
     <string name="blyp_shell_chat_money_thanks_by">%1$s a dit merci</string>
     <string name="blyp_shell_chat_money_claim">Récupérer</string>
+    <string name="blyp_shell_pay_motif_label">Motif</string>
+    <string name="blyp_shell_pay_motif_hint">1 maillot bleu</string>
+    <string name="blyp_shell_pay_motif_title">Ajouter un motif ?</string>
+    <string name="blyp_shell_pay_motif_save">Enregistrer</string>
+    <string name="blyp_shell_pay_motif_skip">Plus tard</string>
+    <string name="blyp_shell_pay_motif_chip_gift">Cadeau</string>
+    <string name="blyp_shell_pay_motif_chip_pocket">Argent de poche</string>
+    <string name="blyp_shell_pay_motif_chip_surprise">Surprise</string>
+    <string name="blyp_shell_pay_motif_chip_taxi">Taxi</string>
+    <string name="blyp_shell_pay_motif_chip_loan">Prêt</string>
     <string name="blyp_shell_chat_money_reclaim">Annuler le transfert</string>
+    <string name="blyp_shell_chat_money_reclaim_confirm_title">Annuler le transfert ?</string>
+    <string name="blyp_shell_chat_money_reclaim_confirm_msg">L’argent reviendra sur ton compte.</string>
+    <string name="blyp_shell_chat_money_edit">Modifier</string>
+    <string name="blyp_shell_chat_money_edit_title">Modifier le transfert</string>
+    <string name="blyp_shell_chat_money_edit_amount">Montant</string>
+    <string name="blyp_shell_chat_money_edit_save">Enregistrer</string>
+    <string name="blyp_shell_chat_money_edit_failed">Modification impossible</string>
+    <string name="blyp_shell_chat_money_edit_pin_title">Confirmer la modification</string>
     <string name="blyp_shell_chat_money_action_failed">Impossible</string>
     <string name="blyp_shell_chat_money_receipt_required">Un reçu est exigé pour récupérer</string>
     <string name="blyp_shell_chat_menu_reply">Répondre</string>
@@ -158,6 +209,8 @@
     <string name="blyp_shell_chat_delete_all_confirm_title">Supprimer pour tous ?</string>
     <string name="blyp_shell_chat_delete_all_confirm_msg">Ce message disparaîtra pour tout le monde.</string>
     <string name="blyp_shell_chat_react_failed">Réaction impossible</string>
+    <string name="blyp_shell_chat_react_pick_a11y">Réagir avec %1$s</string>
+    <string name="blyp_shell_chat_react_remove_a11y">Retirer ma réaction</string>
     <string name="blyp_shell_fcfa_label">F</string>
     <string name="blyp_shell_receipt_default_name">Reçu</string>
     <string name="blyp_shell_receipt_blyp_title">Reçu Blyp</string>
@@ -201,6 +254,9 @@
     <string name="blyp_shell_chat_money_failed">Envoi impossible</string>
     <string name="blyp_shell_chat_money_pin_title">Code PIN</string>
     <string name="blyp_shell_chat_money_pin_wrong">Le code secret est incorrect</string>
+    <string name="blyp_shell_chat_money_bio">Utiliser l’empreinte ou le visage</string>
+    <string name="blyp_shell_chat_money_bio_title">Confirmez l’envoi</string>
+    <string name="blyp_shell_chat_money_bio_subtitle">%1$d F</string>
     <string name="blyp_shell_ble_off_title">Bluetooth éteint</string>
     <string name="blyp_shell_ble_off_hint">Activez-le pour détecter le commerce</string>
     <string name="blyp_shell_ble_enable">Activer</string>
@@ -211,11 +267,31 @@
     <string name="blyp_shell_history_subtitle_empty">Votre activité récente</string>
     <string name="blyp_shell_history_subtitle_count">%1$d opérations</string>
     <string name="blyp_shell_history_subtitle_count_one">1 opération</string>
+    <string name="blyp_shell_history_search_hint">Nom, montant, motif, référence…</string>
+    <string name="blyp_shell_history_filter_a11y">Filtres</string>
+    <string name="blyp_shell_history_filter_title">Filtres</string>
+    <string name="blyp_shell_history_filter_date">Période</string>
+    <string name="blyp_shell_history_filter_date_all">Toutes les dates</string>
+    <string name="blyp_shell_history_filter_date_7">7 derniers jours</string>
+    <string name="blyp_shell_history_filter_date_30">30 derniers jours</string>
+    <string name="blyp_shell_history_filter_date_90">3 derniers mois</string>
+    <string name="blyp_shell_history_filter_amount">Montant</string>
+    <string name="blyp_shell_history_filter_amount_min">Min</string>
+    <string name="blyp_shell_history_filter_amount_max">Max</string>
+    <string name="blyp_shell_history_filter_apply">Appliquer</string>
+    <string name="blyp_shell_history_filter_clear">Effacer</string>
+    <string name="blyp_shell_history_filter_active">Filtres actifs</string>
+    <string name="blyp_shell_history_empty_search">Aucun résultat pour cette recherche.</string>
     <string name="blyp_shell_history_empty">Aucune transaction pour l’instant.</string>
     <string name="blyp_shell_history_empty_sent">Aucun envoi pour l’instant.</string>
     <string name="blyp_shell_history_empty_received">Aucun reçu pour l’instant.</string>
     <string name="blyp_shell_history_summary_sent">Envoyé</string>
     <string name="blyp_shell_history_summary_received">Reçu</string>
+    <string name="blyp_shell_book_title">Compta</string>
+    <string name="blyp_shell_book_in">Encaissé</string>
+    <string name="blyp_shell_book_out">Dépenses</string>
+    <string name="blyp_shell_book_all">Tous</string>
+    <string name="blyp_shell_book_today">Aujourd\'hui %1$s F · %2$d encaissement(s)</string>
     <string name="blyp_shell_history_type_sent">Paiement</string>
     <string name="blyp_shell_history_type_received">Rechargement</string>
     <string name="blyp_shell_history_fcfa">FCFA</string>
@@ -223,6 +299,7 @@
     <string name="blyp_shell_detail_title_received">Rechargement reçu</string>
     <string name="blyp_shell_detail_phone">Téléphone</string>
     <string name="blyp_shell_detail_date">Date</string>
+    <string name="blyp_shell_detail_motif">Motif</string>
     <string name="blyp_shell_detail_ref">Référence</string>
     <string name="blyp_shell_detail_close">Fermer</string>
     <string name="blyp_shell_detail_ok">OK</string>
@@ -322,6 +399,8 @@
     <string name="blyp_shell_settings_title">Réglages du compte</string>
     <string name="blyp_shell_settings_name_label">Nom affiché</string>
     <string name="blyp_shell_settings_change_photo">Changer la photo</string>
+    <string name="blyp_shell_settings_theme_label">Couleur de l’app</string>
+    <string name="blyp_shell_settings_theme_hint">Choisis ta couleur — boutons, bulles, accents</string>
     <string name="blyp_shell_settings_save">Enregistrer</string>
     <string name="blyp_shell_settings_saved">Enregistré.</string>
     <string name="blyp_shell_settings_failed">Échec. Réessayez.</string>

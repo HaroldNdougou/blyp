@@ -107,7 +107,8 @@
             android:id="@+id/blyp_chat_list"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:clipToPadding="true"
+            android:clipChildren="false"
+            android:clipToPadding="false"
             android:paddingTop="0dp"
             android:paddingBottom="8dp"
             android:scrollbars="none" />
@@ -484,14 +485,6 @@
                         android:layout_height="match_parent"
                         android:background="@drawable/blyp_shell_chat_nearby_circle">
 
-                        <ImageView
-                            android:id="@+id/blyp_chat_nearby_avatar"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:importantForAccessibility="no"
-                            android:scaleType="centerCrop"
-                            android:visibility="gone" />
-
                         <TextView
                             android:id="@+id/blyp_chat_nearby_initial"
                             android:layout_width="match_parent"
@@ -501,6 +494,15 @@
                             android:textColor="@color/blyp_shell_muted"
                             android:textSize="15sp"
                             android:textStyle="bold" />
+
+                        <!-- Au-dessus de l’initiale : dès que la PP est visible, le P disparaît -->
+                        <ImageView
+                            android:id="@+id/blyp_chat_nearby_avatar"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:importantForAccessibility="no"
+                            android:scaleType="centerCrop"
+                            android:visibility="gone" />
                     </FrameLayout>
                 </FrameLayout>
 

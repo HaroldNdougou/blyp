@@ -23,4 +23,10 @@ class MessagesInboxFragment : Fragment() {
     }
     return root
   }
+
+  override fun onHiddenChanged(hidden: Boolean) {
+    super.onHiddenChanged(hidden)
+    (childFragmentManager.findFragmentById(R.id.blyp_inbox_host) as? MessagesListFragment)
+      ?.onInboxVisibility(!hidden)
+  }
 }

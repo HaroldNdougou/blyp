@@ -108,6 +108,10 @@ object BlypShellAvatarLoader {
     val gen = (imageView.getTag(R.id.blyp_avatar_load_gen) as? Int ?: 0) + 1
     imageView.setTag(R.id.blyp_avatar_load_gen, gen)
     imageView.setTag(R.id.blyp_avatar_load_url, u)
+    // URL connue : ne pas laisser l’initiale (P…) par-dessus pendant le fetch
+    if (imageView.visibility == View.VISIBLE) {
+      initialView.visibility = View.GONE
+    }
     Thread {
         val bmp = fetchBitmap(u, imageView.context)
         imageView.post {
@@ -115,6 +119,7 @@ object BlypShellAvatarLoader {
           if (bmp != null) {
             imageView.setImageBitmap(bmp)
             imageView.visibility = View.VISIBLE
+            initialView.text = ""
             initialView.visibility = View.GONE
           } else {
             if (placeholder == 0 && imageView.visibility == View.VISIBLE) return@post

@@ -643,11 +643,17 @@ object BlypShellChatMessagesStore {
   }
 
   private fun parseSorted(arr: JSONArray, myUserId: String?): List<ShellChatBubble> {
-    val out = ArrayList<ShellChatBubble>()
+    val raw = ArrayList<JSONObject>()
     for (i in 0 until arr.length()) {
       val o = arr.optJSONObject(i) ?: continue
       if (o.optBoolean("deletedForAll", false)) continue
       if (textOf(o, "deletedForAllAt").isNotEmpty()) continue
+      raw.add(o)
+    }
+    val foldedPlaces = BlypShellPlaceCodec.foldRaw(raw)
+    val folded = BlypShellReactionCodec.foldRaw(foldedPlaces)
+    val out = ArrayList<ShellChatBubble>()
+    for (o in folded) {
       bubbleFromJson(o, myUserId)?.let { out.add(it) }
     }
     return out.sortedBy { it.createdAt }
@@ -663,13 +669,19 @@ object BlypShellChatMessagesStore {
   fun bubbleFromJson(o: JSONObject, myUserId: String?): ShellChatBubble? {
     val id = o.optString("id").trim()
     if (id.isEmpty()) return null
-    val type = o.optString("type", "text").trim().ifEmpty { "text" }
+    val rawType = o.optString("type", "text").trim().ifEmpty { "text" }
     val clientId = o.optString("clientId").trim().ifEmpty { null }
     val sender = o.optString("senderUserId").trim().ifEmpty { null }
     val deleted = o.optBoolean("deletedForAll", false)
     val createdAt = o.optString("createdAt").trim()
     val mine = BlypShellChatMessageMine.isMine(sender, id, clientId, myUserId)
     val body = if (deleted) "" else textOf(o, "body")
+    if (rawType == "text" && BlypShellPlaceCodec.isSyncBody(body)) return null
+    if (BlypShellReactionCodec.isSyncBody(body) || rawType.equals("reaction", ignoreCase = true)) {
+      return null
+    }
+    val type =
+      if (rawType == "text" && BlypShellPlaceCodec.isPlaceBody(body)) "place" else rawType
     val image = o.optJSONObject("image")
     val imageKey = textOf(image, "key").ifEmpty { null }
     val imageThumbKey = textOf(image, "thumbKey").ifEmpty { null }
